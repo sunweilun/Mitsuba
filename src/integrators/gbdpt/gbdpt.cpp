@@ -19,8 +19,10 @@
 #include <mitsuba/bidir/vertex.h>
 #include <mitsuba/bidir/edge.h>
 #include "gbdpt_proc.h"
-#include "../poisson_solver/Solver.hpp"
 #include "mitsuba/bidir/util.h"
+#ifdef USE_ORIGINAL_REC
+#include "../poisson_solver/Solver.hpp"
+#endif
 
 MTS_NAMESPACE_BEGIN
 
@@ -160,7 +162,14 @@ public:
         m_config.dump();
 
         /* setup MultiFilm */
-		std::vector<std::string> outNames = { (m_config.m_reconstructL1 ? "-L1" : "-L2"), "-gradientNegY", "-gradientNegX", "-gradientPosX", "-gradientPosY", (m_config.m_reconstructL1 ? "-L2" : "-L1"), "-primal" };
+		std::vector<std::string> outNames;
+                outNames.push_back(m_config.m_reconstructL1 ? "-L1" : "-L2");
+                outNames.push_back("-gradientNegY");
+                outNames.push_back("-gradientNegX");
+                outNames.push_back("-gradientPosX");
+                outNames.push_back("-gradientPosY");
+                outNames.push_back(m_config.m_reconstructL1 ? "-L2" : "-L1");
+                outNames.push_back("-primal");
         if (!film->setBuffers(outNames)){
             Log(EError, "Cannot render image! G-BDPT has been called without MultiFilm.");
             return false;
@@ -211,6 +220,7 @@ public:
         prepareDataForSolver(1.f, &dyf[0], grad[3], len, grad[0], film->getCropSize().x);
         prepareDataForSolver(1.f, &dxf[0], grad[2], len, grad[1], 1);
 
+#ifdef USE_ORIGINAL_REC
         /* initialize solvers */
         poisson::Solver::Params pL2;
 
@@ -249,7 +259,9 @@ public:
 			film->setBitmapMulti(recBuff, 1, 0); 
 		else
 			film->setBitmapMulti(recBuff, 1, m_config.nNeighbours + 1);
-
+#else
+        
+#endif
 
         /* need to put primal img back into film such that it can be written to disc */
         film->setBitmapMulti(imgBaseBuff, 1, m_config.nNeighbours + 2); 
@@ -261,7 +273,7 @@ public:
         return true;
     }
 
-    void GBDPTIntegrator::prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2, int offset){
+    void prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2, int offset){
 
         for (int i = 0; i < len; i++)
             out[i] = w*float(data[i]);
@@ -279,7 +291,7 @@ public:
         }
     }
 
-    void GBDPTIntegrator::setBitmapFromArray(ref<Bitmap> &bitmap, float *img)
+    void setBitmapFromArray(ref<Bitmap> &bitmap, float *img)
     {
         int x, y;
         Float tmp[3];

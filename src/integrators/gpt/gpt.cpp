@@ -24,7 +24,10 @@
 
 #include "gpt_proc.h"
 #include "gpt_wr.h"
-//#include "../poisson_solver/Solver.hpp"
+
+#ifdef USE_ORIGINAL_REC
+#include "../poisson_solver/Solver.hpp"
+#endif
 
 
 MTS_NAMESPACE_BEGIN
@@ -845,7 +848,6 @@ public:
             for (int i = 0; i < secondaryCount; ++i) {
                 RayState& shifted = shiftedRays[i];
 
-                Spectrum shiftedEmitterRadiance(Float(0));
                 Spectrum mainContribution(Float(0));
                 Spectrum shiftedContribution(Float(0));
                 Float weight(0);
@@ -1247,7 +1249,6 @@ void GradientPathIntegrator::renderBlock(const Scene *scene, const Sensor *senso
 
     Point2 apertureSample(0.5f);
     Float timeSample = 0.5f;
-    RayDifferential sensorRay;
 
     block->clear();
 
@@ -1329,7 +1330,7 @@ void GradientPathIntegrator::renderBlock(const Scene *scene, const Sensor *senso
 #ifdef CENTRAL_RADIANCE
                 block->put(samplePos, centralVeryDirect + centralThroughput, 1.0f, 1.0f, BUFFER_FINAL); // Standard throughput estimate with direct.
 #else
-                block->put(samplePos, (8 * centralVeryDirect) + (2 * centralThroughput), 4.0f, 4.0f, 0); // Adds very direct on top of the throughput image.
+                block->put(samplePos, (8 * centralVeryDirect) + (2 * centralThroughput), 4.0f, 4.0f, BUFFER_FINAL); // Adds very direct on top of the throughput image.
 
                 block->put(left_pixel, (2 * shiftedThroughputs[LEFT]), 1.0f, 1.0f, BUFFER_FINAL); // Negative x throughput.
                 block->put(right_pixel, (2 * shiftedThroughputs[RIGHT]), 1.0f, 1.0f, BUFFER_FINAL); // Positive x throughput.
@@ -1505,7 +1506,7 @@ bool GradientPathIntegrator::render(Scene *scene,
     iterBufferBitmap[0] = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), iterBufferBitmap[0], BUFFER_THROUGHPUT);
     iterBufferBitmap[1] = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
-    float alpha = (float) m_config.m_reconstructAlpha;
+    float alpha = (Float) m_config.m_reconstructAlpha;
     float alpha_sqr = alpha * alpha;
     
     int w = iterBufferBitmap[0]->getSize().x;
@@ -1517,11 +1518,13 @@ bool GradientPathIntegrator::render(Scene *scene,
         int src = iter%2;
         int dst = 1-src;
         
-#pragma omp parallel for
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) {
                 Spectrum color(0.f);
-                float weight = 0.f;
+                Float weight = 0.f;
                 const Spectrum& prim = iterBufferBitmap[src]->getPixel(Point2i(x, y));
                 color += prim*alpha_sqr;
                 weight += alpha_sqr;
@@ -1555,7 +1558,9 @@ bool GradientPathIntegrator::render(Scene *scene,
         }
     }
     
-#pragma omp parallel for
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             const Spectrum& color = iterBufferBitmap[n_iters%2]->getPixel(Point2i(x, y));

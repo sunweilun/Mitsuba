@@ -18,7 +18,8 @@ add_integrator(volpath  path/volpath.cpp)
 add_integrator(volpath_simple path/volpath_simple.cpp)
 add_integrator(ptracer  ptracer/ptracer.cpp
                         ptracer/ptracer_proc.h ptracer/ptracer_proc.cpp)
-add_integrator(gpt  gpt/gpt.cpp gpt/gpt.h gpt/gpt_proc.cpp gpt/gpt_proc.h gpt/gpt_wr.cpp gpt/gpt_wr.h)
+add_integrator(gpt      gpt/gpt.cpp gpt/gpt.h gpt/gpt_proc.cpp 
+                gpt/gpt_proc.h  gpt/gpt_wr.cpp  gpt/gpt_wr.h)
 
 # Photon mapping-based techniques
 add_integrator(photonmapper photonmapper/photonmapper.cpp photonmapper/bre.cpp)
@@ -47,3 +48,7 @@ add_bidir(mlt           mlt/mlt.h      mlt/mlt.cpp
 
 add_bidir(erpt          erpt/erpt.h      erpt/erpt.cpp
                         erpt/erpt_proc.h erpt/erpt_proc.cpp)
+
+add_bidir(gbdpt    gbdpt/gbdpt.cpp   gbdpt/gbdpt.h 
+                gbdpt/gbdpt_proc.cpp    gbdpt/gbdpt_proc.h 
+                gbdpt/gbdpt_wr.cpp  gbdpt/gbdpt_wr.h)
