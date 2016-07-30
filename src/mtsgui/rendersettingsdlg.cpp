@@ -484,7 +484,9 @@ void RenderSettingsDialog::apply(SceneContext *ctx) {
 	filmProps.setInteger("height", size.y, false);
 
 	/* g-pt and g-bdpt only work with multifilm. */
-	if (getPluginName(ui->integratorBox) == "gbdpt" || getPluginName(ui->integratorBox) == "gpt")
+	if (getPluginName(ui->integratorBox) == "gbdpt" || 
+                getPluginName(ui->integratorBox) == "gpt" || 
+                getPluginName(ui->integratorBox) == "ugpt")
 		filmProps.setPluginName("multifilm");
 	else
 		filmProps.setPluginName("hdrfilm");

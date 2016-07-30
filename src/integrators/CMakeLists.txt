@@ -21,6 +21,9 @@ add_integrator(ptracer  ptracer/ptracer.cpp
 add_integrator(gpt      gpt/gpt.cpp gpt/gpt.h gpt/gpt_proc.cpp 
                 gpt/gpt_proc.h  gpt/gpt_wr.cpp  gpt/gpt_wr.h)
 
+add_integrator(ugpt      ugpt/ugpt.cpp ugpt/ugpt.h ugpt/ugpt_proc.cpp 
+                ugpt/ugpt_proc.h  ugpt/ugpt_wr.cpp  ugpt/ugpt_wr.h)
+
 # Photon mapping-based techniques
 add_integrator(photonmapper photonmapper/photonmapper.cpp photonmapper/bre.cpp)
 add_integrator(ppm          photonmapper/ppm.cpp)

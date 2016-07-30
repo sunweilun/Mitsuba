@@ -193,7 +193,6 @@ public:
 
 		for (size_t i=0; i<m_req2D.size(); i++)
 			generate2D(m_sampleArrays2D[i], m_sampleCount * m_req2D[i]);
-
 		m_sampleIndex = 0;
 		m_dimension1D = m_dimension2D = 0;
 		m_dimension1DArray = m_dimension2DArray = 0;
