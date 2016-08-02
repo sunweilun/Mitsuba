@@ -20,10 +20,10 @@
 #include <mitsuba/render/scene.h>
 #include <mitsuba/core/statistics.h>
 #include <mitsuba/render/renderproc.h>
+#include <omp.h>
 #include "mitsuba/core/plugin.h"
 
-#include "ugpt_proc.h"
-#include "ugpt_wr.h"
+#include "ugpt.h"
 
 #ifdef USE_ORIGINAL_REC
 #include "../poisson_solver/Solver.hpp"
@@ -64,6 +64,65 @@ MTS_NAMESPACE_BEGIN
 
         /// A threshold to use in positive denominators to avoid division by zero.
         const Float D_EPSILON = (Float) (1e-14);
+
+
+#include "nanoflann.hpp"
+
+void UnstructuredGradientPathIntegrator::decideNeighbors() {
+
+    struct PointCloud {
+        struct Point {
+//            GradIntegrator::PathNode* pn;
+//            int depth;
+//            int index;
+//            std::vector<std::pair<size_t, float> > indices_dists;
+//            tbb::concurrent_vector<size_t> neighbors;
+//            tbb::mutex vecMutex;
+//
+//            Point() {
+//                neighbors.reserve(10);
+//                indices_dists.reserve(10);
+//            }
+        };
+
+        std::vector<Point> nodes;
+
+//        void load(std::vector<GradIntegrator::TraceInfo>& ti_list, int d) {
+//            for (int i = 0; i < ti_list.size(); i++) {
+//                for (int j = 1; j < ti_list[i].path.size(); j++) {
+//                    Point p;
+//                    p.pn = &ti_list[i].path[j];
+//                    p.index = i;
+//                    p.depth = j;
+//                    if (j == d && p.pn->lightPath.lastRay)
+//                        nodes.push_back(p);
+//                }
+//            }
+//        }
+
+        inline size_t kdtree_get_point_count() const {
+            return nodes.size();
+        }
+
+        inline float kdtree_distance(const float* p1, const size_t idx_p2, size_t) const {
+//            const float d0 = p1[0] - nodes[idx_p2].pn->dg.P.x;
+//            const float d1 = p1[1] - nodes[idx_p2].pn->dg.P.y;
+//            const float d2 = p1[2] - nodes[idx_p2].pn->dg.P.z;
+//            return d0 * d0 + d1 * d1 + d2*d2;
+        }
+
+        inline float kdtree_get_pt(const size_t idx, int dim) const {
+//            if (dim == 0) return nodes[idx].pn->dg.P.x;
+//            else if (dim == 1) return nodes[idx].pn->dg.P.y;
+//            else return nodes[idx].pn->dg.P.z;
+        }
+
+        template <class BBOX>
+        bool kdtree_get_bbox(BBOX& /* bb */) const {
+            return false;
+        }
+    } cloud;
+}
 
 /// If defined, uses only the central sample for the throughput estimate. Otherwise uses offset paths for estimating throughput too.
 //#define CENTRAL_RADIANCE
@@ -189,8 +248,8 @@ struct RayState {
     bool alive; ///< Whether the path matching to the ray is still good. Otherwise it's an invalid offset path with zero PDF and throughput.
 
     RayConnection connection_status; ///< Whether the ray has been connected to the base path, or is in progress.
-    
-    ref<PrecursorCacheInfo> pci;
+
+    PrecursorCacheInfo* pci;
 };
 
 /// Returns the vertex type of a vertex by its roughness value.
@@ -404,11 +463,10 @@ struct BSDFSampleResult {
 class UnstructuredGradientPathTracer {
 public:
 
-    UnstructuredGradientPathTracer(const Scene* scene, const Sensor* sensor, Sampler* sampler, UGPTWorkResult* block, const UnstructuredGradientPathTracerConfig* config)
+    UnstructuredGradientPathTracer(const Scene* scene, const Sensor* sensor, Sampler* sampler, const UnstructuredGradientPathTracerConfig* config)
     : m_scene(scene),
     m_sensor(sensor),
     m_sampler(sampler),
-    m_block(block),
     m_config(config) {
     }
 
@@ -416,46 +474,6 @@ public:
     ///
     /// Outputs direct radiance to be added on top of the final image, the throughput to the central pixel, gradients to all neighbors,
     /// and throughput contribution to the neighboring pixels.
-
-    void evaluatePoint(RadianceQueryRecord& rRec, const Point2& samplePosition, const Point2& apertureSample, Float timeSample, Float differentialScaleFactor,
-            Spectrum& out_very_direct, Spectrum& out_throughput, Spectrum *out_gradients, Spectrum *out_neighborThroughputs) {
-        // Initialize the base path.
-        RayState mainRay;
-        mainRay.throughput = m_sensor->sampleRayDifferential(mainRay.ray, samplePosition, apertureSample, timeSample);
-        mainRay.ray.scaleDifferential(differentialScaleFactor);
-        mainRay.rRec = rRec;
-        mainRay.rRec.its = rRec.its;
-
-        // Initialize the offset paths.
-        RayState shiftedRays[4];
-
-        static const Vector2 pixelShifts[4] = {
-            Vector2(1.0f, 0.0f),
-            Vector2(0.0f, 1.0f),
-            Vector2(-1.0f, 0.0f),
-            Vector2(0.0f, -1.0f)
-        };
-
-        for (int i = 0; i < 4; ++i) {
-            shiftedRays[i].throughput = m_sensor->sampleRayDifferential(shiftedRays[i].ray, samplePosition + pixelShifts[i], apertureSample, timeSample);
-            shiftedRays[i].ray.scaleDifferential(differentialScaleFactor);
-            shiftedRays[i].rRec = rRec;
-            shiftedRays[i].rRec.its = rRec.its;
-        }
-
-        // Evaluate the gradients. The actual algorithm happens here.
-        Spectrum very_direct = Spectrum(0.0f);
-        evaluateDiff(mainRay, shiftedRays, 4, very_direct);
-
-        // Output results.
-        out_very_direct = very_direct;
-        out_throughput = mainRay.radiance;
-
-        for (int i = 0; i < 4; i++) {
-            out_gradients[i] = shiftedRays[i].gradient;
-            out_neighborThroughputs[i] = shiftedRays[i].radiance;
-        }
-    }
 
     /// Samples a direction according to the BSDF at the given ray position.
 
@@ -475,7 +493,7 @@ public:
             Spectrum(),
             (Float) 0
         };
-        
+
         result.weight = bsdf->sample(result.bRec, result.pdf, sample);
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
@@ -484,21 +502,25 @@ public:
         return result;
     }
 
+    inline BSDFSampleResult sampleBSDF(RayState& rayState) {
+        RadianceQueryRecord& rRec = rayState.rRec;
+        Point2 sample = rRec.nextSample2D();
+        return sampleBSDF(rayState, sample);
+    }
+
     /// Constructs a sequence of base paths and shifts them into offset paths, evaluating their throughputs and differences.
     ///
     /// This is the core of the rendering algorithm.
-    
-    void evaluatePrecursor(RayState& main)
-    {
+
+    void evaluatePrecursor(RayState& main) {
         const Scene *scene = main.rRec.scene;
-        
+
         // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
         main.rRec.rayIntersect(main.ray);
         main.ray.mint = Epsilon;
-        if (!main.rRec.its.isValid()) return;
-        
         main.pci->interList.push_back(main.rRec.its); // add cache info
-        
+        if (!main.rRec.its.isValid()) return;
+
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
         if (m_config->m_strictNormals) {
             // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
@@ -507,12 +529,12 @@ public:
                 return;
             }
         }
-        
+
         // Main path tracing loop.
         main.rRec.depth = 1;
 
         while (main.rRec.depth < m_config->m_maxDepth || m_config->m_maxDepth < 0) {
-            if(main.rRec.depth >= m_config->m_maxMergeDepth) break;
+            if (main.rRec.depth >= m_config->m_maxMergeDepth) break;
             // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
             // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
             if (m_config->m_strictNormals) {
@@ -521,18 +543,18 @@ public:
                     return;
                 }
             }
-            
+
             Point2 sample = main.rRec.nextSample2D();
             // Sample a new direction from BSDF * cos(theta).
             BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
-            
+
             main.pci->bsdfSampleList.push_back(sample); // cache bsdf sample
 
             if (mainBsdfResult.pdf <= (Float) 0.0) {
                 // Impossible base path.
                 break;
             }
-            
+
             const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
 
             // Prevent light leaks due to the use of shading normals.
@@ -540,21 +562,22 @@ public:
             if (m_config->m_strictNormals && mainWoDotGeoN * Frame::cosTheta(mainBsdfResult.bRec.wo) <= 0) {
                 break;
             }
-            
-            if (!scene->rayIntersect(main.ray, main.rRec.its)) break;
-            
+
+            main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
+
             main.pci->interList.push_back(main.rRec.its); // add cache info
+            if (!scene->rayIntersect(main.ray, main.rRec.its)) break;
 
             main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
             main.pdf *= mainBsdfResult.pdf;
             main.eta *= mainBsdfResult.bRec.eta;
-            
+
             // Stop if the base path hit the environment.
             main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
             if (!main.rRec.its.isValid() || !(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
                 break;
             }
-            
+
             if (main.rRec.depth++ >= m_config->m_rrDepth) {
                 /* Russian roulette: try to keep path weights equal to one,
                    while accounting for the solid angle compression at refractive
@@ -563,19 +586,20 @@ public:
                 Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
                 if (main.rRec.nextSample1D() >= q)
                     break;
+                main.pdf *= q;
             }
         }
     }
-    
+
     void evaluateDiff(RayState& main, RayState* shiftedRays, int secondaryCount, Spectrum& out_veryDirect) {
         const Scene *scene = main.rRec.scene;
 
-        // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
-        if(main.pci->interList.size() == 0) return;
-        
-        //main.rRec.rayIntersect(main.ray);
-        main.rRec.its = main.pci->interList[0]; // get cached intersection
-        
+
+        if (main.pci->interList.size())
+            main.rRec.its = main.pci->interList[0]; // get cached intersection
+        else
+            main.rRec.rayIntersect(main.ray);
+
         main.ray.mint = Epsilon;
 
         // Perform the same first ray intersection for the offset paths.
@@ -705,11 +729,11 @@ public:
                     Float mainWeightNumerator = main.pdf * dRec.pdf;
                     Float mainWeightDenominator = (main.pdf * main.pdf) * ((dRec.pdf * dRec.pdf) + (mainBsdfPdf * mainBsdfPdf));
 
-                    
+
 #ifdef CENTRAL_RADIANCE
                     main.addRadiance(main.throughput * (mainBSDFValue * mainEmitterRadiance), mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
 #else
-                    if(secondaryCount == 0)
+                    if (secondaryCount == 0)
                         main.addRadiance(main.throughput * (mainBSDFValue * mainEmitterRadiance), mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
 #endif
 
@@ -844,12 +868,14 @@ public:
             /* ==================================================================== */
 
             // Sample a new direction from BSDF * cos(theta).
-            
+
             Point2 sample;
-            if(main.rRec.depth-1 < main.pci->bsdfSampleList.size())
-                sample = main.pci->bsdfSampleList[main.rRec.depth-1];
+
+            if (main.rRec.depth - 1 < main.pci->bsdfSampleList.size())
+                sample = main.pci->bsdfSampleList[main.rRec.depth - 1];
             else
                 sample = main.rRec.nextSample2D();
+
             BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
 
             if (mainBsdfResult.pdf <= (Float) 0.0) {
@@ -882,11 +908,12 @@ public:
 
             main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
 
-            if(main.rRec.depth < main.pci->interList.size()) 
+
+            if (main.rRec.depth < main.pci->interList.size())
                 main.rRec.its = main.pci->interList[main.rRec.depth]; // use cached intersection if possible
             else
                 scene->rayIntersect(main.ray, main.rRec.its);
-            
+
             if (main.rRec.its.isValid()) {
                 // Intersected something - check if it was a luminaire.
                 if (main.rRec.its.isEmitter()) {
@@ -1297,6 +1324,7 @@ shift_failed:
                     shifted.pdf *= q;
                 }
             }
+            //return;
         }
 
         // Store statistics.
@@ -1304,11 +1332,94 @@ shift_failed:
         avgPathLength += main.rRec.depth;
     }
 
+    void evaluateDiffOrig(RayState& main, RayState* shiftedRays, int secondaryCount, Spectrum& out_veryDirect) {
+        const Scene *scene = main.rRec.scene;
+
+        // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
+        main.rRec.rayIntersect(main.ray);
+        main.ray.mint = Epsilon;
+        if (!main.rRec.its.isValid()) return;
+
+        main.pci->interList.push_back(main.rRec.its); // add cache info
+
+        // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
+        if (m_config->m_strictNormals) {
+            // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
+            if (dot(main.ray.d, main.rRec.its.geoFrame.n) * Frame::cosTheta(main.rRec.its.wi) >= 0) {
+                // This is an impossible base path.
+                return;
+            }
+        }
+
+        // Main path tracing loop.
+        main.rRec.depth = 1;
+
+        while (main.rRec.depth < m_config->m_maxDepth || m_config->m_maxDepth < 0) {
+
+            //if(main.rRec.depth >= m_config->m_maxMergeDepth) break;
+            // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
+            // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
+            if (m_config->m_strictNormals) {
+                if (dot(main.ray.d, main.rRec.its.geoFrame.n) * Frame::cosTheta(main.rRec.its.wi) >= 0) {
+                    // This is an impossible main path, and there are no more paths to shift.
+                    return;
+                }
+            }
+
+            Point2 sample = main.rRec.nextSample2D();
+            // Sample a new direction from BSDF * cos(theta).
+            BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
+
+            main.pci->bsdfSampleList.push_back(sample); // cache bsdf sample
+
+            if (mainBsdfResult.pdf <= (Float) 0.0) {
+                // Impossible base path.
+                break;
+            }
+
+            const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
+
+            // Prevent light leaks due to the use of shading normals.
+            Float mainWoDotGeoN = dot(main.rRec.its.geoFrame.n, mainWo);
+            if (m_config->m_strictNormals && mainWoDotGeoN * Frame::cosTheta(mainBsdfResult.bRec.wo) <= 0) {
+                break;
+            }
+
+
+            main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
+
+            if (!scene->rayIntersect(main.ray, main.rRec.its)) break;
+
+            main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
+            main.pdf *= mainBsdfResult.pdf;
+            main.eta *= mainBsdfResult.bRec.eta;
+
+
+
+            // Stop if the base path hit the environment.
+            main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
+            if (!main.rRec.its.isValid() || !(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
+                break;
+            }
+
+            if (main.rRec.depth++ >= m_config->m_rrDepth) {
+                /* Russian roulette: try to keep path weights equal to one,
+                   while accounting for the solid angle compression at refractive
+                   index boundaries. Stop with at least some probability to avoid
+                   getting stuck (e.g. due to total internal reflection) */
+
+                Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
+                //if (main.rRec.nextSample1D() >= q) break;
+
+                //main.pdf *= q;
+            }
+        }
+    }
+
 private:
     const Scene* m_scene;
     const Sensor* m_sensor;
     Sampler* m_sampler;
-    UGPTWorkResult* m_block;
     const UnstructuredGradientPathTracerConfig* m_config;
 };
 
@@ -1328,36 +1439,37 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Pro
         Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
 }
 
-void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler)
-{
+void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
+
     bool needsApertureSample = sensor->needsApertureSample();
     bool needsTimeSample = sensor->needsTimeSample();
     // Get ready for sampling.
-    
-    RadianceQueryRecord rRec(scene, sampler);
 
-    Point2 apertureSample(0.5f);
-    Float timeSample = 0.5f;
-    
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
     const int& bx = ceil(cx / double(bSize));
     const int& by = ceil(cy / double(bSize));
-    m_preCacheInfoList.resize(cx*cy);
 
-    UnstructuredGradientPathTracer tracer(scene, sensor, sampler, NULL, &m_config);
+
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
-    for(int blockIndex = 0; blockIndex < bx*by; blockIndex++)
-    {
-        for(int pointIndex = 0; pointIndex < bSize*bSize; pointIndex++)
-        {
-            int x = (blockIndex%bx)*bSize+pointIndex%bSize;
-            int y = (blockIndex/bx)*bSize+pointIndex/bSize;
-            if(x >= cx || y >= cy) continue;
-            PrecursorCacheInfo &pci = m_preCacheInfoList[y*cx+x];
+    for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
+        ref<Sampler> clonedSampler = sampler->clone();
+        Sampler* sampler = clonedSampler.get();
+
+        UnstructuredGradientPathTracer tracer(scene, sensor, sampler, &m_config);
+        Point2 apertureSample(0.5f);
+        Float timeSample = 0.5f;
+        RadianceQueryRecord rRec(scene, sampler);
+
+        for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
+            int x = (blockIndex % bx) * bSize + pointIndex % bSize;
+            int y = (blockIndex / bx) * bSize + pointIndex / bSize;
+            if (x >= cx || y >= cy) continue;
+
+            PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
             pci.clear();
             Point2i offset(x, y);
             sampler->generate(offset);
@@ -1377,53 +1489,60 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
             pci.apertureSample = apertureSample;
             pci.timeSample = timeSample;
             RayState mainRay;
-            mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray, 
+            mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray,
                     pci.samplePos, pci.apertureSample, pci.timeSample);
             mainRay.pci = &pci;
             mainRay.rRec = rRec;
             mainRay.rRec.its = rRec.its;
             tracer.evaluatePrecursor(mainRay);
+            //Spectrum very_direct = Spectrum(0.0f);
+            //tracer.evaluateDiffOrig(mainRay, NULL, 0, very_direct);
         }
     }
 }
 
-void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, Sensor *sensor, Sampler *sampler)
-{
+void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, Sensor *sensor, Sampler *sampler) {
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
     int bx = ceil(cx / double(bSize));
     int by = ceil(cy / double(bSize));
-    RadianceQueryRecord rRec(scene, sampler);
-    
-    // Original code from SamplingIntegrator.
-    Float diffScaleFactor = 1.0f / std::sqrt((Float) sampler->getSampleCount());
-    UnstructuredGradientPathTracer tracer(scene, sensor, sampler, NULL, &m_config);
-    
+
+
+
+
     ref<Film> film = sensor->getFilm();
-    
+
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
-#endif
-    for(int blockIndex = 0; blockIndex < bx*by; blockIndex++)
-    {
-        ref<ImageBlock> block = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(cx, cy), 
+#endif    
+    for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
+        ref<Sampler> clonedSampler = sampler->clone();
+        Sampler* sampler = clonedSampler.get();
+
+        // Original code from SamplingIntegrator.
+        Float diffScaleFactor = 1.0f / std::sqrt((Float) sampler->getSampleCount());
+        UnstructuredGradientPathTracer tracer(scene, sensor, sampler, &m_config);
+        RadianceQueryRecord rRec(scene, sampler);
+        ref<ImageBlock> block = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(cx, cy),
                 film->getReconstructionFilter());
-        block->setOffset(Point2i((blockIndex%bx)*bSize, (blockIndex/bx)*bSize));
+        block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
         block->clear();
-        for(int pointIndex = 0; pointIndex < bSize*bSize; pointIndex++)
-        {
-            int x = block->getOffset().x + pointIndex%bSize;
-            int y = block->getOffset().y + pointIndex/bSize;
-            
-            if(x >= cx || y >= cy) continue;
-            PrecursorCacheInfo &pci = m_preCacheInfoList[y*cx+x];
-            
+
+
+
+        for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
+            int x = block->getOffset().x + pointIndex % bSize;
+            int y = block->getOffset().y + pointIndex / bSize;
+
+            if (x >= cx || y >= cy) continue;
+            PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
+
             rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
-            
+
             // Initialize the base path.
             RayState mainRay;
-            mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray, 
+            mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray,
                     pci.samplePos, pci.apertureSample, pci.timeSample);
             mainRay.ray.scaleDifferential(diffScaleFactor);
             mainRay.rRec = rRec;
@@ -1437,152 +1556,9 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, Sensor *s
     }
 }
 
-void UnstructuredGradientPathIntegrator::renderBlock(const Scene *scene, const Sensor *sensor, Sampler *sampler, UGPTWorkResult* block,
-        const bool &stop, const std::vector< TPoint2<uint8_t> > &points) const {
-    UnstructuredGradientPathTracer tracer(scene, sensor, sampler, block, &m_config);
-
-    bool needsApertureSample = sensor->needsApertureSample();
-    bool needsTimeSample = sensor->needsTimeSample();
-
-
-    // Original code from SamplingIntegrator.
-    Float diffScaleFactor = 1.0f / std::sqrt((Float) sampler->getSampleCount());
-
-    // Get ready for sampling.
-    RadianceQueryRecord rRec(scene, sampler);
-
-    Point2 apertureSample(0.5f);
-    Float timeSample = 0.5f;
-
-    block->clear();
-
-    // Sample at the given positions.
-    Spectrum gradients[4];
-    Spectrum shiftedThroughputs[4];
-
-    for (size_t i = 0; i < points.size(); ++i) {
-        if (stop) {
-            break;
-        }
-        
-        Point2i offset = Point2i(points[i]) + Vector2i(block->getOffset());
-        
-        const PrecursorCacheInfo &pci = m_preCacheInfoList[offset.y*sensor->getFilm()->getCropSize().x+offset.x];
-        
-        sampler->generate(offset);
-       
-
-        // Get the initial ray to sample.
-        rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
-        
-        const Point2& samplePos = pci.samplePos;
-        const Point2& apertureSample = pci.apertureSample;
-        const Float& timeSample = pci.timeSample;
-
-        // Do the actual sampling.
-        Spectrum centralVeryDirect = Spectrum(0.0f);
-        Spectrum centralThroughput = Spectrum(0.0f);
-
-        tracer.evaluatePoint(rRec, samplePos, apertureSample, timeSample, diffScaleFactor, centralVeryDirect, centralThroughput, gradients, shiftedThroughputs);
-
-
-
-        // Accumulate results.
-        const Point2 right_pixel = samplePos + Vector2(1.0f, 0.0f);
-        const Point2 bottom_pixel = samplePos + Vector2(0.0f, 1.0f);
-        const Point2 left_pixel = samplePos - Vector2(1.0f, 0.0f);
-        const Point2 top_pixel = samplePos - Vector2(0.0f, 1.0f);
-        const Point2 center_pixel = samplePos;
-
-        static const int RIGHT = 0;
-        static const int BOTTOM = 1;
-        static const int LEFT = 2;
-        static const int TOP = 3;
-
-
-        // Note: Sampling differences and throughputs to multiple directions is essentially
-        //       multiple importance sampling (MIS) between the pixels.
-        //
-        //       For a sample from a strategy participating in the MIS to be unbiased, we need to
-        //       divide its result by the selection probability of that strategy.
-        //
-        //       As the selection probability is 0.5 for both directions (no adaptive sampling),
-        //       we need to multiply the results by two.
-
-        // Note: The central pixel is estimated as
-        //               1/4 * (throughput estimate sampled from MIS(center, top)
-        //                      + throughput estimate sampled from MIS(center, right)
-        //                      + throughput estimate sampled from MIS(center, bottom)
-        //                      + throughput estimate sampled from MIS(center, left)).
-        //
-        //       Variable centralThroughput is the sum of four throughput estimates sampled
-        //       from each of these distributions, from the central pixel, so it's actually four samples,
-        //       and thus its weight is 4.
-        //
-        //       The other samples from the MIS'd distributions will be sampled from the neighboring pixels,
-        //       and their weight is 1.
-        //
-        //       If this feels too complicated, it should be OK to output a standard throughput sample from
-        //       the path tracer.
-
-        // Add the throughput image as a preview. Note: Preview and final buffers are shared.
-        {
-#ifdef CENTRAL_RADIANCE
-            block->put(samplePos, centralVeryDirect + centralThroughput, 1.0f, 1.0f, BUFFER_FINAL); // Standard throughput estimate with direct.
-#else
-            block->put(samplePos, (8 * centralVeryDirect) + (2 * centralThroughput), 4.0f, 4.0f, BUFFER_FINAL); // Adds very direct on top of the throughput image.
-
-            block->put(left_pixel, (2 * shiftedThroughputs[LEFT]), 1.0f, 1.0f, BUFFER_FINAL); // Negative x throughput.
-            block->put(right_pixel, (2 * shiftedThroughputs[RIGHT]), 1.0f, 1.0f, BUFFER_FINAL); // Positive x throughput.
-            block->put(top_pixel, (2 * shiftedThroughputs[TOP]), 1.0f, 1.0f, BUFFER_FINAL); // Negative y throughput.
-            block->put(bottom_pixel, (2 * shiftedThroughputs[BOTTOM]), 1.0f, 1.0f, BUFFER_FINAL); // Positive y throughput.
-#endif
-        }
-
-        // Actual throughputs, with MIS between central and neighbor pixels for all neighbors.
-        // This can be replaced with a standard throughput sample without much loss of quality in most cases.
-        {
-#ifdef CENTRAL_RADIANCE
-            block->put(samplePos, centralThroughput, 1.0f, 1.0f, BUFFER_THROUGHPUT); // Standard throughput estimate.
-#else
-            block->put(samplePos, (2 * centralThroughput), 4.0f, 4.0f, BUFFER_THROUGHPUT); // Central throughput.
-
-            block->put(left_pixel, (2 * shiftedThroughputs[LEFT]), 1.0f, 1.0f, BUFFER_THROUGHPUT); // Negative x throughput.
-            block->put(right_pixel, (2 * shiftedThroughputs[RIGHT]), 1.0f, 1.0f, BUFFER_THROUGHPUT); // Positive x throughput.
-            block->put(top_pixel, (2 * shiftedThroughputs[TOP]), 1.0f, 1.0f, BUFFER_THROUGHPUT); // Negative y throughput.
-            block->put(bottom_pixel, (2 * shiftedThroughputs[BOTTOM]), 1.0f, 1.0f, BUFFER_THROUGHPUT); // Positive y throughput.
-#endif
-        }
-
-        // Gradients.
-        {
-            block->put(left_pixel, -(2 * gradients[LEFT]), 1.0f, 1.0f, BUFFER_DX); // Negative x gradient.
-            block->put(center_pixel, (2 * gradients[RIGHT]), 1.0f, 1.0f, BUFFER_DX); // Positive x gradient.
-            block->put(top_pixel, -(2 * gradients[TOP]), 1.0f, 1.0f, BUFFER_DY); // Negative y gradient.
-            block->put(center_pixel, (2 * gradients[BOTTOM]), 1.0f, 1.0f, BUFFER_DY); // Positive y gradient.
-        }
-
-        // Very direct.
-        block->put(center_pixel, centralVeryDirect, 1.0f, 1.0f, BUFFER_VERY_DIRECT);
-    }
-}
-
 /// Custom render function that samples a number of paths for evaluating differences between pixels.
 
 #include <sys/time.h>
-
-class MyTimer
-{
-protected:
-    timeval ts, te;
-public:
-    void tic() { gettimeofday(&ts, NULL); }
-    double toc() 
-    { 
-        gettimeofday(&te, NULL);
-        return double(te.tv_sec - ts.tv_sec)+double(te.tv_usec-ts.tv_usec)*1e-6;
-    }
-};
 
 bool UnstructuredGradientPathIntegrator::render(Scene *scene,
         RenderQueue *queue, const RenderJob *job,
@@ -1628,30 +1604,50 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
 
 
     /* This is a sampling-based integrator - parallelize. */
-    
+
     bool success = true;
-    
-    MyTimer timer;
-    
-    for(int i = 0; i< sampler->getSampleCount(); i++)
-    {
+
+    class MyTimer {
+    protected:
+        timeval ts, te;
+    public:
+
+        void tic() {
+            gettimeofday(&ts, NULL);
+        }
+
+        double toc() {
+            gettimeofday(&te, NULL);
+            return double(te.tv_sec - ts.tv_sec) + double(te.tv_usec - ts.tv_usec)*1e-6;
+        }
+    } timer;
+
+    m_process = NULL;
+
+    const int& cx = sensor->getFilm()->getCropSize().x;
+    const int& cy = sensor->getFilm()->getCropSize().y;
+    m_preCacheInfoList.resize(cx * cy);
+
+#if defined(MTS_OPENMP)
+    Thread::initializeOpenMP(nCores);
+#endif
+
+    for (int i = 0; i < sampler->getSampleCount(); i++) {
         timer.tic();
         // trace precursor
         tracePrecursor(scene, sensor, sampler);
-        
-        
+
+
         // figure out neighbors
         {
-        
+
         }
-        
+
         // trace difference
         traceDiff(scene, sensor, sampler);
+        queue->signalRefresh(job);
         printf("%0.3lf ms per iteration\n", timer.toc()*1e3);
-        
     }
-    m_process = NULL;
-
     return success;
 }
 
@@ -1672,7 +1668,7 @@ Spectrum UnstructuredGradientPathIntegrator::Li(const RayDifferential &r, Radian
 
     Spectrum throughput(1.0f);
     Float eta = 1.0f;
-    
+
 
     while (rRec.depth <= m_maxDepth || m_maxDepth < 0) {
         if (!its.isValid()) {

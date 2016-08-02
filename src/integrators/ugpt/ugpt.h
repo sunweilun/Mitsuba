@@ -20,7 +20,6 @@
 #define __UGPT_H
 
 #include <mitsuba/mitsuba.h>
-#include "ugpt_wr.h"
 
 MTS_NAMESPACE_BEGIN
 
@@ -71,6 +70,11 @@ struct PrecursorCacheInfo
     }
 };
 
+struct GradientMeshNode
+{
+    std::vector<int> neighbors;
+};
+
 class UnstructuredGradientPathIntegrator : public MonteCarloIntegrator {
 public:
     UnstructuredGradientPathIntegrator(const Properties &props);
@@ -86,8 +90,6 @@ public:
 
 
     /// Renders a block in the image.
-    void renderBlock(const Scene *scene, const Sensor *sensor, Sampler *sampler, UGPTWorkResult *block,
-            const bool &stop, const std::vector< TPoint2<uint8_t> > &points) const;
 
     void serialize(Stream *stream, InstanceManager *manager) const;
     std::string toString() const;
@@ -101,9 +103,10 @@ public:
 protected:
     
     std::vector<PrecursorCacheInfo> m_preCacheInfoList;
-    std::vector<Spectrum> imageInfo;
     
     void tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler);
+    
+    void decideNeighbors();
     
     void traceDiff(const Scene *scene, Sensor *sensor, Sampler *sampler);
 private:
