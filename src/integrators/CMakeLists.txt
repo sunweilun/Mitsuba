@@ -1,3 +1,5 @@
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
 # Integrators
 if (NOT MTS_VERSION)
   message(FATAL_ERROR "Use the top level configuration file")

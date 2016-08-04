@@ -65,67 +65,67 @@ MTS_NAMESPACE_BEGIN
         /// A threshold to use in positive denominators to avoid division by zero.
         const Float D_EPSILON = (Float) (1e-14);
 
-
 #include "nanoflann.hpp"
 
+#define DUMP_GRAPH 0
+
 void UnstructuredGradientPathIntegrator::decideNeighbors() {
-
-    struct PointCloud {
-        struct Point {
-//            GradIntegrator::PathNode* pn;
-//            int depth;
-//            int index;
-//            std::vector<std::pair<size_t, float> > indices_dists;
-//            tbb::concurrent_vector<size_t> neighbors;
-//            tbb::mutex vecMutex;
-//
-//            Point() {
-//                neighbors.reserve(10);
-//                indices_dists.reserve(10);
-//            }
-        };
-
-        std::vector<Point> nodes;
-
-//        void load(std::vector<GradIntegrator::TraceInfo>& ti_list, int d) {
-//            for (int i = 0; i < ti_list.size(); i++) {
-//                for (int j = 1; j < ti_list[i].path.size(); j++) {
-//                    Point p;
-//                    p.pn = &ti_list[i].path[j];
-//                    p.index = i;
-//                    p.depth = j;
-//                    if (j == d && p.pn->lightPath.lastRay)
-//                        nodes.push_back(p);
-//                }
-//            }
-//        }
-
-        inline size_t kdtree_get_point_count() const {
-            return nodes.size();
+    
+    m_pc.nodes.clear();
+    for (int mergeDepth = 0; mergeDepth < m_config.m_maxMergeDepth; mergeDepth++)
+    {
+        // collect nodes for mergeDepth
+        for(auto& pci : m_preCacheInfoList) 
+        {
+            if(mergeDepth >= pci.nodes.size() || !pci.nodes[mergeDepth].its.isValid()) 
+                continue;
+            m_pc.nodes.push_back(&pci.nodes[mergeDepth]);
         }
-
-        inline float kdtree_distance(const float* p1, const size_t idx_p2, size_t) const {
-//            const float d0 = p1[0] - nodes[idx_p2].pn->dg.P.x;
-//            const float d1 = p1[1] - nodes[idx_p2].pn->dg.P.y;
-//            const float d2 = p1[2] - nodes[idx_p2].pn->dg.P.z;
-//            return d0 * d0 + d1 * d1 + d2*d2;
+        
+        // build connection through radius search
+        {
+            typedef nanoflann::KDTreeSingleIndexAdaptor<
+            nanoflann::L2_Simple_Adaptor<Float, PointCloud> ,
+                PointCloud, 3 /* dim */ > kd_tree_t;
+            kd_tree_t* index = new kd_tree_t(3, m_pc, nanoflann::KDTreeSingleIndexAdaptorParams());
+            index->buildIndex(); // This can be parallelized later.
+            const float radius = 0.02f*0.02f;
+            
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
+            for(int i=0; i<m_pc.nodes.size(); i++)
+            {
+                Float* query_pt = (Float*)&m_pc.nodes[i]->its.p;
+                std::vector<std::pair<size_t, float> > indices_dists;
+                nanoflann::RadiusResultSet<Float> resultSet(radius, indices_dists);
+                index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+                for(auto& item : indices_dists)
+                {
+                    if(item.first == i) continue;
+                    m_pc.nodes[i]->neighbors.push_back(m_pc.nodes[item.first]);
+                }
+            }
+            delete index;
+            
+#if DUMP_GRAPH
+            FILE* file = fopen("graph.txt", "w");
+            for(int i=0; i<m_pc.nodes.size(); i++)
+                fprintf(file, "p %f %f %f %d\n", m_pc.nodes[i]->its.p.x, m_pc.nodes[i]->its.p.y, m_pc.nodes[i]->its.p.z, 0);
+            for(int i=0; i<m_pc.nodes.size(); i++)
+            {
+                for(auto neighbor : m_pc.nodes[i]->neighbors)
+                {
+                    fprintf(file, "l %f %f %f ", neighbor->its.p.x, neighbor->its.p.y, neighbor->its.p.z);
+                    fprintf(file, "%f %f %f\n", m_pc.nodes[i]->its.p.x, m_pc.nodes[i]->its.p.y, m_pc.nodes[i]->its.p.z);
+                }
+            }
+            fclose(file);
+#endif
         }
+    }
 
-        inline float kdtree_get_pt(const size_t idx, int dim) const {
-//            if (dim == 0) return nodes[idx].pn->dg.P.x;
-//            else if (dim == 1) return nodes[idx].pn->dg.P.y;
-//            else return nodes[idx].pn->dg.P.z;
-        }
-
-        template <class BBOX>
-        bool kdtree_get_bbox(BBOX& /* bb */) const {
-            return false;
-        }
-    } cloud;
 }
-
-/// If defined, uses only the central sample for the throughput estimate. Otherwise uses offset paths for estimating throughput too.
-//#define CENTRAL_RADIANCE
 
 /// If defined, applies reconstruction after rendering.
 #define RECONSTRUCT
@@ -201,9 +201,6 @@ enum RayConnection {
     RAY_RECENTLY_CONNECTED, ///< Connected, but different incoming direction so needs a BSDF evaluation.
     RAY_CONNECTED ///< Connected, allows using BSDF values from the base path.
 };
-
-
-
 
 /// Describes the state of a ray that is being traced in the scene.
 
@@ -518,7 +515,9 @@ public:
         // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
         main.rRec.rayIntersect(main.ray);
         main.ray.mint = Epsilon;
-        main.pci->interList.push_back(main.rRec.its); // add cache info
+        main.pci->nodes.push_back(PathNode());
+        main.pci->nodes.back().its = main.rRec.its; // add cache info
+        main.pci->nodes.back().weight = main.throughput / main.pdf;
         if (!main.rRec.its.isValid()) return;
 
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
@@ -548,7 +547,7 @@ public:
             // Sample a new direction from BSDF * cos(theta).
             BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
 
-            main.pci->bsdfSampleList.push_back(sample); // cache bsdf sample
+            main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
 
             if (mainBsdfResult.pdf <= (Float) 0.0) {
                 // Impossible base path.
@@ -565,16 +564,20 @@ public:
 
             main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
 
-            main.pci->interList.push_back(main.rRec.its); // add cache info
-            if (!scene->rayIntersect(main.ray, main.rRec.its)) break;
+            scene->rayIntersect(main.ray, main.rRec.its);
+            main.pci->nodes.push_back(PathNode());
+            main.pci->nodes.back().its = main.rRec.its; // add cache info
+            
+            if (!main.rRec.its.isValid()) break;
 
             main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
             main.pdf *= mainBsdfResult.pdf;
             main.eta *= mainBsdfResult.bRec.eta;
+            main.pci->nodes.back().weight = main.throughput / main.pdf;
 
             // Stop if the base path hit the environment.
             main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
-            if (!main.rRec.its.isValid() || !(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
+            if (!(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
                 break;
             }
 
@@ -595,8 +598,8 @@ public:
         const Scene *scene = main.rRec.scene;
 
 
-        if (main.pci->interList.size())
-            main.rRec.its = main.pci->interList[0]; // get cached intersection
+        if (main.pci->nodes.size())
+            main.rRec.its = main.pci->nodes[0].its; // get cached intersection
         else
             main.rRec.rayIntersect(main.ray);
 
@@ -729,13 +732,10 @@ public:
                     Float mainWeightNumerator = main.pdf * dRec.pdf;
                     Float mainWeightDenominator = (main.pdf * main.pdf) * ((dRec.pdf * dRec.pdf) + (mainBsdfPdf * mainBsdfPdf));
 
-
-#ifdef CENTRAL_RADIANCE
+                    
                     main.addRadiance(main.throughput * (mainBSDFValue * mainEmitterRadiance), mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
-#else
-                    if (secondaryCount == 0)
-                        main.addRadiance(main.throughput * (mainBSDFValue * mainEmitterRadiance), mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
-#endif
+                    if(main.rRec.depth < main.pci->nodes.size())
+                        main.pci->nodes[main.rRec.depth].accumRad = main.radiance; // record accumulated radiance update
 
                     // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
                     if (!m_config->m_strictNormals || dot(main.rRec.its.geoFrame.n, dRec.d) * Frame::cosTheta(mainBRec.wo) > 0) {
@@ -852,11 +852,7 @@ public:
 
                             // Note: Using also the offset paths for the throughput estimate, like we do here, provides some advantage when a large reconstruction alpha is used,
                             // but using only throughputs of the base paths doesn't usually lose by much.
-
-#ifndef CENTRAL_RADIANCE
-                            main.addRadiance(mainContribution, weight);
-                            shifted.addRadiance(shiftedContribution, weight);
-#endif
+                            
                             shifted.addGradient(shiftedContribution - mainContribution, weight);
                         } // for(int i = 0; i < secondaryCount; ++i)
                     } // Strict normals
@@ -871,10 +867,16 @@ public:
 
             Point2 sample;
 
-            if (main.rRec.depth - 1 < main.pci->bsdfSampleList.size())
-                sample = main.pci->bsdfSampleList[main.rRec.depth - 1];
+            if (main.rRec.depth - 1 < main.pci->nodes.size())
+            {
+                sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
+            }
             else
                 sample = main.rRec.nextSample2D();
+            
+            sample = main.rRec.nextSample2D();
+            
+            
 
             BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
 
@@ -909,8 +911,8 @@ public:
             main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
 
 
-            if (main.rRec.depth < main.pci->interList.size())
-                main.rRec.its = main.pci->interList[main.rRec.depth]; // use cached intersection if possible
+            if (main.rRec.depth < main.pci->nodes.size())
+                main.rRec.its = main.pci->nodes[main.rRec.depth].its; // use cached intersection if possible
             else
                 scene->rayIntersect(main.ray, main.rRec.its);
 
@@ -963,15 +965,14 @@ public:
             const Float mainLumPdf = (mainHitEmitter && main.rRec.depth + 1 >= m_config->m_minDepth && !(mainBsdfResult.bRec.sampledType & BSDF::EDelta)) ?
                     scene->pdfEmitterDirect(mainDRec) : 0;
 
+            
             // Power heuristic weights for the following strategies: light sample from base, BSDF sample from base.
             Float mainWeightNumerator = mainPreviousPdf * mainBsdfResult.pdf;
             Float mainWeightDenominator = (mainPreviousPdf * mainPreviousPdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfPdf * mainBsdfPdf));
-
-#ifdef CENTRAL_RADIANCE
+            
             if (main.rRec.depth + 1 >= m_config->m_minDepth) {
                 main.addRadiance(main.throughput * mainEmitterRadiance, mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
             }
-#endif
 
             // Construct the offset paths and evaluate emitter hits.
 
@@ -1290,10 +1291,6 @@ shift_failed:
                 // Note: Using also the offset paths for the throughput estimate, like we do here, provides some advantage when a large reconstruction alpha is used,
                 // but using only throughputs of the base paths doesn't usually lose by much.
                 if (main.rRec.depth + 1 >= m_config->m_minDepth) {
-#ifndef CENTRAL_RADIANCE
-                    main.addRadiance(mainContribution, weight);
-                    shifted.addRadiance(shiftedContribution, weight);
-#endif
                     shifted.addGradient(shiftedContribution - mainContribution, weight);
                 }
 
@@ -1332,89 +1329,6 @@ shift_failed:
         avgPathLength += main.rRec.depth;
     }
 
-    void evaluateDiffOrig(RayState& main, RayState* shiftedRays, int secondaryCount, Spectrum& out_veryDirect) {
-        const Scene *scene = main.rRec.scene;
-
-        // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
-        main.rRec.rayIntersect(main.ray);
-        main.ray.mint = Epsilon;
-        if (!main.rRec.its.isValid()) return;
-
-        main.pci->interList.push_back(main.rRec.its); // add cache info
-
-        // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
-        if (m_config->m_strictNormals) {
-            // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
-            if (dot(main.ray.d, main.rRec.its.geoFrame.n) * Frame::cosTheta(main.rRec.its.wi) >= 0) {
-                // This is an impossible base path.
-                return;
-            }
-        }
-
-        // Main path tracing loop.
-        main.rRec.depth = 1;
-
-        while (main.rRec.depth < m_config->m_maxDepth || m_config->m_maxDepth < 0) {
-
-            //if(main.rRec.depth >= m_config->m_maxMergeDepth) break;
-            // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
-            // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
-            if (m_config->m_strictNormals) {
-                if (dot(main.ray.d, main.rRec.its.geoFrame.n) * Frame::cosTheta(main.rRec.its.wi) >= 0) {
-                    // This is an impossible main path, and there are no more paths to shift.
-                    return;
-                }
-            }
-
-            Point2 sample = main.rRec.nextSample2D();
-            // Sample a new direction from BSDF * cos(theta).
-            BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
-
-            main.pci->bsdfSampleList.push_back(sample); // cache bsdf sample
-
-            if (mainBsdfResult.pdf <= (Float) 0.0) {
-                // Impossible base path.
-                break;
-            }
-
-            const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
-
-            // Prevent light leaks due to the use of shading normals.
-            Float mainWoDotGeoN = dot(main.rRec.its.geoFrame.n, mainWo);
-            if (m_config->m_strictNormals && mainWoDotGeoN * Frame::cosTheta(mainBsdfResult.bRec.wo) <= 0) {
-                break;
-            }
-
-
-            main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
-
-            if (!scene->rayIntersect(main.ray, main.rRec.its)) break;
-
-            main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
-            main.pdf *= mainBsdfResult.pdf;
-            main.eta *= mainBsdfResult.bRec.eta;
-
-
-
-            // Stop if the base path hit the environment.
-            main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
-            if (!main.rRec.its.isValid() || !(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
-                break;
-            }
-
-            if (main.rRec.depth++ >= m_config->m_rrDepth) {
-                /* Russian roulette: try to keep path weights equal to one,
-                   while accounting for the solid angle compression at refractive
-                   index boundaries. Stop with at least some probability to avoid
-                   getting stuck (e.g. due to total internal reflection) */
-
-                Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
-                //if (main.rRec.nextSample1D() >= q) break;
-
-                //main.pdf *= q;
-            }
-        }
-    }
 
 private:
     const Scene* m_scene;
@@ -1451,13 +1365,18 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
     const int& bx = ceil(cx / double(bSize));
     const int& by = ceil(cy / double(bSize));
 
-
 #if defined(MTS_OPENMP)
+    ref<Scheduler> sched = Scheduler::getInstance();
+    const int& nCores = sched->getCoreCount();
+    ref_vector<Sampler> samplers(nCores);
+    for(int i=0; i<nCores; i++)
+        samplers[i] = sampler->clone();
 #pragma omp parallel for schedule(dynamic)
 #endif
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
-        ref<Sampler> clonedSampler = sampler->clone();
-        Sampler* sampler = clonedSampler.get();
+#if defined(MTS_OPENMP)
+        Sampler* sampler = samplers[omp_get_thread_num()];
+#endif
 
         UnstructuredGradientPathTracer tracer(scene, sensor, sampler, &m_config);
         Point2 apertureSample(0.5f);
@@ -1507,33 +1426,29 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, Sensor *s
     const int& bSize = scene->getBlockSize();
     int bx = ceil(cx / double(bSize));
     int by = ceil(cy / double(bSize));
-
-
-
-
-    ref<Film> film = sensor->getFilm();
-
-#if defined(MTS_OPENMP)
+    
+#if defined(MTS_OPENMP)    
+    ref<Scheduler> sched = Scheduler::getInstance();
+    const int& nCores = sched->getCoreCount();
+    ref_vector<Sampler> samplers(nCores);
+    for(int i=0; i<nCores; i++)
+        samplers[i] = sampler->clone();
 #pragma omp parallel for schedule(dynamic)
 #endif    
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
-        ref<Sampler> clonedSampler = sampler->clone();
-        Sampler* sampler = clonedSampler.get();
-
+#if defined(MTS_OPENMP)
+        Sampler* sampler = samplers[omp_get_thread_num()];
+#endif  
         // Original code from SamplingIntegrator.
         Float diffScaleFactor = 1.0f / std::sqrt((Float) sampler->getSampleCount());
         UnstructuredGradientPathTracer tracer(scene, sensor, sampler, &m_config);
         RadianceQueryRecord rRec(scene, sampler);
-        ref<ImageBlock> block = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(cx, cy),
-                film->getReconstructionFilter());
-        block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
-        block->clear();
-
-
+        
+        Point2i offset((blockIndex % bx) * bSize, (blockIndex / bx) * bSize);
 
         for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
-            int x = block->getOffset().x + pointIndex % bSize;
-            int y = block->getOffset().y + pointIndex / bSize;
+            int x = offset.x + pointIndex % bSize;
+            int y = offset.y + pointIndex / bSize;
 
             if (x >= cx || y >= cy) continue;
             PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
@@ -1550,12 +1465,52 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, Sensor *s
             mainRay.pci = &pci;
             Spectrum very_direct = Spectrum(0.0f);
             tracer.evaluateDiff(mainRay, NULL, 0, very_direct);
-            block->put(pci.samplePos, mainRay.radiance, 1.f);
+        }
+    }
+}
+
+void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor *sensor)
+{
+    
+    const int& cx = sensor->getFilm()->getCropSize().x;
+    const int& cy = sensor->getFilm()->getCropSize().y;
+    const int& bSize = scene->getBlockSize();
+    int bx = ceil(cx / double(bSize));
+    int by = ceil(cy / double(bSize));
+
+    ref<Film> film = sensor->getFilm();
+    
+#if defined(MTS_OPENMP)
+    ref<Scheduler> sched = Scheduler::getInstance();
+    const int& nCores = sched->getCoreCount();
+    ref_vector<ImageBlock> blocks(nCores);
+    for(int i=0; i<nCores; i++)
+        blocks[i] = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(bSize, bSize),
+                film->getReconstructionFilter());
+#pragma omp parallel for
+#else
+    ref<ImageBlock> block = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(bSize, bSize),
+                film->getReconstructionFilter());
+#endif    
+    for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
+#if defined(MTS_OPENMP)
+        ref<ImageBlock> block = blocks[omp_get_thread_num()];
+#endif 
+        block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
+        block->clear();
+        for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
+            
+            int x = block->getOffset().x + pointIndex % bSize;
+            int y = block->getOffset().y + pointIndex / bSize;
+            if (x >= cx || y >= cy) continue;
+            
+            PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
+            if(pci.nodes.size() >= 2)
+                block->put(pci.samplePos, pci.nodes[1].accumRad, 1.f);
         }
         film->putMulti(block, 0);
     }
 }
-
 /// Custom render function that samples a number of paths for evaluating differences between pixels.
 
 #include <sys/time.h>
@@ -1639,14 +1594,17 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
 
 
         // figure out neighbors
-        {
-
-        }
+        decideNeighbors();
 
         // trace difference
         traceDiff(scene, sensor, sampler);
-        queue->signalRefresh(job);
+        
+        // output
+        setOutputBuffer(scene, sensor);
+        
         printf("%0.3lf ms per iteration\n", timer.toc()*1e3);
+        queue->signalRefresh(job);
+        
     }
     return success;
 }

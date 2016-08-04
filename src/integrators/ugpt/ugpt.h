@@ -50,29 +50,42 @@ struct UnstructuredGradientPathTracerConfig {
 
 /* ==================================================================== */
 
+struct PathNode
+{
+    Intersection its; // intersection info
+    Point2 bsdfSample; // bsdf sample for next ray
+    Spectrum weight; // accumulated weight before intersection
+    Spectrum accumRad; // accumulated radiance from the camera ray before intersection
+    Spectrum estRad[2]; // estimated radiance from the ray before intersection
+    // We need 2 spectrum vectors to perform Jacobi iterations to update.
+    std::vector<PathNode*> neighbors; // We can use pointers here because PathNode structure is fixed when we set neighbors.
+    
+    PathNode()
+    {
+        neighbors.reserve(5);
+    }
+};
 
 struct PrecursorCacheInfo
 {
     Point2 samplePos;
     Point2 apertureSample;
     Float timeSample;
-    std::vector<Intersection> interList;
-    std::vector<Point2> bsdfSampleList;
+    std::vector<PathNode> nodes;
     PrecursorCacheInfo()
     {
-        interList.reserve(3);
-        bsdfSampleList.reserve(2);
+        nodes.reserve(5);
     }
     void clear()
     {
-        interList.clear();
-        bsdfSampleList.clear();
+        nodes.clear();
     }
 };
 
 struct GradientMeshNode
 {
     std::vector<int> neighbors;
+    
 };
 
 class UnstructuredGradientPathIntegrator : public MonteCarloIntegrator {
@@ -109,8 +122,35 @@ protected:
     void decideNeighbors();
     
     void traceDiff(const Scene *scene, Sensor *sensor, Sampler *sampler);
+    
+    void setOutputBuffer(const Scene *scene, Sensor *sensor);
 private:
     UnstructuredGradientPathTracerConfig m_config;
+    
+    struct PointCloud {
+        std::vector<PathNode*> nodes;
+        inline size_t kdtree_get_point_count() const {
+            return nodes.size();
+        }
+
+        inline float kdtree_distance(const float* p1, const size_t idx_p2, size_t) const {
+            const float d0 = p1[0] - nodes[idx_p2]->its.p.x;
+            const float d1 = p1[1] - nodes[idx_p2]->its.p.y;
+            const float d2 = p1[2] - nodes[idx_p2]->its.p.z;
+            return d0 * d0 + d1 * d1 + d2 * d2;
+        }
+
+        inline float kdtree_get_pt(const size_t idx, int dim) const {
+            return nodes[idx]->its.p[dim];
+        }
+
+        template <class BBOX>
+        bool kdtree_get_bbox(BBOX& /* bb */) const {
+            return false;
+        }
+    };
+    
+    PointCloud m_pc;
 
 };
 
