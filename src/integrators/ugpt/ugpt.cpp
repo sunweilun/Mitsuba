@@ -70,17 +70,19 @@ MTS_NAMESPACE_BEGIN
 #define DUMP_GRAPH 0
 
 void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
-    bool use_pixel_neighbors = false;
+    bool use_pixel_neighbors = true;
     
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
+    m_pc.nodes.clear();
     for (int mergeDepth = m_config.m_minMergeDepth; mergeDepth < m_config.m_maxMergeDepth; mergeDepth++) {
-        m_pc.nodes.clear();
+        
         if (mergeDepth == 0 && use_pixel_neighbors) {
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
             for (int i = 0; i < m_preCacheInfoList.size(); i++) {
+                if(!m_preCacheInfoList[i].nodes[0].its.isValid()) continue;
                 int x = i % cx;
                 int y = i / cx;
                 Vector2i center(x, y);
@@ -93,6 +95,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
                     if (n.x >= cx || n.y >= cy || n.x < 0 || n.y < 0)
                         continue;
                     int j = n.y * cx + n.x;
+                    if(!m_preCacheInfoList[j].nodes[0].its.isValid()) continue;
                     m_preCacheInfoList[i].nodes[0].neighbors.push_back(&m_preCacheInfoList[j].nodes[0]);
                 }
             }
@@ -100,6 +103,8 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
         }
 
         // collect nodes for mergeDepth
+        m_pc.nodes.clear();
+        
         for (auto& pci : m_preCacheInfoList) {
             if (mergeDepth >= pci.nodes.size() || !pci.nodes[mergeDepth].its.isValid())
                 continue;
@@ -179,18 +184,22 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene *scene) {
     chunk_size *= chunk_size;
 
     for (int i = m_config.m_maxMergeDepth - 1; i >= m_config.m_minMergeDepth; i--) {
+
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
+            
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
+            // update current buffer
             for (int k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
                 for (int n = 0; n < chunk_size; n++) {
-                    if (k + n >= m_preCacheInfoList.size()) continue;
-                    auto& pci = m_preCacheInfoList[k + n];
-                    auto& node = pci.nodes[i];
+                    int index = k+n;
+                    if (index >= m_preCacheInfoList.size()) continue;
+                    auto& pci = m_preCacheInfoList[index];
                     if (i < pci.nodes.size()) {
+                        auto& node = pci.nodes[i];
                         Float w(0);
                         Spectrum color(Float(0));
                         color += node.estRad[src];
@@ -205,6 +214,25 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene *scene) {
                 }
             }
         }
+        
+        if(i == 0) continue;
+            
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
+        // propagate to previous depth
+        for (int k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
+            for (int n = 0; n < chunk_size; n++) {
+                int index = k+n;
+                if (index >= m_preCacheInfoList.size()) continue;
+                auto& pci = m_preCacheInfoList[index];
+
+                if(i >= pci.nodes.size()) continue;
+                pci.nodes[i-1].estRad[0] = pci.nodes[i-1].accumRad;
+                pci.nodes[i-1].estRad[0] += pci.nodes[i].estRad[m_config.m_nJacobiIters%2] * pci.nodes[i].weight;
+            }
+        }
+        
     }
 }
 
@@ -213,13 +241,6 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene *scene) {
 
 
 static StatsCounter avgPathLength("Unstructured Gradient Path Tracer", "Average path length", EAverage);
-
-// Output buffer names.
-static const size_t BUFFER_FINAL = 0; ///< Buffer index for the final image. Also used for preview.
-static const size_t BUFFER_THROUGHPUT = 1; ///< Buffer index for the noisy color image.
-static const size_t BUFFER_DX = 2; ///< Buffer index for the X gradients.
-static const size_t BUFFER_DY = 3; ///< Buffer index for the Y gradients.
-static const size_t BUFFER_VERY_DIRECT = 4; ///< Buffer index for very direct light.
 
 
 /// Returns whether point1 sees point2.
@@ -283,11 +304,14 @@ enum RayConnection {
 struct RayState {
 
     RayState()
-    : radiance(0.0f),
+    : 
+    radiance(0.0f),
     gradient(0.0f),
     eta(1.0f),
     pdf(1.0f),
-    throughput(Spectrum(0.0f)),
+    throughput(Spectrum(1.0f)),
+    main_pdf(1.0f),
+    main_throughput(Spectrum(1.0f)),
     alive(true),
     activeDepth(0),
     connection_status(RAY_NOT_CONNECTED) {
@@ -316,6 +340,8 @@ struct RayState {
 
     Spectrum radiance; ///< Radiance accumulated so far.
     Spectrum gradient; ///< Gradient accumulated so far.
+    Spectrum main_throughput;
+    Float main_pdf;
 
     RadianceQueryRecord rRec; ///< The radiance query record for this ray.
     Float eta; ///< Current refractive index of the ray.
@@ -701,8 +727,6 @@ public:
 
         main.rRec.depth = 0;
         
-        std::vector<Spectrum> main_throughput_list;
-        std::vector<Float> main_pdf_list;
 
         if (main.pci->nodes.size()) {
             main.rRec.its = main.pci->nodes[0].its; // get cached intersection
@@ -771,15 +795,8 @@ public:
             
             if (main.rRec.depth < main.pci->nodes.size()) {
                 main.pci->nodes[main.rRec.depth].accumRad = main.radiance; // record accumulated radiance estimate up to this point
-                // record through put and pdf for shifted rays that activates after 1 bounce
-                
             }
             
-            if(main.rRec.depth <= m_config->m_maxMergeDepth)
-            {
-                main_throughput_list.push_back(main.throughput);
-                main_pdf_list.push_back(main.pdf);
-            }
 
             // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
             // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
@@ -852,8 +869,8 @@ public:
                     if (!m_config->m_strictNormals || dot(main.rRec.its.geoFrame.n, dRec.d) * Frame::cosTheta(mainBRec.wo) > 0) {
                         // The base path is good. Add radiance differences to offset paths.
                         for (RayState& shifted : shiftedRays) {
-                            Spectrum main_throughput = main.throughput / main_throughput_list[shifted.activeDepth];
-                            Float main_pdf = main.pdf / main_pdf_list[shifted.activeDepth];
+                            Spectrum &main_throughput = shifted.main_throughput;
+                            Float &main_pdf = shifted.main_pdf;
                             Float mainWeightNumerator = main_pdf * dRec.pdf;
                             Float mainWeightDenominator = (main_pdf * main_pdf) * ((dRec.pdf * dRec.pdf) + (mainBsdfPdf * mainBsdfPdf));
 
@@ -1091,9 +1108,12 @@ public:
             // Construct the offset paths and evaluate emitter hits.
 
             for (RayState& shifted : shiftedRays) {
-                Spectrum main_throughput = main.throughput / main_throughput_list[shifted.activeDepth];
-                Float mainPrevPdf = mainPreviousPdf / main_pdf_list[shifted.activeDepth];
-                Float main_pdf = main.pdf / main_pdf_list[shifted.activeDepth];
+                Spectrum& main_throughput = shifted.main_throughput;
+                Float& main_pdf = shifted.main_pdf;
+                Float mainPrevPdf = main_pdf;
+                main_pdf *= mainBsdfResult.pdf;
+                main_throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
+                
                 Float mainWeightNumerator = mainPrevPdf * mainBsdfResult.pdf;
                 Float mainWeightDenominator = (mainPrevPdf * mainPrevPdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfPdf * mainBsdfPdf));
                 
@@ -1408,6 +1428,7 @@ shift_failed:
 
                 // Note: Using also the offset paths for the throughput estimate, like we do here, provides some advantage when a large reconstruction alpha is used,
                 // but using only throughputs of the base paths doesn't usually lose by much.
+
                 if (main.rRec.depth + 1 >= m_config->m_minDepth) {
                     shifted.addGradient(mainContribution, shiftedContribution, weight);
                 }
@@ -1465,7 +1486,7 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Pro
     m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
     m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 40);
-    m_config.m_minMergeDepth = (Float) props.getInteger("minMergeDepth", 1);
+    m_config.m_minMergeDepth = (Float) props.getInteger("minMergeDepth", 0);
     m_config.m_maxMergeDepth = (Float) props.getInteger("maxMergeDepth", 2);
 
     if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
@@ -1627,8 +1648,8 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
 
             PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
             int bufferID = m_config.m_nJacobiIters % 2;
-            if (pci.nodes.size() >= 2)
-                block->put(pci.samplePos, pci.nodes[1].estRad[bufferID], 1.f);
+            if (pci.nodes.size() >= 1)
+                block->put(pci.samplePos, pci.nodes[0].estRad[bufferID], 1.f);
         }
         film->putMulti(block, 0);
     }
