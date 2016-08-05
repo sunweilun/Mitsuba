@@ -40,6 +40,7 @@ struct UnstructuredGradientPathTracerConfig {
     bool m_reconstructL2;
     Float m_reconstructAlpha;
     int m_nJacobiIters;
+    int m_minMergeDepth;
     int m_maxMergeDepth;
 };
 
@@ -52,17 +53,26 @@ struct UnstructuredGradientPathTracerConfig {
 
 struct PathNode
 {
+    struct Neighbor
+    {
+        PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
+        Spectrum grad; // Gradient to that neighbor.
+        Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))) {}
+    };
+    RayDifferential lastRay; // ray before intersection
     Intersection its; // intersection info
     Point2 bsdfSample; // bsdf sample for next ray
     Spectrum weight; // accumulated weight before intersection
     Spectrum accumRad; // accumulated radiance from the camera ray before intersection
     Spectrum estRad[2]; // estimated radiance from the ray before intersection
-    // We need 2 spectrum vectors to perform Jacobi iterations to update.
-    std::vector<PathNode*> neighbors; // We can use pointers here because PathNode structure is fixed when we set neighbors.
+    // We need 2 spectrum vectors to perform Jacobi iterations.
+    std::vector<Neighbor> neighbors; 
     
     PathNode()
     {
         neighbors.reserve(5);
+        accumRad = estRad[0] = estRad[1] = Spectrum(Float(0));
+        weight = Spectrum(Float(1));
     }
 };
 
@@ -119,9 +129,13 @@ protected:
     
     void tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler);
     
-    void decideNeighbors();
+    void decideNeighbors(const Scene *scene, const Sensor *sensor);
     
-    void traceDiff(const Scene *scene, Sensor *sensor, Sampler *sampler);
+    void traceDiff(const Scene *scene, const Sensor *sensor, Sampler *sampler);
+    
+    void communicateBidirectionalDiff(const Scene *scene);
+    
+    void iterateJacobi(const Scene *scene);
     
     void setOutputBuffer(const Scene *scene, Sensor *sensor);
 private:

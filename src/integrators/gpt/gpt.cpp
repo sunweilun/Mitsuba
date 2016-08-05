@@ -1559,10 +1559,19 @@ bool GradientPathIntegrator::render(Scene *scene,
     }
     
 #if defined(MTS_OPENMP)
+    Thread::initializeOpenMP(nCores);
+#endif
+    int chunk_size = scene->getBlockSize();
+    chunk_size *= chunk_size;
+#if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
+    for (int i = 0; i < w*h; i += chunk_size) {
+        for (int c = 0; c < chunk_size; c++) {
+            int index = i+c;
+            int x = index % w;
+            int y = index / w;
+            if(x >= w || y >= h) continue;
             const Spectrum& color = iterBufferBitmap[n_iters%2]->getPixel(Point2i(x, y));
             const Spectrum& direct = directBitmap->getPixel(Point2i(x, y));
             iterBufferBitmap[n_iters%2]->setPixel(Point2i(x, y), color + direct);
