@@ -573,15 +573,15 @@
 		</param>
                 <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="20">
 			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
-		</param>	
-		<param name="reconstructL1" readableName="Reconstruct with L1" type="boolean" default="true">
-			If set, the rendering method reconstructs the final image using a reconstruction method that efficiently kills many image artifacts. The reconstruction is slightly biased, but the bias will go away by increasing sample count.
-		</param>		
-		<param name="reconstructL2" readableName="Reconstruct with L2" type="boolean" default="false">
-			If set, the rendering method reconstructs the final image using a reconstruction method that is unbiased, but sometimes introduces severe dipole artifacts.
 		</param>
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">
 			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
+		</param>
+                <param name="minMergeDepth" readableName="Minimum Merging Depth" type="integer" default="0">
+			Minimum merging depth for neighbor graph.
+		</param>
+                <param name="maxMergeDepth" readableName="Maximum Merging Depth" type="integer" default="1">
+			Maximum merging depth for neighbor graph.
 		</param>	
 	</plugin>
 
