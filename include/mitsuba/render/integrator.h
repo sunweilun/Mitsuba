@@ -367,7 +367,7 @@ public:
 	 * In this case, <tt>render()</tt> will quit with a return value of
 	 * <tt>false</tt>.
 	 */
-	void cancel();
+	virtual void cancel();
 
 	/**
 	 * This method does the main work of <tt>render()</tt> and

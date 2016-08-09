@@ -74,10 +74,13 @@ public:
 
     /// Used by Mitsuba for initializing sub-surface scattering.
     Spectrum Li(const RayDifferential &ray, RadianceQueryRecord &rRec) const;
+    
+    virtual void cancel() { m_cancelled = true; }
 
     MTS_DECLARE_CLASS()
 
 protected:
+    bool m_cancelled;
 
     void tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler);
 

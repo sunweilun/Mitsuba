@@ -143,6 +143,7 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
 }
 
 void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
+    if(m_cancelled) return;
     bool use_pixel_neighbors = false;
     neighborMethod = NEIGHBOR_KNN;
     
@@ -297,6 +298,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
 }
 
 void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor *sensor, Sampler * sampler) {
+    if(m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
@@ -346,6 +348,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
 }
 
 void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scene * scene) {
+    if(m_cancelled) return;
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
 #if defined(MTS_OPENMP)
@@ -374,6 +377,7 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
 }
 
 void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
+    if(m_cancelled) return;
     size_t chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
     
@@ -433,7 +437,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
 }
 
 void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor) {
-
+    if(m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
@@ -482,6 +486,8 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
 bool UnstructuredGradientPathIntegrator::render(Scene *scene,
         RenderQueue *queue, const RenderJob *job,
         int sceneResID, int sensorResID, int samplerResID) {
+    m_cancelled = false;
+    
     if (m_hideEmitters) {
         /* Not supported! */
         Log(EError, "Option 'hideEmitters' not implemented for Gradient-Domain Path Tracing!");
@@ -594,7 +600,6 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
 #if defined(PRINT_TIMING)
         printf("%-20s %5.0lf ms\n", "Jacobi-iteration", timer.toc()*1e3);
 #endif
-
         // output
         setOutputBuffer(scene, sensor);
 
@@ -603,6 +608,12 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
         printf("%-20s %5.0lf ms\n", "total", totalTimer.toc()*1e3);
         printf("\n");
 #endif
+        if(m_cancelled) 
+        {
+            queue->signalFinishJob(job, true);
+            break;
+        }
+        
         queue->signalRefresh(job);
     }
     return success;
