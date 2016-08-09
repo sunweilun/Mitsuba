@@ -20,6 +20,9 @@
 #define __UGPT_H
 
 #include <mitsuba/mitsuba.h>
+#if defined(MTS_OPENMP)
+#include <omp.h>
+#endif
 
 MTS_NAMESPACE_BEGIN
 
@@ -75,7 +78,7 @@ public:
     MTS_DECLARE_CLASS()
 
 protected:
-    
+
     void tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler);
 
     void decideNeighbors(const Scene *scene, const Sensor *sensor);
@@ -88,6 +91,10 @@ protected:
 
     void setOutputBuffer(const Scene *scene, Sensor *sensor);
 
+    enum NeighborMethod {
+        NEIGHBOR_RADIUS, NEIGHBOR_KNN
+    } neighborMethod;
+
     struct PathNode {
 
         struct Neighbor {
@@ -95,6 +102,17 @@ protected:
             Spectrum grad; // Gradient to that neighbor.
 
             Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))) {
+            }
+
+            Neighbor() {
+            }
+
+            bool operator<(const Neighbor& n) const {
+                return node < n.node;
+            }
+
+            bool operator==(const Neighbor& n) const {
+                return node == n.node;
             }
         };
         RayDifferential lastRay; // ray before intersection
@@ -105,12 +123,26 @@ protected:
         Spectrum estRad[2]; // estimated radiance for the ray before intersection
         // We need 2 spectrum vectors to perform Jacobi iterations.
         std::vector<Neighbor> neighbors; // neighbors of this node
+        bool addNeighborWithFilter(PathNode* neighbor);
+#if defined(MTS_OPENMP)
+        omp_lock_t writelock;
+#endif
 
         PathNode() {
             neighbors.reserve(5);
             accumRad = estRad[0] = estRad[1] = Spectrum(Float(0));
             weight = Spectrum(Float(1));
+            bsdfSample = Point2(-1.f, -1.f);
+#if defined(MTS_OPENMP)
+            omp_init_lock(&writelock);
+#endif
         }
+#if defined(MTS_OPENMP)
+
+        ~PathNode() {
+            omp_destroy_lock(&writelock);
+        }
+#endif
     };
 
     struct PrecursorCacheInfo {
@@ -335,7 +367,7 @@ protected:
         }
     };
     PointCloud m_pc;
-    
+
 };
 
 

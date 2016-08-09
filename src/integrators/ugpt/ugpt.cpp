@@ -20,7 +20,6 @@
 #include <mitsuba/render/scene.h>
 #include <mitsuba/core/statistics.h>
 #include <mitsuba/render/renderproc.h>
-#include <omp.h>
 #include "mitsuba/core/plugin.h"
 #include "ugpt.h"
 
@@ -63,140 +62,9 @@ MTS_NAMESPACE_BEGIN
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
 
+#if defined(PRINT_TIMING)
 #include <sys/time.h>
-
-
-bool UnstructuredGradientPathIntegrator::render(Scene *scene,
-        RenderQueue *queue, const RenderJob *job,
-        int sceneResID, int sensorResID, int samplerResID) {
-    if (m_hideEmitters) {
-        /* Not supported! */
-        Log(EError, "Option 'hideEmitters' not implemented for Gradient-Domain Path Tracing!");
-    }
-
-    /* Get config from the parent class. */
-    m_config.m_maxDepth = m_maxDepth;
-    m_config.m_minDepth = 1; // m_minDepth;
-    m_config.m_rrDepth = m_rrDepth;
-    m_config.m_strictNormals = m_strictNormals;
-
-    /* Code duplicated from SamplingIntegrator::Render. */
-    ref<Scheduler> sched = Scheduler::getInstance();
-    ref<Sensor> sensor = static_cast<Sensor *> (sched->getResource(sensorResID));
-
-    /* Set up MultiFilm. */
-    ref<Film> film = sensor->getFilm();
-
-    std::vector<std::string> outNames;
-    outNames.push_back("-final");
-    if (!film->setBuffers(outNames)) {
-        Log(EError, "Cannot render image! G-PT has been called without MultiFilm.");
-        return false;
-    }
-
-    size_t nCores = sched->getCoreCount();
-    Sampler *sampler = static_cast<Sampler *> (sched->getResource(samplerResID, 0));
-    size_t sampleCount = sampler->getSampleCount();
-
-    Log(EInfo, "Starting render job (GPT::render) (%ix%i, " SIZE_T_FMT " %s, " SIZE_T_FMT
-            " %s, " SSE_STR ") ..", film->getCropSize().x, film->getCropSize().y,
-            sampleCount, sampleCount == 1 ? "sample" : "samples", nCores,
-            nCores == 1 ? "core" : "cores");
-    /* This is a sampling-based integrator - parallelize. */
-    bool success = true;
-
-#if defined(PRINT_TIMING)
-    class MyTimer {
-    protected:
-        timeval ts, te;
-    public:
-
-        void tic() {
-            gettimeofday(&ts, NULL);
-        }
-
-        double toc() {
-            gettimeofday(&te, NULL);
-            return double(te.tv_sec - ts.tv_sec) + double(te.tv_usec - ts.tv_usec)*1e-6;
-        }
-    } timer, totalTimer;
 #endif
-    
-    m_process = NULL;
-
-    const int& cx = sensor->getFilm()->getCropSize().x;
-    const int& cy = sensor->getFilm()->getCropSize().y;
-    m_preCacheInfoList.resize(cx * cy);
-
-#if defined(MTS_OPENMP)
-    Thread::initializeOpenMP(nCores);
-#endif
-
-    for (int i = 0; i < sampler->getSampleCount(); i++) {
-        
-        // trace precursor
-#if defined(PRINT_TIMING)
-        totalTimer.tic();
-        timer.tic();
-        printf("Iteration #%d:\n", i);
-#endif
-        tracePrecursor(scene, sensor, sampler);
-#if defined(PRINT_TIMING)
-        printf("%-20s %5.0lf ms\n", "precursor", timer.toc()*1e3);
-#endif
-       
-        // figure out neighbors
-#if defined(PRINT_TIMING)
-        timer.tic();
-#endif       
-        decideNeighbors(scene, sensor);
-#if defined(PRINT_TIMING)
-        printf("%-20s %5.0lf ms\n", "neighbors", timer.toc()*1e3);
-#endif
-        
-        // trace difference
-#if defined(PRINT_TIMING)
-        timer.tic();
-#endif          
-        traceDiff(scene, sensor, sampler);
-#if defined(PRINT_TIMING)
-        printf("%-20s %5.0lf ms\n", "difference", timer.toc()*1e3);
-#endif
-        
-        // merge bidirectional difference samples
-#if defined(PRINT_TIMING)
-        timer.tic();
-#endif        
-        communicateBidirectionalDiff(scene);
-#if defined(PRINT_TIMING)
-        printf("%-20s %5.0lf ms\n", "bidir-merging", timer.toc()*1e3);
-#endif
-        
-        // Jacobi iterations
-#if defined(PRINT_TIMING)
-        timer.tic();
-#endif          
-        iterateJacobi(scene);
-#if defined(PRINT_TIMING)
-        printf("%-20s %5.0lf ms\n", "Jacobi-iteration", timer.toc()*1e3);
-#endif
-        
-        // output
-        setOutputBuffer(scene, sensor);
-        
-#if defined(PRINT_TIMING)
-        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-        printf("%-20s %5.0lf ms\n", "total", totalTimer.toc()*1e3);
-        printf("\n");
-#endif
-        queue->signalRefresh(job);
-    }
-    return success;
-}
-
-#include "nanoflann.hpp"
-
-
 
 void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
     bool needsApertureSample = sensor->needsApertureSample();
@@ -261,9 +129,25 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
     }
 }
 
-void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
-    bool use_pixel_neighbors = true;
+#if defined(MTS_OPENMP)
+#define NANOFLANN_USE_OMP
+#endif
+#include "nanoflann.hpp"
 
+bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor)
+{
+    if(dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.9f) return false;
+    if(neighbors.size() >= 6) return false;
+    neighbors.push_back(neighbor);
+    return true;
+}
+
+void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
+    bool use_pixel_neighbors = false;
+    neighborMethod = NEIGHBOR_KNN;
+    
+    size_t chunk_size = scene->getBlockSize();
+    chunk_size *= chunk_size;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     m_pc.nodes.clear();
@@ -273,22 +157,26 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
-            for (int i = 0; i < m_preCacheInfoList.size(); i++) {
-                if (!m_preCacheInfoList[i].nodes[0].its.isValid()) continue;
-                int x = i % cx;
-                int y = i / cx;
-                Vector2i center(x, y);
-                std::vector<Vector2i> neighbors;
-                neighbors.push_back(center + Vector2i(-1, 0));
-                neighbors.push_back(center + Vector2i(1, 0));
-                neighbors.push_back(center + Vector2i(0, -1));
-                neighbors.push_back(center + Vector2i(0, 1));
-                for (auto& n : neighbors) {
-                    if (n.x >= cx || n.y >= cy || n.x < 0 || n.y < 0)
-                        continue;
-                    int j = n.y * cx + n.x;
-                    if (!m_preCacheInfoList[j].nodes[0].its.isValid()) continue;
-                    m_preCacheInfoList[i].nodes[0].neighbors.push_back(&m_preCacheInfoList[j].nodes[0]);
+            for (size_t base = 0; base < m_preCacheInfoList.size(); base += chunk_size) {
+                for (size_t k = 0; k < chunk_size; k++) {
+                    size_t i = base + k;
+                    if (i >= cx * cy) continue;
+                    if (!m_preCacheInfoList[i].nodes[0].its.isValid()) continue;
+                    int x = i % cx;
+                    int y = i / cx;
+                    Vector2i center(x, y);
+                    std::vector<Vector2i> neighbors;
+                    neighbors.push_back(center + Vector2i(-1, 0));
+                    neighbors.push_back(center + Vector2i(1, 0));
+                    neighbors.push_back(center + Vector2i(0, -1));
+                    neighbors.push_back(center + Vector2i(0, 1));
+                    for (auto& n : neighbors) {
+                        if (n.x >= cx || n.y >= cy || n.x < 0 || n.y < 0)
+                            continue;
+                        int j = n.y * cx + n.x;
+                        if (!m_preCacheInfoList[j].nodes[0].its.isValid()) continue;
+                        m_preCacheInfoList[i].nodes[0].addNeighborWithFilter(&m_preCacheInfoList[j].nodes[0]);
+                    }
                 }
             }
             continue;
@@ -309,31 +197,96 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
                     nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
                     PointCloud, 3 /* dim */ > kd_tree_t;
             kd_tree_t* index = new kd_tree_t(3, m_pc, nanoflann::KDTreeSingleIndexAdaptorParams());
-            index->buildIndex(); // This can be parallelized later.
-            const Float radius = 0.05f * 0.05f;
+            index->buildIndex();
 
+            switch (neighborMethod) {
+                case NEIGHBOR_RADIUS:
+                {
+                    const Float radius = 0.05f * 0.05f;
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
-            for (int i = 0; i < m_pc.nodes.size(); i++) {
-                Float* query_pt = (Float*) & m_pc.nodes[i]->its.p;
-                std::vector<std::pair<size_t, Float> > indices_dists;
-                nanoflann::RadiusResultSet<Float> resultSet(radius, indices_dists);
-                index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
-                for (auto& item : indices_dists) {
-                    if (item.first == i) continue; // exclude self
-                    m_pc.nodes[i]->neighbors.push_back(m_pc.nodes[item.first]);
+                    for (size_t base = 0; base < m_pc.nodes.size(); base += chunk_size) {
+                        for (size_t k = 0; k < chunk_size; k++) {
+                            size_t i = base + k;
+                            if (i >= m_pc.nodes.size()) continue;
+                            Float* query_pt = (Float*) & m_pc.nodes[i]->its.p;
+                            std::vector<std::pair<size_t, Float> > indices_dists;
+                            nanoflann::RadiusResultSet<Float> resultSet(radius, indices_dists);
+                            index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+                            for (auto& item : indices_dists) {
+                                if (item.first == i) continue; // exclude self
+                                m_pc.nodes[i]->addNeighborWithFilter(m_pc.nodes[item.first]);
+                            }
+                        }
+                    }
+                    break;
+                }
+                case NEIGHBOR_KNN:
+                {
+                    const int nn = 7;
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
+                    for (size_t base = 0; base < m_pc.nodes.size(); base += chunk_size) {
+                        for (size_t k = 0; k < chunk_size; k++) {
+                            size_t i = base + k;
+                            if (i >= m_pc.nodes.size()) continue;
+                            Float* query_pt = (Float*) & m_pc.nodes[i]->its.p;
+                            std::vector<size_t> indices(nn);
+                            std::vector<Float> dist_sqr(nn);
+                            nanoflann::KNNResultSet<Float> resultSet(nn);
+                            resultSet.init(indices.data(), dist_sqr.data());
+                            index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+                            for (auto& neighbor_idx : indices) {
+                                if (neighbor_idx == i) continue; // exclude self
+#if defined(MTS_OPENMP)
+                                omp_set_lock(&m_pc.nodes[i]->writelock);
+#endif
+                                bool unfiltered = m_pc.nodes[i]->addNeighborWithFilter(m_pc.nodes[neighbor_idx]);
+#if defined(MTS_OPENMP)
+                                omp_unset_lock(&m_pc.nodes[i]->writelock);
+#endif                                
+                                if(!unfiltered) continue;
+#if defined(MTS_OPENMP)                           
+                                omp_set_lock(&m_pc.nodes[neighbor_idx]->writelock);
+#endif
+                                // make sure the graph is bidirectional, this may produce duplicated neighbors.
+                                m_pc.nodes[neighbor_idx]->neighbors.push_back(m_pc.nodes[i]);
+#if defined(MTS_OPENMP)
+                                omp_unset_lock(&m_pc.nodes[neighbor_idx]->writelock);
+#endif
+                            }
+                        }
+                    }
+                    // take out duplicated neighbors
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
+                    for (size_t base = 0; base < m_pc.nodes.size(); base += chunk_size) {
+                        for (size_t k = 0; k < chunk_size; k++) {
+                            size_t i = base + k;
+                            if(i >= m_pc.nodes.size()) continue;
+                            auto& neighbors = m_pc.nodes[i]->neighbors;
+                            std::sort(neighbors.begin(), neighbors.end());
+                            auto it = std::unique(neighbors.begin(), neighbors.end());
+                            neighbors.resize(it - neighbors.begin());
+                        }
+                    }
+
+                    break;
                 }
             }
             delete index;
+
 
 #if defined(DUMP_GRAPH)
             FILE* file = fopen("graph.txt", "w");
             for (int i = 0; i < m_pc.nodes.size(); i++)
                 fprintf(file, "p %f %f %f %d\n", m_pc.nodes[i]->its.p.x, m_pc.nodes[i]->its.p.y, m_pc.nodes[i]->its.p.z, 0);
             for (int i = 0; i < m_pc.nodes.size(); i++) {
-                for (auto neighbor : m_pc.nodes[i]->neighbors) {
-                    fprintf(file, "l %f %f %f ", neighbor->its.p.x, neighbor->its.p.y, neighbor->its.p.z);
+                for (auto& neighbor : m_pc.nodes[i]->neighbors) {
+                    fprintf(file, "l %f %f %f ", neighbor.node->its.p.x, neighbor.node->its.p.y, neighbor.node->its.p.z);
                     fprintf(file, "%f %f %f\n", m_pc.nodes[i]->its.p.x, m_pc.nodes[i]->its.p.y, m_pc.nodes[i]->its.p.z);
                 }
             }
@@ -343,7 +296,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
     }
 }
 
-void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
+void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor *sensor, Sampler * sampler) {
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
@@ -392,7 +345,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
     }
 }
 
-void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scene *scene) {
+void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scene * scene) {
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
 #if defined(MTS_OPENMP)
@@ -420,30 +373,33 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
     }
 }
 
-void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene *scene) {
-    int chunk_size = scene->getBlockSize();
+void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
+    size_t chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
+    
+    Float alpha_sqr = m_config.m_reconstructAlpha;
+    alpha_sqr *= alpha_sqr;
 
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
 
+            // update current buffer
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
-            // update current buffer
-            for (int k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
-                for (int n = 0; n < chunk_size; n++) {
-                    int index = k + n;
+            for (size_t k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
+                for (size_t n = 0; n < chunk_size; n++) {
+                    size_t index = k + n;
                     if (index >= m_preCacheInfoList.size()) continue;
                     auto& pci = m_preCacheInfoList[index];
                     if (i < pci.nodes.size()) {
                         auto& node = pci.nodes[i];
                         Float w(0);
                         Spectrum color(Float(0));
-                        color += node.estRad[src];
-                        w += 1;
+                        color += node.estRad[src]*alpha_sqr;
+                        w += alpha_sqr;
                         for (auto& n : node.neighbors) {
                             color += n.node->estRad[src];
                             color += n.grad;
@@ -461,9 +417,9 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene *scene) {
 #pragma omp parallel for schedule(dynamic)
 #endif
         // propagate to previous depth
-        for (int k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
-            for (int n = 0; n < chunk_size; n++) {
-                int index = k + n;
+        for (size_t k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
+            for (size_t n = 0; n < chunk_size; n++) {
+                size_t index = k + n;
                 if (index >= m_preCacheInfoList.size()) continue;
                 auto& pci = m_preCacheInfoList[index];
 
@@ -476,7 +432,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene *scene) {
     }
 }
 
-void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor *sensor) {
+void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor) {
 
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
@@ -514,9 +470,8 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
 
             PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
             int bufferID = m_config.m_nJacobiIters % 2;
-            if (pci.nodes.size() >= 1)
-            {
-                Spectrum color = pci.nodes[0].estRad[bufferID]+pci.nodes[0].accumRad;
+            if (pci.nodes.size() >= 1) {
+                Spectrum color = pci.nodes[0].estRad[bufferID] + pci.nodes[0].accumRad;
                 block->put(pci.samplePos, color, 1.f);
             }
         }
@@ -524,9 +479,138 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
     }
 }
 
+bool UnstructuredGradientPathIntegrator::render(Scene *scene,
+        RenderQueue *queue, const RenderJob *job,
+        int sceneResID, int sensorResID, int samplerResID) {
+    if (m_hideEmitters) {
+        /* Not supported! */
+        Log(EError, "Option 'hideEmitters' not implemented for Gradient-Domain Path Tracing!");
+    }
+
+    /* Get config from the parent class. */
+    m_config.m_maxDepth = m_maxDepth;
+    m_config.m_minDepth = 1; // m_minDepth;
+    m_config.m_rrDepth = m_rrDepth;
+    m_config.m_strictNormals = m_strictNormals;
+
+    /* Code duplicated from SamplingIntegrator::Render. */
+    ref<Scheduler> sched = Scheduler::getInstance();
+    ref<Sensor> sensor = static_cast<Sensor *> (sched->getResource(sensorResID));
+
+    /* Set up MultiFilm. */
+    ref<Film> film = sensor->getFilm();
+
+    std::vector<std::string> outNames;
+    outNames.push_back("-final");
+    if (!film->setBuffers(outNames)) {
+        Log(EError, "Cannot render image! G-PT has been called without MultiFilm.");
+        return false;
+    }
+
+    size_t nCores = sched->getCoreCount();
+    Sampler *sampler = static_cast<Sampler *> (sched->getResource(samplerResID, 0));
+    size_t sampleCount = sampler->getSampleCount();
+
+    Log(EInfo, "Starting render job (GPT::render) (%ix%i, " SIZE_T_FMT " %s, " SIZE_T_FMT
+            " %s, " SSE_STR ") ..", film->getCropSize().x, film->getCropSize().y,
+            sampleCount, sampleCount == 1 ? "sample" : "samples", nCores,
+            nCores == 1 ? "core" : "cores");
+    /* This is a sampling-based integrator - parallelize. */
+    bool success = true;
+
+#if defined(PRINT_TIMING)
+
+    class MyTimer {
+    protected:
+        timeval ts, te;
+    public:
+
+        void tic() {
+            gettimeofday(&ts, NULL);
+        }
+
+        double toc() {
+            gettimeofday(&te, NULL);
+            return double(te.tv_sec - ts.tv_sec) + double(te.tv_usec - ts.tv_usec)*1e-6;
+        }
+    } timer, totalTimer;
+#endif
+
+    m_process = NULL;
+
+    const int& cx = sensor->getFilm()->getCropSize().x;
+    const int& cy = sensor->getFilm()->getCropSize().y;
+    m_preCacheInfoList.resize(cx * cy);
+
+#if defined(MTS_OPENMP)
+    Thread::initializeOpenMP(nCores);
+#endif
+
+    for (int i = 0; i < sampler->getSampleCount(); i++) {
+
+        // trace precursor
+#if defined(PRINT_TIMING)
+        totalTimer.tic();
+        timer.tic();
+        printf("Iteration #%d:\n", i);
+#endif
+        tracePrecursor(scene, sensor, sampler);
+#if defined(PRINT_TIMING)
+        printf("%-20s %5.0lf ms\n", "precursor", timer.toc()*1e3);
+#endif
+
+        // figure out neighbors
+#if defined(PRINT_TIMING)
+        timer.tic();
+#endif       
+        decideNeighbors(scene, sensor);
+#if defined(PRINT_TIMING)
+        printf("%-20s %5.0lf ms\n", "neighbors", timer.toc()*1e3);
+#endif
+
+        // trace difference
+#if defined(PRINT_TIMING)
+        timer.tic();
+#endif          
+        traceDiff(scene, sensor, sampler);
+#if defined(PRINT_TIMING)
+        printf("%-20s %5.0lf ms\n", "difference", timer.toc()*1e3);
+#endif
+
+        // merge bidirectional difference samples
+#if defined(PRINT_TIMING)
+        timer.tic();
+#endif        
+        communicateBidirectionalDiff(scene);
+#if defined(PRINT_TIMING)
+        printf("%-20s %5.0lf ms\n", "bidir-merging", timer.toc()*1e3);
+#endif
+
+        // Jacobi iterations
+#if defined(PRINT_TIMING)
+        timer.tic();
+#endif          
+        iterateJacobi(scene);
+#if defined(PRINT_TIMING)
+        printf("%-20s %5.0lf ms\n", "Jacobi-iteration", timer.toc()*1e3);
+#endif
+
+        // output
+        setOutputBuffer(scene, sensor);
+
+#if defined(PRINT_TIMING)
+        printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+        printf("%-20s %5.0lf ms\n", "total", totalTimer.toc()*1e3);
+        printf("\n");
+#endif
+        queue->signalRefresh(job);
+    }
+    return success;
+}
+
 static StatsCounter avgPathLength("Unstructured Gradient Path Tracer", "Average path length", EAverage);
 
-void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState& main) {
+void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
     const Scene *scene = main.rRec.scene;
     // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
 
@@ -562,11 +646,10 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState& main) {
         }
 
         Point2 sample = main.rRec.nextSample2D();
+        main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
         // Sample a new direction from BSDF * cos(theta).
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
-
-        main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
-
+        
         if (mainBsdfResult.pdf <= (Float) 0.0) {
             // Impossible base path.
             break;
@@ -598,6 +681,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState& main) {
         if (!(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
             break;
         }
+        
 
         if (main.rRec.depth++ >= m_config.m_rrDepth) {
             /* Russian roulette: try to keep path weights equal to one,
@@ -605,14 +689,19 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState& main) {
                index boundaries. Stop with at least some probability to avoid
                getting stuck (e.g. due to total internal reflection) */
             Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
+            
             if (main.rRec.nextSample1D() >= q)
+            {
+                main.pci->nodes.back().bsdfSample = Point2(-1.f, -1.f);
+                
                 break;
+            }
             main.pdf *= q;
         }
     }
 }
 
-void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectrum& out_veryDirect) { // evaluate difference to neighbors
+void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectrum & out_veryDirect) { // evaluate difference to neighbors
     const Scene *scene = main.rRec.scene;
 
     std::vector<ShiftedRayState> shiftedRays;
@@ -891,11 +980,12 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
 
         if (main.rRec.depth - 1 < main.pci->nodes.size()) {
             sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
+            if(sample.x < 0.f) sample = main.rRec.nextSample2D();
         } else
             sample = main.rRec.nextSample2D();
 
-        sample = main.rRec.nextSample2D();
-
+        //sample = main.rRec.nextSample2D();
+        
 
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
@@ -1361,7 +1451,7 @@ shift_failed:
     avgPathLength += main.rRec.depth;
 }
 
-UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Properties &props)
+UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Properties & props)
 : MonteCarloIntegrator(props) {
     m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
@@ -1395,7 +1485,7 @@ static Float miWeight(Float pdfA, Float pdfB) {
 
 /// Returns whether the given ray sees the environment.
 
-bool testEnvironmentVisibility(const Scene* scene, const Ray& ray) {
+bool testEnvironmentVisibility(const Scene* scene, const Ray & ray) {
     const Emitter* env = scene->getEnvironmentEmitter();
     if (!env) {
         return false;
@@ -1432,7 +1522,7 @@ void UnstructuredGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vect
     }
 }
 
-Spectrum UnstructuredGradientPathIntegrator::Li(const RayDifferential &r, RadianceQueryRecord &rRec) const {
+Spectrum UnstructuredGradientPathIntegrator::Li(const RayDifferential &r, RadianceQueryRecord & rRec) const {
     // Duplicate of MIPathTracer::Li to support sub-surface scattering initialization.
 
     /* Some aliases and local variables */
@@ -1783,7 +1873,7 @@ UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, 
     return result;
 }
 
-UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *stream, InstanceManager *manager)
+UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *stream, InstanceManager * manager)
 : MonteCarloIntegrator(stream, manager) {
     m_config.m_shiftThreshold = stream->readFloat();
     m_config.m_reconstructAlpha = stream->readFloat();
@@ -1792,7 +1882,7 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *s
     m_config.m_maxMergeDepth = stream->readInt();
 }
 
-void UnstructuredGradientPathIntegrator::serialize(Stream *stream, InstanceManager *manager) const {
+void UnstructuredGradientPathIntegrator::serialize(Stream *stream, InstanceManager * manager) const {
     MonteCarloIntegrator::serialize(stream, manager);
     stream->writeFloat(m_config.m_shiftThreshold);
     stream->writeFloat(m_config.m_reconstructAlpha);

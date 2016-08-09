@@ -237,6 +237,14 @@ else ()
   add_definitions (-DMTS_NO_OPENMP)
 endif()
 
+# Try to get TBB support
+find_package(TBB)
+add_definitions(-DMTS_TBB)
+if (TBB_FOUND)
+  set (CMAKE_REQUIRED_INCLUDES  ${TBB_INCLUDE_DIRS})
+  set (CMAKE_REQUIRED_LIBRARIES ${TBB_LIBRARIES})
+endif()
+
 # Linux requires X11
 if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
   find_package(X11 REQUIRED)
