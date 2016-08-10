@@ -556,6 +556,9 @@
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">
 			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
 		</param>	
+                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="40">
+			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
+		</param>
 	</plugin>
         
         <plugin type="integrator" name="ugpt" readableName="Unstructured Gradient-Domain Path Tracer" show="true"
@@ -571,7 +574,7 @@
 			<p>Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', for the purposes of constructing paths pairs for estimating pixel differences.</p>
 			<p>This value should usually be somewhere between 0.0005 and 0.01. If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.</p>
 		</param>
-                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="20">
+                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="40">
 			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
 		</param>
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">

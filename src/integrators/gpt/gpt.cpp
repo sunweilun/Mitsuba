@@ -1129,13 +1129,13 @@ half_vector_shift_failed:
                             if (shifted.alive) {
                                 // Evaluate radiance difference using power heuristic between BSDF samples from base and offset paths.
                                 // Note: No MIS with light sampling since we don't use it for this connection type.
-                                weight = main.pdf / (shifted.pdf * shifted.pdf + main.pdf * main.pdf);
+                                weight = main.pdf / (D_EPSILON + shifted.pdf * shifted.pdf + main.pdf * main.pdf);
                                 mainContribution = main.throughput * mainEmitterRadiance;
                                 shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
                             } else {
                                 // Handle the failure without taking MIS with light sampling, as we decided not to use it in the half-vector-duplication case.
                                 // Could have used it, but so far there has been no need. It doesn't seem to be very useful.
-                                weight = Float(1) / main.pdf;
+                                weight = Float(1) / (D_EPSILON + main.pdf);
                                 mainContribution = main.throughput * mainEmitterRadiance;
                                 shiftedContribution = Spectrum(Float(0));
 
@@ -1184,7 +1184,7 @@ shift_failed:
                    index boundaries. Stop with at least some probability to avoid
                    getting stuck (e.g. due to total internal reflection) */
 
-                Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
+                Float q = std::min((main.throughput / (D_EPSILON + main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
                 if (main.rRec.nextSample1D() >= q)
                     break;
 

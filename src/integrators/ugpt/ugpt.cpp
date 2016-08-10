@@ -66,6 +66,11 @@ MTS_NAMESPACE_BEGIN
 #include <sys/time.h>
 #endif
 
+inline size_t ceil(size_t num, size_t denom)
+{
+    return 1 + (num-1) / denom;
+}
+
 void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
     bool needsApertureSample = sensor->needsApertureSample();
     bool needsTimeSample = sensor->needsTimeSample();
@@ -74,8 +79,8 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
-    const int& bx = ceil(cx / double(bSize));
-    const int& by = ceil(cy / double(bSize));
+    const int& bx = ceil(cx , bSize);
+    const int& by = ceil(cy , bSize);
 
 #if defined(MTS_OPENMP)
     ref<Scheduler> sched = Scheduler::getInstance();
@@ -302,8 +307,8 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
-    int bx = ceil(cx / double(bSize));
-    int by = ceil(cy / double(bSize));
+    const int& bx = ceil(cx , bSize);
+    const int& by = ceil(cy , bSize);
 
 #if defined(MTS_OPENMP)    
     ref<Scheduler> sched = Scheduler::getInstance();
@@ -383,15 +388,17 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
     
     Float alpha_sqr = m_config.m_reconstructAlpha;
     alpha_sqr *= alpha_sqr;
+    
+    
 
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
-
+            Float avg_diff = 0.f;
             // update current buffer
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic) reduction(+: avg_diff)
 #endif
             for (size_t k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
                 for (size_t n = 0; n < chunk_size; n++) {
@@ -410,9 +417,11 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                             w += 1;
                         }
                         node.estRad[dst] = color / w; // update
+                        avg_diff += (node.estRad[dst] - node.estRad[src]).max();
                     }
                 }
             }
+            
         }
 
         if (i == 0) continue;
@@ -441,8 +450,8 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
-    int bx = ceil(cx / double(bSize));
-    int by = ceil(cy / double(bSize));
+    const int& bx = ceil(cx , bSize);
+    const int& by = ceil(cy , bSize);
 
     ref<Film> film = sensor->getFilm();
 
@@ -629,7 +638,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
     main.ray.mint = Epsilon;
     main.pci->nodes.push_back(PathNode());
     main.pci->nodes.back().its = main.rRec.its; // add cache info
-    main.pci->nodes.back().weight = main.throughput / main.pdf;
+    main.pci->nodes.back().weight = main.throughput / (main.pdf);
     main.pci->nodes.back().lastRay = main.ray;
     if (!main.rRec.its.isValid()) return;
 
@@ -685,7 +694,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
         main.pdf *= mainBsdfResult.pdf;
         main.eta *= mainBsdfResult.bRec.eta;
-        main.pci->nodes.back().weight = main.throughput / main.pdf;
+        main.pci->nodes.back().weight = main.throughput / (D_EPSILON + main.pdf);
 
         // Stop if the base path hit the environment.
         main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
@@ -699,7 +708,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
                while accounting for the solid angle compression at refractive
                index boundaries. Stop with at least some probability to avoid
                getting stuck (e.g. due to total internal reflection) */
-            Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
+            Float q = std::min((main.throughput / (D_EPSILON + main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
             
             if (main.rRec.nextSample1D() >= q)
             {
@@ -1389,13 +1398,13 @@ half_vector_shift_failed:
                         if (shifted.alive) {
                             // Evaluate radiance difference using power heuristic between BSDF samples from base and offset paths.
                             // Note: No MIS with light sampling since we don't use it for this connection type.
-                            weight = main_pdf / (shifted.pdf * shifted.pdf + main_pdf * main_pdf);
+                            weight = main_pdf / (D_EPSILON + shifted.pdf * shifted.pdf + main_pdf * main_pdf);
                             mainContribution = main_throughput * mainEmitterRadiance;
                             shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
                         } else {
                             // Handle the failure without taking MIS with light sampling, as we decided not to use it in the half-vector-duplication case.
                             // Could have used it, but so far there has been no need. It doesn't seem to be very useful.
-                            weight = Float(1) / main_pdf;
+                            weight = Float(1) / (D_EPSILON+main_pdf);
                             mainContribution = main_throughput * mainEmitterRadiance;
                             shiftedContribution = Spectrum(Float(0));
 
@@ -1441,12 +1450,13 @@ shift_failed:
                index boundaries. Stop with at least some probability to avoid
                getting stuck (e.g. due to total internal reflection) */
 
-            Float q = std::min((main.throughput / main.pdf).max() * main.eta * main.eta, (Float) 0.95f);
+            Float q = std::min((main.throughput / (D_EPSILON+main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
             if (main.rRec.nextSample1D() >= q)
                 break;
 
             main.pdf *= q;
             for (auto& shifted : shiftedRays) {
+                shifted.main_pdf *= q;
                 shifted.pdf *= q;
             }
         }
