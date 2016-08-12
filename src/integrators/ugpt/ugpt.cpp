@@ -66,9 +66,8 @@ MTS_NAMESPACE_BEGIN
 #include <sys/time.h>
 #endif
 
-inline size_t ceil(size_t num, size_t denom)
-{
-    return 1 + (num-1) / denom;
+inline size_t ceil(size_t num, size_t denom) {
+    return 1 + (num - 1) / denom;
 }
 
 void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
@@ -79,8 +78,8 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
-    const int& bx = ceil(cx , bSize);
-    const int& by = ceil(cy , bSize);
+    const int& bx = ceil(cx, bSize);
+    const int& by = ceil(cy, bSize);
 
 #if defined(MTS_OPENMP)
     ref<Scheduler> sched = Scheduler::getInstance();
@@ -139,19 +138,26 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
 #endif
 #include "nanoflann.hpp"
 
-bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor)
-{
-    if(dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.9f) return false;
-    if(neighbors.size() >= 6) return false;
+bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
+    // filter normal
+    if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.9f) return false;
+
+    // filter # of neighbors
+    if (neighbors.size() >= 6) return false;
+
+    // filter glossy vertices
+    if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
+    if (vertexType == VERTEX_TYPE_GLOSSY) return false;
+
     neighbors.push_back(neighbor);
     return true;
 }
 
 void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
-    if(m_cancelled) return;
+    if (m_cancelled) return;
     bool use_pixel_neighbors = false;
     neighborMethod = NEIGHBOR_KNN;
-    
+
     size_t chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
     const int& cx = sensor->getFilm()->getCropSize().x;
@@ -253,7 +259,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
 #if defined(MTS_OPENMP)
                                 omp_unset_lock(&m_pc.nodes[i]->writelock);
 #endif                                
-                                if(!unfiltered) continue;
+                                if (!unfiltered) continue;
 #if defined(MTS_OPENMP)                           
                                 omp_set_lock(&m_pc.nodes[neighbor_idx]->writelock);
 #endif
@@ -272,7 +278,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
                     for (size_t base = 0; base < m_pc.nodes.size(); base += chunk_size) {
                         for (size_t k = 0; k < chunk_size; k++) {
                             size_t i = base + k;
-                            if(i >= m_pc.nodes.size()) continue;
+                            if (i >= m_pc.nodes.size()) continue;
                             auto& neighbors = m_pc.nodes[i]->neighbors;
                             std::sort(neighbors.begin(), neighbors.end());
                             auto it = std::unique(neighbors.begin(), neighbors.end());
@@ -303,12 +309,12 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
 }
 
 void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor *sensor, Sampler * sampler) {
-    if(m_cancelled) return;
+    if (m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
-    const int& bx = ceil(cx , bSize);
-    const int& by = ceil(cy , bSize);
+    const int& bx = ceil(cx, bSize);
+    const int& by = ceil(cy, bSize);
 
 #if defined(MTS_OPENMP)    
     ref<Scheduler> sched = Scheduler::getInstance();
@@ -345,15 +351,13 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
             mainRay.rRec = rRec;
             mainRay.rRec.its = rRec.its;
             mainRay.pci = &pci;
-            Spectrum very_direct = Spectrum(0.0f);
-            evaluateDiff(mainRay, very_direct);
-            pci.nodes[0].accumRad += very_direct;
+            evaluateDiff(mainRay);
         }
     }
 }
 
 void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scene * scene) {
-    if(m_cancelled) return;
+    if (m_cancelled) return;
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
 #if defined(MTS_OPENMP)
@@ -382,16 +386,17 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
 }
 
 void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
-    if(m_cancelled) return;
+    if (m_cancelled) return;
     size_t chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
-    
+
     Float alpha_sqr = m_config.m_reconstructAlpha;
     alpha_sqr *= alpha_sqr;
-    
+
     
 
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
+        
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
@@ -409,7 +414,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                         auto& node = pci.nodes[i];
                         Float w(0);
                         Spectrum color(Float(0));
-                        color += node.estRad[src]*alpha_sqr;
+                        color += node.estRad[src] * alpha_sqr;
                         w += alpha_sqr;
                         for (auto& n : node.neighbors) {
                             color += n.node->estRad[src];
@@ -421,7 +426,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                     }
                 }
             }
-            
+
         }
 
         if (i == 0) continue;
@@ -437,21 +442,20 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                 auto& pci = m_preCacheInfoList[index];
 
                 if (i >= pci.nodes.size()) continue;
-                pci.nodes[i - 1].estRad[0] = pci.nodes[i].accumRad;
-                pci.nodes[i - 1].estRad[0] += pci.nodes[i].estRad[m_config.m_nJacobiIters % 2] * pci.nodes[i].weight;
+                pci.nodes[i - 1].estRad[0] = pci.nodes[i-1].direct_lighting;
+                pci.nodes[i - 1].estRad[0] += pci.nodes[i].estRad[m_config.m_nJacobiIters % 2] * pci.nodes[i].weight_multiplier;
             }
         }
-
     }
 }
 
 void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor) {
-    if(m_cancelled) return;
+    if (m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
     const int& bSize = scene->getBlockSize();
-    const int& bx = ceil(cx , bSize);
-    const int& by = ceil(cy , bSize);
+    const int& bx = ceil(cx, bSize);
+    const int& by = ceil(cy, bSize);
 
     ref<Film> film = sensor->getFilm();
 
@@ -484,7 +488,8 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
             PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
             int bufferID = m_config.m_nJacobiIters % 2;
             if (pci.nodes.size() >= 1) {
-                Spectrum color = pci.nodes[0].estRad[bufferID] + pci.nodes[0].accumRad;
+                Spectrum color = pci.nodes[0].estRad[bufferID]*pci.nodes[0].weight_multiplier;
+                color += pci.very_direct_lighting;
                 block->put(pci.samplePos, color, 1.f);
             }
         }
@@ -496,7 +501,7 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
         RenderQueue *queue, const RenderJob *job,
         int sceneResID, int sensorResID, int samplerResID) {
     m_cancelled = false;
-    
+
     if (m_hideEmitters) {
         /* Not supported! */
         Log(EError, "Option 'hideEmitters' not implemented for Gradient-Domain Path Tracing!");
@@ -617,12 +622,11 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
         printf("%-20s %5.0lf ms\n", "total", totalTimer.toc()*1e3);
         printf("\n");
 #endif
-        if(m_cancelled) 
-        {
+        if (m_cancelled) {
             queue->signalFinishJob(job, true);
             break;
         }
-        
+
         queue->signalRefresh(job);
     }
     return success;
@@ -638,7 +642,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
     main.ray.mint = Epsilon;
     main.pci->nodes.push_back(PathNode());
     main.pci->nodes.back().its = main.rRec.its; // add cache info
-    main.pci->nodes.back().weight = main.throughput / (main.pdf);
+    main.pci->nodes.back().weight_multiplier = main.throughput / main.pdf;
     main.pci->nodes.back().lastRay = main.ray;
     if (!main.rRec.its.isValid()) return;
 
@@ -669,11 +673,13 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
         // Sample a new direction from BSDF * cos(theta).
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
-        
+
         if (mainBsdfResult.pdf <= (Float) 0.0) {
             // Impossible base path.
             break;
         }
+
+        main.pci->nodes.back().vertexType = getVertexType(main, m_config, mainBsdfResult.bRec.sampledType);
 
         const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
 
@@ -694,14 +700,14 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
         main.pdf *= mainBsdfResult.pdf;
         main.eta *= mainBsdfResult.bRec.eta;
-        main.pci->nodes.back().weight = main.throughput / (D_EPSILON + main.pdf);
+        main.pci->nodes.back().weight_multiplier = mainBsdfResult.weight;
 
         // Stop if the base path hit the environment.
         main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
         if (!(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
             break;
         }
-        
+
 
         if (main.rRec.depth++ >= m_config.m_rrDepth) {
             /* Russian roulette: try to keep path weights equal to one,
@@ -709,19 +715,18 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
                index boundaries. Stop with at least some probability to avoid
                getting stuck (e.g. due to total internal reflection) */
             Float q = std::min((main.throughput / (D_EPSILON + main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
-            
-            if (main.rRec.nextSample1D() >= q)
-            {
+            main.pci->nodes.back().rrSample = main.rRec.nextSample1D();
+            if (main.pci->nodes.back().rrSample >= q) {
                 main.pci->nodes.back().bsdfSample = Point2(-1.f, -1.f);
-                
                 break;
             }
+            
             main.pdf *= q;
         }
     }
 }
 
-void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectrum & out_veryDirect) { // evaluate difference to neighbors
+void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evaluate difference to neighbors
     const Scene *scene = main.rRec.scene;
 
     std::vector<ShiftedRayState> shiftedRays;
@@ -737,7 +742,8 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
 
     main.ray.mint = Epsilon;
 
-
+    Spectrum & out_veryDirect = main.pci->very_direct_lighting;
+    out_veryDirect = Spectrum(Float(0));
     if (!main.rRec.its.isValid()) {
         // First hit is not in the scene so can't continue. Also there there are no paths to shift.
 
@@ -794,11 +800,6 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
 
         main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
-
-        if (main.rRec.depth < main.pci->nodes.size()) {
-            main.pci->nodes[main.rRec.depth].accumRad = main.radiance; // record accumulated radiance estimate up to this point
-        }
-
 
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
         // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
@@ -862,10 +863,10 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
                 Float mainWeightNumerator = main.pdf * dRec.pdf;
                 Float mainWeightDenominator = (main.pdf * main.pdf) * ((dRec.pdf * dRec.pdf) + (mainBsdfPdf * mainBsdfPdf));
 
+                Spectrum estimated_radiance = Spectrum(main.pdf * mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
+                estimated_radiance *= (mainBSDFValue * mainEmitterRadiance);
+                main.addRadiance(estimated_radiance);
 
-                main.addRadiance(main.throughput * (mainBSDFValue * mainEmitterRadiance), mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
-                if (main.rRec.depth < main.pci->nodes.size())
-                    main.pci->nodes[main.rRec.depth].accumRad = main.radiance; // record accumulated radiance update
 
                 // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
                 if (!m_config.m_strictNormals || dot(main.rRec.its.geoFrame.n, dRec.d) * Frame::cosTheta(mainBRec.wo) > 0) {
@@ -1000,12 +1001,12 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
 
         if (main.rRec.depth - 1 < main.pci->nodes.size()) {
             sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
-            if(sample.x < 0.f) sample = main.rRec.nextSample2D();
+            if (sample.x < 0.f) sample = main.rRec.nextSample2D();
         } else
             sample = main.rRec.nextSample2D();
 
         //sample = main.rRec.nextSample2D();
-        
+
 
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
@@ -1085,25 +1086,25 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
         }
 
         // Continue the shift.
-        Float mainBsdfPdf = mainBsdfResult.pdf;
-        Float mainPreviousPdf = main.pdf;
-
-        main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
-        main.pdf *= mainBsdfResult.pdf;
-        main.eta *= mainBsdfResult.bRec.eta;
-
+        
         // Compute the probability density of generating base path's direction using the implemented direct illumination sampling technique.
         const Float mainLumPdf = (mainHitEmitter && main.rRec.depth + 1 >= m_config.m_minDepth && !(mainBsdfResult.bRec.sampledType & BSDF::EDelta)) ?
                 scene->pdfEmitterDirect(mainDRec) : 0;
 
-
         // Power heuristic weights for the following strategies: light sample from base, BSDF sample from base.
-        Float mainWeightNumerator = mainPreviousPdf * mainBsdfResult.pdf;
-        Float mainWeightDenominator = (mainPreviousPdf * mainPreviousPdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfPdf * mainBsdfPdf));
+        Float mainWeightNumerator = main.pdf * mainBsdfResult.pdf;
+        Float mainWeightDenominator = (main.pdf * main.pdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf));
 
+        
+        
         if (main.rRec.depth + 1 >= m_config.m_minDepth) {
-            main.addRadiance(main.throughput * mainEmitterRadiance, mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
+            Spectrum estimated_radiance = Spectrum(main.pdf * mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
+            estimated_radiance *= mainEmitterRadiance * mainBsdfResult.weight * mainBsdfResult.pdf;
+            main.addRadiance(estimated_radiance);
         }
+        
+        main.multiply(mainBsdfResult);
+        
 
         // Construct the offset paths and evaluate emitter hits.
 
@@ -1115,7 +1116,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
             main_throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
 
             Float mainWeightNumerator = mainPrevPdf * mainBsdfResult.pdf;
-            Float mainWeightDenominator = (mainPrevPdf * mainPrevPdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfPdf * mainBsdfPdf));
+            Float mainWeightDenominator = (mainPrevPdf * mainPrevPdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf));
 
             Spectrum mainContribution(Float(0));
             Spectrum shiftedContribution(Float(0));
@@ -1131,7 +1132,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
                     // The offset path keeps following the base path.
                     // As all relevant vertices are shared, we can just reuse the sampled values.
                     Spectrum shiftedBsdfValue = mainBsdfResult.weight * mainBsdfResult.pdf;
-                    Float shiftedBsdfPdf = mainBsdfPdf;
+                    Float shiftedBsdfPdf = mainBsdfResult.pdf;
                     Float shiftedLumPdf = mainLumPdf;
                     Spectrum shiftedEmitterRadiance = mainEmitterRadiance;
 
@@ -1292,7 +1293,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main, Spectr
                             goto half_vector_shift_failed;
                         }
 
-                        SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.000001);
+                        SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.001);
 
                         // Apply the local shift.
                         shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
@@ -1404,7 +1405,7 @@ half_vector_shift_failed:
                         } else {
                             // Handle the failure without taking MIS with light sampling, as we decided not to use it in the half-vector-duplication case.
                             // Could have used it, but so far there has been no need. It doesn't seem to be very useful.
-                            weight = Float(1) / (D_EPSILON+main_pdf);
+                            weight = Float(1) / (D_EPSILON + main_pdf);
                             mainContribution = main_throughput * mainEmitterRadiance;
                             shiftedContribution = Spectrum(Float(0));
 
@@ -1450,21 +1451,20 @@ shift_failed:
                index boundaries. Stop with at least some probability to avoid
                getting stuck (e.g. due to total internal reflection) */
 
-            Float q = std::min((main.throughput / (D_EPSILON+main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
-            if (main.rRec.nextSample1D() >= q)
+            Float q = std::min((main.throughput / (D_EPSILON + main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
+            
+            Float rrSample = main.rRec.nextSample1D();
+            if(main.rRec.depth-1 < main.pci->nodes.size())
+                rrSample = main.pci->nodes[main.rRec.depth-1].rrSample;
+            if (rrSample >= q)
                 break;
 
-            main.pdf *= q;
+            main.multiplyPDF(q);
             for (auto& shifted : shiftedRays) {
                 shifted.main_pdf *= q;
                 shifted.pdf *= q;
             }
         }
-    }
-
-    // update estRad
-    for (auto& node : main.pci->nodes) {
-        node.estRad[0] = (main.radiance - node.accumRad) / (Spectrum(D_EPSILON) + node.weight);
     }
 
     // Store statistics.

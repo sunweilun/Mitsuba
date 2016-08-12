@@ -475,7 +475,7 @@ public:
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
 
-        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.00001);
+        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.001);
         return result;
     }
 
@@ -1023,7 +1023,7 @@ public:
                                 goto half_vector_shift_failed;
                             }
 
-                            SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.000001);
+                            SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.001);
 
                             // Apply the local shift.
                             shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());

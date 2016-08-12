@@ -43,6 +43,7 @@ struct UnstructuredGradientPathTracerConfig {
     int m_nJacobiIters;
     int m_minMergeDepth;
     int m_maxMergeDepth;
+    bool m_usePixelNeighbors;
 };
 
 
@@ -74,8 +75,10 @@ public:
 
     /// Used by Mitsuba for initializing sub-surface scattering.
     Spectrum Li(const RayDifferential &ray, RadianceQueryRecord &rRec) const;
-    
-    virtual void cancel() { m_cancelled = true; }
+
+    virtual void cancel() {
+        m_cancelled = true;
+    }
 
     MTS_DECLARE_CLASS()
 
@@ -98,8 +101,26 @@ protected:
         NEIGHBOR_RADIUS, NEIGHBOR_KNN
     } neighborMethod;
 
-    struct PathNode {
+    /// Classification of vertices into diffuse and glossy.
 
+    enum VertexType {
+        VERTEX_TYPE_GLOSSY, ///< "Specular" vertex that requires the half-vector duplication shift.
+        VERTEX_TYPE_DIFFUSE ///< "Non-specular" vertex that is rough enough for the reconnection shift.
+    };
+    /// Returns the vertex type of a vertex by its roughness value.
+
+    struct PathNode {
+        RayDifferential lastRay; // ray before intersection
+        Intersection its; // intersection info
+        VertexType vertexType; // bsdf type of the vertex
+        Point2 bsdfSample; // 2d bsdf sample for generating the next ray
+        Float rrSample; // Rassian roulette sample
+        Spectrum weight_multiplier; // weight multiplier that happened in between current node and previous node
+        Spectrum direct_lighting; // estimated direct lighting for the node
+        
+        Spectrum estRad[2]; // estimated radiance for the ray before intersection
+        // We need 2 spectrum vectors to perform Jacobi iterations.
+        
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
             Spectrum grad; // Gradient to that neighbor.
@@ -118,23 +139,17 @@ protected:
                 return node == n.node;
             }
         };
-        RayDifferential lastRay; // ray before intersection
-        Intersection its; // intersection info
-        Point2 bsdfSample; // 2d bsdf sample for generating the next ray
-        Spectrum weight; // accumulated weight before intersection
-        Spectrum accumRad; // accumulated radiance for the camera ray before intersection
-        Spectrum estRad[2]; // estimated radiance for the ray before intersection
-        // We need 2 spectrum vectors to perform Jacobi iterations.
         std::vector<Neighbor> neighbors; // neighbors of this node
         bool addNeighborWithFilter(PathNode* neighbor);
+        
 #if defined(MTS_OPENMP)
         omp_lock_t writelock;
 #endif
 
         PathNode() {
             neighbors.reserve(5);
-            accumRad = estRad[0] = estRad[1] = Spectrum(Float(0));
-            weight = Spectrum(Float(1));
+            estRad[0] = estRad[1] = direct_lighting = Spectrum(Float(0));
+            weight_multiplier = Spectrum(Float(1));
             bsdfSample = Point2(-1.f, -1.f);
 #if defined(MTS_OPENMP)
             omp_init_lock(&writelock);
@@ -152,6 +167,7 @@ protected:
         Point2 samplePos;
         Point2 apertureSample;
         Float timeSample;
+        Spectrum very_direct_lighting;
         std::vector<PathNode> nodes;
 
         PrecursorCacheInfo() {
@@ -207,22 +223,58 @@ protected:
         Spectrum main_throughput; // record main throughput starting from activeDepth for shifted samples
         Float main_pdf; // record main pdf starting from activeDepth for shifted samples
     };
+    
+    struct BSDFSampleResult {
+        BSDFSamplingRecord bRec; ///< The corresponding BSDF sampling record.
+        Spectrum weight; ///< BSDF weight of the sampled direction.
+        Float pdf; ///< PDF of the BSDF sample.
+    };
 
     struct MainRayState {
 
         MainRayState()
         :
-        radiance(0.0f),
         eta(1.0f),
         pdf(1.0f),
-        throughput(Spectrum(1.0f)) {
+        throughput(Spectrum(1.0f)),
+        lastNode_throughput(Spectrum(1.0f)),
+        lastNode_pdf(1.0f) {
+            shiftedRays.reserve(10);
         }
 
         /// Adds radiance to the ray.
 
-        inline void addRadiance(const Spectrum& contribution, Float weight) {
-            Spectrum color = contribution * weight;
-            radiance += color;
+        inline void multiply(const BSDFSampleResult& mainBsdfResult)
+        {
+            Spectrum throughput = mainBsdfResult.weight * mainBsdfResult.pdf;
+            this->throughput *= throughput;
+            this->pdf *= mainBsdfResult.pdf;
+            eta *= mainBsdfResult.bRec.eta;
+            if (rRec.depth >= pci->nodes.size())
+            {
+                lastNode_throughput *= throughput;
+                lastNode_pdf *= mainBsdfResult.pdf;
+            }
+        }
+        
+        inline void multiplyPDF(const Float& pdf)
+        {
+            this->pdf *= pdf;
+            if (rRec.depth - 1 >= pci->nodes.size())
+            {
+                lastNode_pdf *= pdf;
+            }
+        }
+        
+        inline void addRadiance(const Spectrum& estimated_radiance) {
+            if (rRec.depth < pci->nodes.size())
+            {
+                pci->nodes[rRec.depth-1].direct_lighting += estimated_radiance;
+            }
+            else
+            {
+                pci->nodes.back().estRad[0] += lastNode_throughput * estimated_radiance / lastNode_pdf;
+            }
         }
 
         RayDifferential ray; ///< Current ray.
@@ -231,19 +283,20 @@ protected:
         Float pdf; ///< Current PDF of the path.
 
         // Note: Instead of storing throughput and pdf, it is possible to store Veach-style weight (throughput divided by pdf), if relative PDF (offset_pdf divided by base_pdf) is also stored. This might be more stable numerically.
-
-        Spectrum radiance; ///< Radiance accumulated so far.
-
+        Spectrum lastNode_throughput;
+        Float lastNode_pdf;
+        
         RadianceQueryRecord rRec; ///< The radiance query record for this ray.
         Float eta; ///< Current refractive index of the ray.
         PrecursorCacheInfo* pci; // Cached information from precursor
 
+        std::vector<ShiftedRayState> shiftedRays;
         void spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays); // spawns shifted rays for current depth
     };
 
 
 
-    void evaluateDiff(MainRayState& main, Spectrum& out_veryDirect);
+    void evaluateDiff(MainRayState& main);
 
     void evaluatePrecursor(MainRayState& main);
 
@@ -267,12 +320,6 @@ protected:
 
     ReconnectionShiftResult reconnectShift(const Scene* scene, Point3 mainSourceVertex, Point3 targetVertex, Point3 shiftSourceVertex, Vector3 targetNormal, Float time);
 
-    struct BSDFSampleResult {
-        BSDFSamplingRecord bRec; ///< The corresponding BSDF sampling record.
-        Spectrum weight; ///< BSDF weight of the sampled direction.
-        Float pdf; ///< PDF of the BSDF sample.
-    };
-
     inline BSDFSampleResult sampleBSDF(MainRayState& rayState, const Point2& sample) {
         Intersection& its = rayState.rRec.its;
         RadianceQueryRecord& rRec = rayState.rRec;
@@ -294,17 +341,9 @@ protected:
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
 
-        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.00001);
+        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.001);
         return result;
     }
-
-    /// Classification of vertices into diffuse and glossy.
-
-    enum VertexType {
-        VERTEX_TYPE_GLOSSY, ///< "Specular" vertex that requires the half-vector duplication shift.
-        VERTEX_TYPE_DIFFUSE ///< "Non-specular" vertex that is rough enough for the reconnection shift.
-    };
-    /// Returns the vertex type of a vertex by its roughness value.
 
     VertexType getVertexTypeByRoughness(Float roughness, const UnstructuredGradientPathTracerConfig& config) {
         if (roughness <= config.m_shiftThreshold) {
