@@ -66,7 +66,7 @@ MTS_NAMESPACE_BEGIN
         const Float D_EPSILON = (Float) (1e-14);
 
 /// If defined, uses only the central sample for the throughput estimate. Otherwise uses offset paths for estimating throughput too.
-//#define CENTRAL_RADIANCE
+#define CENTRAL_RADIANCE
 
 /// If defined, applies reconstruction after rendering.
 #define RECONSTRUCT
@@ -475,7 +475,7 @@ public:
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
 
-        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.001);
+        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }
 
@@ -1023,7 +1023,7 @@ public:
                                 goto half_vector_shift_failed;
                             }
 
-                            SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.001);
+                            SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.01);
 
                             // Apply the local shift.
                             shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());

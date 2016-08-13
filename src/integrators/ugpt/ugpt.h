@@ -109,6 +109,12 @@ protected:
     };
     /// Returns the vertex type of a vertex by its roughness value.
 
+    struct BSDFSampleResult {
+        BSDFSamplingRecord bRec; ///< The corresponding BSDF sampling record.
+        Spectrum weight; ///< BSDF weight of the sampled direction.
+        Float pdf; ///< PDF of the BSDF sample.
+    };
+    
     struct PathNode {
         RayDifferential lastRay; // ray before intersection
         Intersection its; // intersection info
@@ -141,6 +147,7 @@ protected:
         };
         std::vector<Neighbor> neighbors; // neighbors of this node
         bool addNeighborWithFilter(PathNode* neighbor);
+        BSDFSampleResult getBSDFSampleResult() const;
         
 #if defined(MTS_OPENMP)
         omp_lock_t writelock;
@@ -224,11 +231,7 @@ protected:
         Float main_pdf; // record main pdf starting from activeDepth for shifted samples
     };
     
-    struct BSDFSampleResult {
-        BSDFSamplingRecord bRec; ///< The corresponding BSDF sampling record.
-        Spectrum weight; ///< BSDF weight of the sampled direction.
-        Float pdf; ///< PDF of the BSDF sample.
-    };
+    
 
     struct MainRayState {
 
@@ -341,7 +344,7 @@ protected:
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
 
-        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.001);
+        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }
 

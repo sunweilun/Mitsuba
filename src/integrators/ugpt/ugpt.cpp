@@ -138,6 +138,19 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
 #endif
 #include "nanoflann.hpp"
 
+bool similar(const Spectrum& c1, const Spectrum& c2)
+{
+    const float thres = 1.5;
+    Float r1, g1, b1;
+    c1.toLinearRGB(r1, g1, b1);
+    Float r2, g2, b2;
+    c2.toLinearRGB(r2, g2, b2);
+    if(r1*thres < r2 || r2*thres < r1) return false;
+    if(g1*thres < g2 || g2*thres < g1) return false;
+    if(b1*thres < b2 || b2*thres < b1) return false;
+    return true;
+}
+
 bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
     // filter normal
     if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.9f) return false;
@@ -148,6 +161,15 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     // filter glossy vertices
     if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
     if (vertexType == VERTEX_TYPE_GLOSSY) return false;
+    
+    Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
+    Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
+    
+    Spectrum n_diff = neighbor->its.getBSDF()->getDiffuseReflectance(neighbor->its);
+    Spectrum n_spec = neighbor->its.getBSDF()->getSpecularReflectance(neighbor->its);
+    
+    if(!similar(diff, n_diff)) return false;
+    if(!similar(spec, n_spec)) return false;
 
     neighbors.push_back(neighbor);
     return true;
@@ -1293,7 +1315,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                             goto half_vector_shift_failed;
                         }
 
-                        SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.001);
+                        SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.01);
 
                         // Apply the local shift.
                         shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
