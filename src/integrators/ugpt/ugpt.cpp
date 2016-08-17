@@ -152,6 +152,7 @@ bool similar(const Spectrum& c1, const Spectrum& c2)
 }
 
 bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
+    
     // filter normal
     if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.9f) return false;
 
@@ -159,8 +160,8 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     if (neighbors.size() >= 6) return false;
 
     // filter glossy vertices
-    if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
-    if (vertexType == VERTEX_TYPE_GLOSSY) return false;
+    //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
+    //if (vertexType == VERTEX_TYPE_GLOSSY) return false;
     
     Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
     Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
@@ -170,8 +171,11 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     
     if(!similar(diff, n_diff)) return false;
     if(!similar(spec, n_spec)) return false;
+    
+    Float dist = distance(neighbor->its.p, its.p);
 
     neighbors.push_back(neighbor);
+    neighbors.back().weight = Spectrum(1);
     return true;
 }
 
@@ -344,7 +348,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
     ref_vector<Sampler> samplers(nCores);
     for (int i = 0; i < nCores; i++)
         samplers[i] = sampler->clone();
-#pragma omp parallel for schedule(dynamic)
+//#pragma omp parallel for schedule(dynamic)
 #endif    
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
 #if defined(MTS_OPENMP)
@@ -400,6 +404,10 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
                                 });
                         neighbor.grad -= it->grad;
                         it->grad = -neighbor.grad;
+                        if(neighbor.weight.average() == Float(0)) 
+                            neighbor.weight = it->weight;
+                        else
+                            it->weight = neighbor.weight;
                     }
                 }
             }
@@ -418,14 +426,14 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
     
 
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
-        
+        if(i == 0) // debug
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
-            Float avg_diff = 0.f;
+            //Float avg_diff = 0.f;
             // update current buffer
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic) reduction(+: avg_diff)
+#pragma omp parallel for schedule(dynamic)// reduction(+: avg_diff)
 #endif
             for (size_t k = 0; k < m_preCacheInfoList.size(); k += chunk_size) {
                 for (size_t n = 0; n < chunk_size; n++) {
@@ -434,17 +442,17 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                     auto& pci = m_preCacheInfoList[index];
                     if (i < pci.nodes.size()) {
                         auto& node = pci.nodes[i];
-                        Float w(0);
+                        Spectrum w(Float(0));
                         Spectrum color(Float(0));
                         color += node.estRad[src] * alpha_sqr;
-                        w += alpha_sqr;
+                        w +=  Spectrum(alpha_sqr);
                         for (auto& n : node.neighbors) {
-                            color += n.node->estRad[src];
-                            color += n.grad;
-                            w += 1;
+                            color += n.node->estRad[src] * n.weight;
+                            color += n.grad * n.weight;
+                            w += n.weight;
                         }
                         node.estRad[dst] = color / w; // update
-                        avg_diff += (node.estRad[dst] - node.estRad[src]).max();
+                        // avg_diff += (node.estRad[dst] - node.estRad[src]).max();
                     }
                 }
             }
@@ -681,7 +689,6 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
     main.rRec.depth = 1;
 
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
-        if (main.rRec.depth > m_config.m_maxMergeDepth) break;
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
         // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
         if (m_config.m_strictNormals) {
@@ -695,14 +702,17 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
         // Sample a new direction from BSDF * cos(theta).
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
+        
+        main.pci->nodes.back().vertexType = getVertexType(main, m_config, mainBsdfResult.bRec.sampledType);
 
+        // break if enough number of nodes has been collected
+        if (main.pci->nodes.size() > m_config.m_maxMergeDepth) break; 
+        
         if (mainBsdfResult.pdf <= (Float) 0.0) {
             // Impossible base path.
             break;
         }
-
-        main.pci->nodes.back().vertexType = getVertexType(main, m_config, mainBsdfResult.bRec.sampledType);
-
+        
         const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
 
         // Prevent light leaks due to the use of shading normals.
@@ -714,6 +724,8 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
 
         scene->rayIntersect(main.ray, main.rRec.its);
+        // ignore specular nodes
+        //if(main.pci->nodes.back().vertexType == VERTEX_TYPE_DIFFUSE)
         main.pci->nodes.push_back(PathNode());
         main.pci->nodes.back().its = main.rRec.its; // add cache info
         main.pci->nodes.back().lastRay = main.ray;
@@ -722,7 +734,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
         main.pdf *= mainBsdfResult.pdf;
         main.eta *= mainBsdfResult.bRec.eta;
-        main.pci->nodes.back().weight_multiplier = mainBsdfResult.weight;
+        main.pci->nodes.back().weight_multiplier *= mainBsdfResult.weight;
 
         // Stop if the base path hit the environment.
         main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
@@ -752,7 +764,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
     const Scene *scene = main.rRec.scene;
 
     std::vector<ShiftedRayState> shiftedRays;
-    shiftedRays.reserve(10);
+    shiftedRays.reserve(20);
 
     main.rRec.depth = 0;
 
@@ -793,7 +805,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
     // If no intersection of an offset ray could be found, its offset paths can not be generated.
     for (auto& shifted : shiftedRays) {
-        if (!shifted.rRec.its.isValid()) {
+        if (!shifted.its.isValid()) {
             shifted.alive = false;
         }
 
@@ -809,7 +821,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
         for (auto& shifted : shiftedRays) {
 
-            if (dot(shifted.ray.d, shifted.rRec.its.geoFrame.n) * Frame::cosTheta(shifted.rRec.its.wi) >= 0) {
+            if (dot(shifted.ray.d, shifted.its.geoFrame.n) * Frame::cosTheta(shifted.its.wi) >= 0) {
                 // This is an impossible offset path.
                 shifted.alive = false;
             }
@@ -820,7 +832,6 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
     main.rRec.depth = 1;
 
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
-
         main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
 
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
@@ -833,7 +844,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
             for (auto& shifted : shiftedRays) {
 
-                if (dot(shifted.ray.d, shifted.rRec.its.geoFrame.n) * Frame::cosTheta(shifted.rRec.its.wi) >= 0) {
+                if (dot(shifted.ray.d, shifted.its.geoFrame.n) * Frame::cosTheta(shifted.its.wi) >= 0) {
                     // This is an impossible offset path.
                     shifted.alive = false;
                 }
@@ -926,7 +937,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                                 // Note: The Jacobians were baked into shifted.pdf and shifted.throughput at connection phase.
                             } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
                                 // Follow the base path. The current vertex is shared, but the incoming directions differ.
-                                Vector3 incomingDirection = normalize(shifted.rRec.its.p - main.rRec.its.p);
+                                Vector3 incomingDirection = normalize(shifted.its.p - main.rRec.its.p);
 
                                 BSDFSamplingRecord bRec(main.rRec.its, main.rRec.its.toLocal(incomingDirection), main.rRec.its.toLocal(dRec.d), ERadiance);
 
@@ -949,7 +960,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                                 // Reconnect to the sampled light vertex. No shared vertices.
                                 SAssert(shifted.connection_status == RAY_NOT_CONNECTED);
 
-                                const BSDF* shiftedBSDF = shifted.rRec.its.getBSDF(shifted.ray);
+                                const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
 
                                 // This implementation uses light sampling only for the reconnect-shift.
                                 // When one of the BSDFs is very glossy, light sampling essentially reduces to a failed shift anyway.
@@ -960,7 +971,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                                 if (mainAtPointLight || (mainVertexType == VERTEX_TYPE_DIFFUSE && shiftedVertexType == VERTEX_TYPE_DIFFUSE)) {
                                     // Get emitter radiance.
-                                    DirectSamplingRecord shiftedDRec(shifted.rRec.its);
+                                    DirectSamplingRecord shiftedDRec(shifted.its);
                                     std::pair<Spectrum, bool> emitterTuple = scene->sampleEmitterDirectVisible(shiftedDRec, lightSample);
                                     bool shiftedEmitterVisible = emitterTuple.second;
 
@@ -968,14 +979,14 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                                     Float shiftedDRecPdf = shiftedDRec.pdf;
 
                                     // Sample the BSDF.
-                                    Float shiftedDistanceSquared = (dRec.p - shifted.rRec.its.p).lengthSquared();
-                                    Vector emitterDirection = (dRec.p - shifted.rRec.its.p) / sqrt(shiftedDistanceSquared);
+                                    Float shiftedDistanceSquared = (dRec.p - shifted.its.p).lengthSquared();
+                                    Vector emitterDirection = (dRec.p - shifted.its.p) / sqrt(shiftedDistanceSquared);
                                     Float shiftedOpposingCosine = -dot(dRec.n, emitterDirection);
 
-                                    BSDFSamplingRecord bRec(shifted.rRec.its, shifted.rRec.its.toLocal(emitterDirection), ERadiance);
+                                    BSDFSamplingRecord bRec(shifted.its, shifted.its.toLocal(emitterDirection), ERadiance);
 
                                     // Strict normals check, to make the output match with bidirectional methods when normal maps are present.
-                                    if (m_config.m_strictNormals && dot(shifted.rRec.its.geoFrame.n, emitterDirection) * Frame::cosTheta(bRec.wo) < 0) {
+                                    if (m_config.m_strictNormals && dot(shifted.its.geoFrame.n, emitterDirection) * Frame::cosTheta(bRec.wo) < 0) {
                                         // Invalid, non-samplable offset path.
                                         shiftSuccessful = false;
                                     } else {
@@ -1000,7 +1011,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                             // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset. (Offset path has zero PDF)
                             weight = mainWeightNumerator / (D_EPSILON + mainWeightDenominator);
 
-                            mainContribution = main.throughput * (mainBSDFValue * mainEmitterRadiance);
+                            mainContribution = main_throughput * (mainBSDFValue * mainEmitterRadiance);
                             shiftedContribution = Spectrum((Float) 0);
                         }
 
@@ -1008,7 +1019,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                         // but using only throughputs of the base paths doesn't usually lose by much.
 
                         shifted.addGradient(mainContribution, shiftedContribution, weight);
-                    } // for(int i = 0; i < secondaryCount; ++i)
+                    }
                 } // Strict normals
             }
         } // Sample incoming radiance from lights.
@@ -1023,13 +1034,9 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
         if (main.rRec.depth - 1 < main.pci->nodes.size()) {
             sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
-            if (sample.x < 0.f) sample = main.rRec.nextSample2D();
+            if (sample.x < -Float(0.5)) sample = main.rRec.nextSample2D();
         } else
             sample = main.rRec.nextSample2D();
-
-        //sample = main.rRec.nextSample2D();
-
-
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
 
@@ -1170,7 +1177,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                     shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
                 } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
                     // Recently connected - follow the base path but evaluate BSDF to the new direction.
-                    Vector3 incomingDirection = normalize(shifted.rRec.its.p - main.ray.o);
+                    Vector3 incomingDirection = normalize(shifted.its.p - main.ray.o);
                     BSDFSamplingRecord bRec(previousMainIts, previousMainIts.toLocal(incomingDirection), previousMainIts.toLocal(main.ray.d), ERadiance);
 
                     // Note: mainBSDF is the BSDF at previousMainIts, which is the current position of the offset path.
@@ -1198,7 +1205,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                 } else {
                     // Not connected - apply either reconnection or half-vector duplication shift.
 
-                    const BSDF* shiftedBSDF = shifted.rRec.its.getBSDF(shifted.ray);
+                    const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
 
                     // Update the vertex type of the offset path.
                     VertexType shiftedVertexType = getVertexType(shifted, m_config, mainBsdfResult.bRec.sampledType);
@@ -1213,14 +1220,14 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                             if (main.rRec.its.isValid()) {
                                 // This is an actual reconnection shift.
-                                shiftResult = reconnectShift(scene, main.ray.o, main.rRec.its.p, shifted.rRec.its.p, main.rRec.its.geoFrame.n, main.ray.time);
+                                shiftResult = reconnectShift(scene, main.ray.o, main.rRec.its.p, shifted.its.p, main.rRec.its.geoFrame.n, main.ray.time);
                             } else {
                                 // This is a reconnection at infinity in environment direction.
                                 const Emitter* env = scene->getEnvironmentEmitter();
                                 SAssert(env != NULL);
 
                                 environmentConnection = true;
-                                shiftResult = environmentShift(scene, main.ray, shifted.rRec.its.p);
+                                shiftResult = environmentShift(scene, main.ray, shifted.its.p);
                             }
 
                             if (!shiftResult.success) {
@@ -1232,10 +1239,10 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                             Vector3 incomingDirection = -shifted.ray.d;
                             Vector3 outgoingDirection = shiftResult.wo;
 
-                            BSDFSamplingRecord bRec(shifted.rRec.its, shifted.rRec.its.toLocal(incomingDirection), shifted.rRec.its.toLocal(outgoingDirection), ERadiance);
+                            BSDFSamplingRecord bRec(shifted.its, shifted.its.toLocal(incomingDirection), shifted.its.toLocal(outgoingDirection), ERadiance);
 
                             // Strict normals check.
-                            if (m_config.m_strictNormals && dot(outgoingDirection, shifted.rRec.its.geoFrame.n) * Frame::cosTheta(bRec.wo) <= 0) {
+                            if (m_config.m_strictNormals && dot(outgoingDirection, shifted.its.geoFrame.n) * Frame::cosTheta(bRec.wo) <= 0) {
                                 shifted.alive = false;
                                 goto shift_failed;
                             }
@@ -1266,10 +1273,10 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                                         DirectSamplingRecord shiftedDRec;
                                         shiftedDRec.p = mainDRec.p;
                                         shiftedDRec.n = mainDRec.n;
-                                        shiftedDRec.dist = (mainDRec.p - shifted.rRec.its.p).length();
-                                        shiftedDRec.d = (mainDRec.p - shifted.rRec.its.p) / shiftedDRec.dist;
+                                        shiftedDRec.dist = (mainDRec.p - shifted.its.p).length();
+                                        shiftedDRec.d = (mainDRec.p - shifted.its.p) / shiftedDRec.dist;
                                         shiftedDRec.ref = mainDRec.ref;
-                                        shiftedDRec.refN = shifted.rRec.its.shFrame.n;
+                                        shiftedDRec.refN = shifted.its.shFrame.n;
                                         shiftedDRec.object = mainDRec.object;
 
                                         shiftedLumPdf = scene->pdfEmitterDirect(shiftedDRec);
@@ -1295,15 +1302,15 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                         }
                     } else {
                         // Use half-vector duplication shift. These paths could not have been sampled by light sampling (by our decision).
-                        Vector3 tangentSpaceIncomingDirection = shifted.rRec.its.toLocal(-shifted.ray.d);
+                        Vector3 tangentSpaceIncomingDirection = shifted.its.toLocal(-shifted.ray.d);
                         Vector3 tangentSpaceOutgoingDirection;
                         Spectrum shiftedEmitterRadiance(Float(0));
 
-                        const BSDF* shiftedBSDF = shifted.rRec.its.getBSDF(shifted.ray);
+                        const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
 
                         HalfVectorShiftResult shiftResult;
                         EMeasure measure;
-                        BSDFSamplingRecord bRec(shifted.rRec.its, tangentSpaceIncomingDirection, tangentSpaceOutgoingDirection, ERadiance);
+                        BSDFSamplingRecord bRec(shifted.its, tangentSpaceIncomingDirection, tangentSpaceOutgoingDirection, ERadiance);
                         Vector3 outgoingDirection;
                         VertexType shiftedVertexType;
 
@@ -1318,7 +1325,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                         SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.01);
 
                         // Apply the local shift.
-                        shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
+                        shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
 
                         if (mainBsdfResult.bRec.sampledType & BSDF::EDelta) {
                             // Dirac delta integral is a point evaluation - no Jacobian determinant!
@@ -1336,7 +1343,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                             goto half_vector_shift_failed;
                         }
 
-                        outgoingDirection = shifted.rRec.its.toWorld(tangentSpaceOutgoingDirection);
+                        outgoingDirection = shifted.its.toWorld(tangentSpaceOutgoingDirection);
 
                         // Update throughput and pdf.
                         measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
@@ -1351,7 +1358,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                         }
 
                         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.			
-                        if (m_config.m_strictNormals && dot(outgoingDirection, shifted.rRec.its.geoFrame.n) * Frame::cosTheta(bRec.wo) <= 0) {
+                        if (m_config.m_strictNormals && dot(outgoingDirection, shifted.its.geoFrame.n) * Frame::cosTheta(bRec.wo) <= 0) {
                             shifted.alive = false;
                             goto half_vector_shift_failed;
                         }
@@ -1361,9 +1368,9 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                         shiftedVertexType = getVertexType(shifted, m_config, mainBsdfResult.bRec.sampledType);
 
                         // Trace the next hit point.
-                        shifted.ray = Ray(shifted.rRec.its.p, outgoingDirection, main.ray.time);
+                        shifted.ray = Ray(shifted.its.p, outgoingDirection, main.ray.time);
 
-                        if (!scene->rayIntersect(shifted.ray, shifted.rRec.its)) {
+                        if (!scene->rayIntersect(shifted.ray, shifted.its)) {
                             // Hit nothing - Evaluate environment radiance.
                             const Emitter *env = scene->getEnvironmentEmitter();
                             if (!env) {
@@ -1406,13 +1413,13 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                                 goto half_vector_shift_failed;
                             }
 
-                            if (shifted.rRec.its.isEmitter()) {
+                            if (shifted.its.isEmitter()) {
                                 // Hit emitter.
-                                shiftedEmitterRadiance = shifted.rRec.its.Le(-shifted.ray.d);
+                                shiftedEmitterRadiance = shifted.its.Le(-shifted.ray.d);
                             }
                             // Sub-surface scattering. Note: Should use the same random numbers as the base path!
-                            if (shifted.rRec.its.hasSubsurface() && (shifted.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
-                                shiftedEmitterRadiance += shifted.rRec.its.LoSub(scene, shifted.rRec.sampler, -shifted.ray.d, main.rRec.depth);
+                            if (shifted.its.hasSubsurface() && (shifted.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
+                                shiftedEmitterRadiance += shifted.its.LoSub(scene, shifted.rRec.sampler, -shifted.ray.d, main.rRec.depth);
                             }
                         }
 
@@ -1559,9 +1566,7 @@ void UnstructuredGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vect
         shifted.neighbor = &neighbor;
         shifted.throughput = Spectrum(Float(1));
         shifted.activeDepth = activeDpeth;
-    }
-    for (auto& shifted : shiftedRays) {
-        shifted.rRec.its = shifted.neighbor->node->its;
+        shifted.its = shifted.neighbor->node->its;
     }
 }
 
@@ -1763,9 +1768,14 @@ UnstructuredGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 ma
 
     Float mainOpposingCosine = dot(mainEdge, targetNormal) / sqrt(mainEdgeLengthSquared);
     Float shiftedOpposingCosine = dot(shiftedWo, targetNormal);
+    
+    Float numerator = std::abs(shiftedOpposingCosine * mainEdgeLengthSquared);
+    Float denominator = std::abs(mainOpposingCosine * shiftedEdgeLengthSquared);
 
-    Float jacobian = std::abs(shiftedOpposingCosine * mainEdgeLengthSquared) / (D_EPSILON + std::abs(mainOpposingCosine * shiftedEdgeLengthSquared));
+    Float jacobian = numerator / (D_EPSILON + denominator);
 
+    
+    
     // Return the results.
     result.success = true;
     result.jacobian = jacobian;
@@ -1839,7 +1849,7 @@ UnstructuredGradientPathIntegrator::getVertexType(MainRayState& ray, const Unstr
 
 UnstructuredGradientPathIntegrator::VertexType
 UnstructuredGradientPathIntegrator::getVertexType(ShiftedRayState& ray, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType) {
-    const BSDF* bsdf = ray.rRec.its.getBSDF(ray.ray);
+    const BSDF* bsdf = ray.its.getBSDF(ray.ray);
     return getVertexType(bsdf, ray.rRec.its, config, bsdfType);
 }
 

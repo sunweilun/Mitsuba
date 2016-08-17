@@ -130,8 +130,9 @@ protected:
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
             Spectrum grad; // Gradient to that neighbor.
+            Spectrum weight;
 
-            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))) {
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), weight(Spectrum(Float(0))) {
             }
 
             Neighbor() {
@@ -221,6 +222,7 @@ protected:
         Float pdf; ///< Current PDF of the path.
         // Note: Instead of storing throughput and pdf, it is possible to store Veach-style weight (throughput divided by pdf), if relative PDF (offset_pdf divided by base_pdf) is also stored. This might be more stable numerically.
         RadianceQueryRecord rRec; ///< The radiance query record for this ray.
+        Intersection its;
         Float eta; ///< Current refractive index of the ray.
         bool alive; ///< Whether the path matching to the ray is still good. Otherwise it's an invalid offset path with zero PDF and throughput.
 
