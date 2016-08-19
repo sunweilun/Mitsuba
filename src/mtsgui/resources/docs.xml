@@ -585,7 +585,10 @@
 		</param>
                 <param name="maxMergeDepth" readableName="Maximum Merging Depth" type="integer" default="1">
 			Maximum merging depth for neighbor graph.
-		</param>	
+		</param>
+                <param name="usePixelNeighbors" readableName="Using Pixel Neighbor Definition" type="boolean" default="true">
+			Use pixel neighbor definition for first bounce merging.
+		</param>
 	</plugin>
 
 	<plugin type="integrator" name="pssmlt" readableName="Primary Sample Space MLT" show="true"

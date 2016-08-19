@@ -62,8 +62,8 @@ MTS_NAMESPACE_BEGIN
          *
          */
 
-        /// A threshold to use in positive denominators to avoid division by zero.
-        const Float D_EPSILON = (Float) (1e-14);
+/// A threshold to use in positive denominators to avoid division by zero.
+const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 /// If defined, uses only the central sample for the throughput estimate. Otherwise uses offset paths for estimating throughput too.
 #define CENTRAL_RADIANCE

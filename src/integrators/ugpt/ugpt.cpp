@@ -56,11 +56,12 @@ MTS_NAMESPACE_BEGIN
          *
          */
 
-        /// A threshold to use in positive denominators to avoid division by zero.
-        const Float D_EPSILON = (Float) (1e-14);
+/// A threshold to use in positive denominators to avoid division by zero. Use double for robustness.
+const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
+#define USE_ADAPTIVE_WEIGHT
 
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
@@ -140,7 +141,7 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
 
 bool similar(const Spectrum& c1, const Spectrum& c2)
 {
-    const float thres = 1.5;
+    const float thres = 2;
     Float r1, g1, b1;
     c1.toLinearRGB(r1, g1, b1);
     Float r2, g2, b2;
@@ -175,13 +176,12 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     Float dist = distance(neighbor->its.p, its.p);
 
     neighbors.push_back(neighbor);
-    neighbors.back().weight = Spectrum(1);
+    neighbors.back().weight = Spectrum(Float(1));
     return true;
 }
 
 void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
     if (m_cancelled) return;
-    bool use_pixel_neighbors = false;
     neighborMethod = NEIGHBOR_KNN;
 
     size_t chunk_size = scene->getBlockSize();
@@ -191,7 +191,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
     m_pc.nodes.clear();
     for (int mergeDepth = m_config.m_minMergeDepth; mergeDepth <= m_config.m_maxMergeDepth; mergeDepth++) {
 
-        if (mergeDepth == 0 && use_pixel_neighbors) {
+        if (mergeDepth == 0 && m_config.m_usePixelNeighbors) {
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -348,7 +348,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
     ref_vector<Sampler> samplers(nCores);
     for (int i = 0; i < nCores; i++)
         samplers[i] = sampler->clone();
-//#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic)
 #endif    
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
 #if defined(MTS_OPENMP)
@@ -386,6 +386,27 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
     if (m_cancelled) return;
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
+    
+    Float avg_dist = 0;
+    size_t n_pairs = 0;
+    // Do some stats
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic) reduction(+: avg_dist, n_pairs)
+#endif
+    for (int i = 0; i < m_preCacheInfoList.size(); i += chunk_size) {
+        for (int k = 0; k < chunk_size; k++) {
+            if (i + k >= m_preCacheInfoList.size()) continue;
+            auto& pci = m_preCacheInfoList[i + k];
+            for (auto& node : pci.nodes) {
+                for (auto& neighbor : node.neighbors) {
+                    avg_dist += distance(node.its.p, neighbor.node->its.p);
+                    n_pairs ++;
+                }
+            }
+        }
+    }
+    avg_dist /= n_pairs;
+    
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -395,6 +416,11 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
             auto& pci = m_preCacheInfoList[i + k];
             for (auto& node : pci.nodes) {
                 for (auto& neighbor : node.neighbors) {
+                    neighbor.weight = Spectrum(Float(1));
+#if defined(USE_ADAPTIVE_WEIGHT)
+                    Float dist = distance(node.its.p, neighbor.node->its.p);
+                    neighbor.weight = Spectrum(exp(- dist / avg_dist));
+#endif
                     if (neighbor.node > &node) // unidirectional update to avoid conflict
                     {
                         auto& nn = neighbor.node->neighbors;
@@ -404,15 +430,13 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
                                 });
                         neighbor.grad -= it->grad;
                         it->grad = -neighbor.grad;
-                        if(neighbor.weight.average() == Float(0)) 
-                            neighbor.weight = it->weight;
-                        else
-                            it->weight = neighbor.weight;
                     }
                 }
             }
         }
     }
+    
+
 }
 
 void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
@@ -426,7 +450,6 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
     
 
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
-        if(i == 0) // debug
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
@@ -703,7 +726,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         // Sample a new direction from BSDF * cos(theta).
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
         
-        main.pci->nodes.back().vertexType = getVertexType(main, m_config, mainBsdfResult.bRec.sampledType);
+        main.pci->nodes.back().vertexType = getVertexType(main, m_config, BSDF::ESmooth);
 
         // break if enough number of nodes has been collected
         if (main.pci->nodes.size() > m_config.m_maxMergeDepth) break; 
@@ -1017,7 +1040,6 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                         // Note: Using also the offset paths for the throughput estimate, like we do here, provides some advantage when a large reconstruction alpha is used,
                         // but using only throughputs of the base paths doesn't usually lose by much.
-
                         shifted.addGradient(mainContribution, shiftedContribution, weight);
                     }
                 } // Strict normals
@@ -1127,7 +1149,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
         
         
         if (main.rRec.depth + 1 >= m_config.m_minDepth) {
-            Spectrum estimated_radiance = Spectrum(main.pdf * mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
+            Spectrum estimated_radiance = Spectrum(mainBsdfResult.pdf / (D_EPSILON + (mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf)));
             estimated_radiance *= mainEmitterRadiance * mainBsdfResult.weight * mainBsdfResult.pdf;
             main.addRadiance(estimated_radiance);
         }
@@ -1452,7 +1474,7 @@ shift_failed:
             if (!shifted.alive) {
                 // The offset path cannot be generated; Set offset PDF and offset throughput to zero.
                 weight = mainWeightNumerator / (D_EPSILON + mainWeightDenominator);
-                mainContribution = main.throughput * mainEmitterRadiance;
+                mainContribution = main_throughput * mainEmitterRadiance;
                 shiftedContribution = Spectrum((Float) 0);
             }
 
@@ -1499,18 +1521,6 @@ shift_failed:
     // Store statistics.
     avgPathLength.incrementBase();
     avgPathLength += main.rRec.depth;
-}
-
-UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Properties & props)
-: MonteCarloIntegrator(props) {
-    m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
-    m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
-    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 40);
-    m_config.m_minMergeDepth = (Float) props.getInteger("minMergeDepth", 0);
-    m_config.m_maxMergeDepth = (Float) props.getInteger("maxMergeDepth", 1);
-
-    if (m_config.m_reconstructAlpha <= 0.0f)
-        Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
 }
 
 /// Returns whether point1 sees point2.
@@ -1751,7 +1761,8 @@ UnstructuredGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 ma
     ReconnectionShiftResult result;
 
     // Check visibility of the connection.
-    if (!testVisibility(scene, shiftSourceVertex, targetVertex, time)) {
+    if (!testVisibility(scene, shiftSourceVertex, targetVertex, time)) 
+    {
         // Since this is not a light sample, we cannot allow shifts through occlusion.
         result.success = false;
         return result;
@@ -1775,11 +1786,79 @@ UnstructuredGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 ma
     Float jacobian = numerator / (D_EPSILON + denominator);
 
     
-    
     // Return the results.
     result.success = true;
     result.jacobian = jacobian;
     result.wo = shiftedWo;
+    
+    return result;
+}
+
+/// Calculates the outgoing direction of a shift by duplicating the local half-vector.
+
+UnstructuredGradientPathIntegrator::HalfVectorShiftResult
+UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
+    HalfVectorShiftResult result;
+
+    if (Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float) 0) {
+        // Refraction.
+
+        // Refuse to shift if one of the Etas is exactly 1. This causes degenerate half-vectors.
+        if (mainEta == (Float) 1 || shiftedEta == (Float) 1) {
+            // This could be trivially handled as a special case if ever needed.
+            result.success = false;
+            return result;
+        }
+
+        // Get the non-normalized half vector.
+        Vector3 tangentSpaceHalfVectorNonNormalizedMain;
+        if (Frame::cosTheta(tangentSpaceMainWi) < (Float) 0) {
+            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi * mainEta + tangentSpaceMainWo);
+        } else {
+            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi + tangentSpaceMainWo * mainEta);
+        }
+
+        // Get the normalized half vector.
+        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceHalfVectorNonNormalizedMain);
+
+        // Refract to get the outgoing direction.
+        Vector3 tangentSpaceShiftedWo = refract(tangentSpaceShiftedWi, tangentSpaceHalfVector, shiftedEta);
+
+        // Refuse to shift between transmission and full internal reflection.
+        // This shift would not be invertible: reflections always shift to other reflections.
+        if (tangentSpaceShiftedWo.isZero()) {
+            result.success = false;
+            return result;
+        }
+
+        // Calculate the Jacobian.
+        Vector3 tangentSpaceHalfVectorNonNormalizedShifted;
+        if (Frame::cosTheta(tangentSpaceShiftedWi) < (Float) 0) {
+            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi * shiftedEta + tangentSpaceShiftedWo);
+        } else {
+            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi + tangentSpaceShiftedWo * shiftedEta);
+        }
+
+        Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
+        Float WoDotH = abs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + abs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
+
+        // Output results.
+        result.success = true;
+        result.wo = tangentSpaceShiftedWo;
+        result.jacobian = hLengthSquared * WoDotH;
+    } else {
+        // Reflection.
+        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceMainWi + tangentSpaceMainWo);
+        Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
+
+        Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
+        Float jacobian = abs(WoDotH);
+
+        result.success = true;
+        result.wo = tangentSpaceShiftedWo;
+        result.jacobian = jacobian;
+    }
+
     return result;
 }
 
@@ -1853,77 +1932,17 @@ UnstructuredGradientPathIntegrator::getVertexType(ShiftedRayState& ray, const Un
     return getVertexType(bsdf, ray.rRec.its, config, bsdfType);
 }
 
+UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Properties & props)
+: MonteCarloIntegrator(props) {
+    m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
+    m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
+    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 40);
+    m_config.m_minMergeDepth = (Float) props.getInteger("minMergeDepth", 0);
+    m_config.m_maxMergeDepth = (Float) props.getInteger("maxMergeDepth", 1);
+    m_config.m_usePixelNeighbors = (Float) props.getBoolean("maxMergeDepth", true);
 
-/// Result of a half-vector duplication shift.
-
-
-
-/// Calculates the outgoing direction of a shift by duplicating the local half-vector.
-
-UnstructuredGradientPathIntegrator::HalfVectorShiftResult
-UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
-    HalfVectorShiftResult result;
-
-    if (Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float) 0) {
-        // Refraction.
-
-        // Refuse to shift if one of the Etas is exactly 1. This causes degenerate half-vectors.
-        if (mainEta == (Float) 1 || shiftedEta == (Float) 1) {
-            // This could be trivially handled as a special case if ever needed.
-            result.success = false;
-            return result;
-        }
-
-        // Get the non-normalized half vector.
-        Vector3 tangentSpaceHalfVectorNonNormalizedMain;
-        if (Frame::cosTheta(tangentSpaceMainWi) < (Float) 0) {
-            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi * mainEta + tangentSpaceMainWo);
-        } else {
-            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi + tangentSpaceMainWo * mainEta);
-        }
-
-        // Get the normalized half vector.
-        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceHalfVectorNonNormalizedMain);
-
-        // Refract to get the outgoing direction.
-        Vector3 tangentSpaceShiftedWo = refract(tangentSpaceShiftedWi, tangentSpaceHalfVector, shiftedEta);
-
-        // Refuse to shift between transmission and full internal reflection.
-        // This shift would not be invertible: reflections always shift to other reflections.
-        if (tangentSpaceShiftedWo.isZero()) {
-            result.success = false;
-            return result;
-        }
-
-        // Calculate the Jacobian.
-        Vector3 tangentSpaceHalfVectorNonNormalizedShifted;
-        if (Frame::cosTheta(tangentSpaceShiftedWi) < (Float) 0) {
-            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi * shiftedEta + tangentSpaceShiftedWo);
-        } else {
-            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi + tangentSpaceShiftedWo * shiftedEta);
-        }
-
-        Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
-        Float WoDotH = abs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + abs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
-
-        // Output results.
-        result.success = true;
-        result.wo = tangentSpaceShiftedWo;
-        result.jacobian = hLengthSquared * WoDotH;
-    } else {
-        // Reflection.
-        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceMainWi + tangentSpaceMainWo);
-        Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
-
-        Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
-        Float jacobian = abs(WoDotH);
-
-        result.success = true;
-        result.wo = tangentSpaceShiftedWo;
-        result.jacobian = jacobian;
-    }
-
-    return result;
+    if (m_config.m_reconstructAlpha <= 0.0f)
+        Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
 }
 
 UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *stream, InstanceManager * manager)
@@ -1933,6 +1952,7 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *s
     m_config.m_nJacobiIters = stream->readInt();
     m_config.m_minMergeDepth = stream->readInt();
     m_config.m_maxMergeDepth = stream->readInt();
+    m_config.m_usePixelNeighbors = stream->readBool();
 }
 
 void UnstructuredGradientPathIntegrator::serialize(Stream *stream, InstanceManager * manager) const {
@@ -1942,6 +1962,7 @@ void UnstructuredGradientPathIntegrator::serialize(Stream *stream, InstanceManag
     stream->writeInt(m_config.m_nJacobiIters);
     stream->writeInt(m_config.m_minMergeDepth);
     stream->writeInt(m_config.m_maxMergeDepth);
+    stream->writeBool(m_config.m_usePixelNeighbors);
 }
 
 std::string UnstructuredGradientPathIntegrator::toString() const {
@@ -1954,6 +1975,7 @@ std::string UnstructuredGradientPathIntegrator::toString() const {
             << "  nJacobiIters = " << m_config.m_nJacobiIters << endl
             << "  minMergeDepth = " << m_config.m_minMergeDepth << endl
             << "  maxMergeDepth = " << m_config.m_maxMergeDepth << endl
+            << "  usePixelNeighbors = " << m_config.m_usePixelNeighbors << endl
             << "]";
     return oss.str();
 }
