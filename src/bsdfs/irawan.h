@@ -28,9 +28,17 @@
 #include <boost/spirit/include/phoenix_operator.hpp>
 #include <boost/spirit/include/phoenix_stl.hpp>
 #include <boost/spirit/home/qi/numeric/real.hpp>
-#include <boost/spirit/home/phoenix/bind/bind_member_variable.hpp>
+
+#if BOOST_VERSION >= 105600 
+#include <boost/phoenix/bind/bind_member_variable.hpp> 
+#include <boost/phoenix/bind/bind_member_function.hpp>
+#include <boost/phoenix/statement/if.hpp>
+#else 
+#include <boost/spirit/home/phoenix/bind/bind_member_variable.hpp> 
 #include <boost/spirit/home/phoenix/bind/bind_member_function.hpp>
 #include <boost/spirit/home/phoenix/statement/if.hpp>
+#endif
+
 
 MTS_NAMESPACE_BEGIN
 

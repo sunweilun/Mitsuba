@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 2.8.3 FATAL_ERROR)
 
 set (CMAKE_CXX_STANDARD 11)
 
+SET(GCC_ADDITIONAL_COMPILE_FLAGS "-fext-numeric-literals")
+SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${GCC_ADDITIONAL_COMPILE_FLAGS}")
+
 # Internal variable to know whether this is the first time CMake runs
 if (NOT DEFINED MTS_CMAKE_INIT)
   set(MTS_CMAKE_INIT ON CACHE INTERNAL "Is this the initial CMake run?")
