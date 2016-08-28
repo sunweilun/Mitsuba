@@ -1333,6 +1333,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                         HalfVectorShiftResult shiftResult;
                         EMeasure measure;
                         BSDFSamplingRecord bRec(shifted.its, tangentSpaceIncomingDirection, tangentSpaceOutgoingDirection, ERadiance);
+                        
                         Vector3 outgoingDirection;
                         VertexType shiftedVertexType;
 
@@ -1348,7 +1349,8 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                         // Apply the local shift.
                         shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
-
+                        bRec.wo = shiftResult.wo;
+                        
                         if (mainBsdfResult.bRec.sampledType & BSDF::EDelta) {
                             // Dirac delta integral is a point evaluation - no Jacobian determinant!
                             shiftResult.jacobian = Float(1);
@@ -1369,6 +1371,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                         // Update throughput and pdf.
                         measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
+                        
 
                         shifted.throughput *= shiftedBSDF->eval(bRec, measure);
                         shifted.pdf *= shiftedBSDF->pdf(bRec, measure);
@@ -1938,7 +1941,7 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Pro
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
     m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 40);
     m_config.m_minMergeDepth = (Float) props.getInteger("minMergeDepth", 0);
-    m_config.m_maxMergeDepth = (Float) props.getInteger("maxMergeDepth", 1);
+    m_config.m_maxMergeDepth = (Float) props.getInteger("maxMergeDepth", 0);
     m_config.m_usePixelNeighbors = (Float) props.getBoolean("maxMergeDepth", true);
 
     if (m_config.m_reconstructAlpha <= 0.0f)

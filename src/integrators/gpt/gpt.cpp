@@ -1027,7 +1027,8 @@ public:
 
                             // Apply the local shift.
                             shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
-
+                            bRec.wo = shiftResult.wo;
+                            
                             if (mainBsdfResult.bRec.sampledType & BSDF::EDelta) {
                                 // Dirac delta integral is a point evaluation - no Jacobian determinant!
                                 shiftResult.jacobian = Float(1);
@@ -1043,6 +1044,7 @@ public:
                                 shifted.alive = false;
                                 goto half_vector_shift_failed;
                             }
+                            
 
                             outgoingDirection = shifted.rRec.its.toWorld(tangentSpaceOutgoingDirection);
 
@@ -1063,7 +1065,7 @@ public:
                                 shifted.alive = false;
                                 goto half_vector_shift_failed;
                             }
-
+                            
 
                             // Update the vertex type.
                             shiftedVertexType = getVertexType(shifted, *m_config, mainBsdfResult.bRec.sampledType);

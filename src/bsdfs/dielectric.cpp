@@ -253,6 +253,7 @@ public:
 	}
 
 	Float pdf(const BSDFSamplingRecord &bRec, EMeasure measure) const {
+            
 		bool sampleReflection   = (bRec.typeMask & EDeltaReflection)
 				&& (bRec.component == -1 || bRec.component == 0) && measure == EDiscrete;
 		bool sampleTransmission = (bRec.typeMask & EDeltaTransmission)
@@ -261,10 +262,11 @@ public:
 		Float cosThetaT;
 		Float F = fresnelDielectricExt(Frame::cosTheta(bRec.wi), cosThetaT, m_eta);
 
+                
 		if (Frame::cosTheta(bRec.wi) * Frame::cosTheta(bRec.wo) >= 0) {
 			if (!sampleReflection || std::abs(dot(reflect(bRec.wi), bRec.wo)-1) > DeltaEpsilon)
 				return 0.0f;
-
+                        
 			return sampleTransmission ? F : 1.0f;
 		} else {
 			if (!sampleTransmission || std::abs(dot(refract(bRec.wi, cosThetaT), bRec.wo)-1) > DeltaEpsilon)
