@@ -1939,10 +1939,10 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Pro
 : MonteCarloIntegrator(props) {
     m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
-    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 40);
-    m_config.m_minMergeDepth = (Float) props.getInteger("minMergeDepth", 0);
-    m_config.m_maxMergeDepth = (Float) props.getInteger("maxMergeDepth", 0);
-    m_config.m_usePixelNeighbors = (Float) props.getBoolean("maxMergeDepth", true);
+    m_config.m_nJacobiIters = (int) props.getInteger("nJacobiIters", 40);
+    m_config.m_minMergeDepth = (int) props.getInteger("minMergeDepth", 0);
+    m_config.m_maxMergeDepth = (int) props.getInteger("maxMergeDepth", 0);
+    m_config.m_usePixelNeighbors = (Float) props.getBoolean("usePixelNeighbors", true);
 
     if (m_config.m_reconstructAlpha <= 0.0f)
         Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
