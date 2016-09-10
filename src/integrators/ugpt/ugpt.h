@@ -172,6 +172,7 @@ protected:
     };
 
     struct PrecursorCacheInfo {
+        int index;
         Point2 samplePos;
         Point2 apertureSample;
         Float timeSample;

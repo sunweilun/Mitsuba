@@ -61,7 +61,7 @@ const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
-#define USE_ADAPTIVE_WEIGHT
+//#define USE_ADAPTIVE_WEIGHT
 
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
@@ -120,6 +120,7 @@ void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, cons
             if (needsTimeSample) {
                 timeSample = rRec.nextSample1D();
             }
+            pci.index = y * cx + x;
             pci.samplePos = samplePos;
             pci.apertureSample = apertureSample;
             pci.timeSample = timeSample;
@@ -497,6 +498,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                 if (i >= pci.nodes.size()) continue;
                 pci.nodes[i - 1].estRad[0] = pci.nodes[i-1].direct_lighting;
                 pci.nodes[i - 1].estRad[0] += pci.nodes[i].estRad[m_config.m_nJacobiIters % 2] * pci.nodes[i].weight_multiplier;
+                
             }
         }
     }
@@ -691,12 +693,16 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
     const Scene *scene = main.rRec.scene;
     // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
 
-    main.rRec.rayIntersect(main.ray);
+    
     main.ray.mint = Epsilon;
     main.pci->nodes.push_back(PathNode());
+    main.pci->nodes.back().lastRay = main.ray;
+    main.rRec.rayIntersect(main.ray);
     main.pci->nodes.back().its = main.rRec.its; // add cache info
     main.pci->nodes.back().weight_multiplier = main.throughput / main.pdf;
-    main.pci->nodes.back().lastRay = main.ray;
+    
+    
+    
     if (!main.rRec.its.isValid()) return;
 
     // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
@@ -757,7 +763,6 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
         main.throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
         main.pdf *= mainBsdfResult.pdf;
         main.eta *= mainBsdfResult.bRec.eta;
-        main.pci->nodes.back().weight_multiplier *= mainBsdfResult.weight;
 
         // Stop if the base path hit the environment.
         main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
@@ -796,7 +801,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
         main.rRec.its = main.pci->nodes[0].its; // get cached intersection
     } else
         main.rRec.rayIntersect(main.ray);
-
+    
     main.ray.mint = Epsilon;
 
     Spectrum & out_veryDirect = main.pci->very_direct_lighting;
@@ -850,7 +855,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
             }
         }
     }
-
+    
     // Main path tracing loop.
     main.rRec.depth = 1;
 
@@ -881,6 +886,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
         /*                     Direct illumination sampling                     */
         /* ==================================================================== */
 
+        
         // Sample incoming radiance from lights (next event estimation).
         {
             const BSDF* mainBSDF = main.rRec.its.getBSDF(main.ray);
@@ -902,8 +908,10 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                 // Add radiance and gradients to the base path and its offset path.
                 // Query the BSDF to the emitter's direction.
+                
                 BSDFSamplingRecord mainBRec(main.rRec.its, main.rRec.its.toLocal(dRec.d), ERadiance);
-
+                
+                
                 // Evaluate BSDF * cos(theta).
                 Spectrum mainBSDFValue = mainBSDF->eval(mainBRec);
 
@@ -921,9 +929,10 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
                 Spectrum estimated_radiance = Spectrum(main.pdf * mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
                 estimated_radiance *= (mainBSDFValue * mainEmitterRadiance);
+                
                 main.addRadiance(estimated_radiance);
 
-
+                
                 // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
                 if (!m_config.m_strictNormals || dot(main.rRec.its.geoFrame.n, dRec.d) * Frame::cosTheta(mainBRec.wo) > 0) {
                     // The base path is good. Add radiance differences to offset paths.
@@ -1054,13 +1063,21 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
         Point2 sample;
 
+        
+        
         if (main.rRec.depth - 1 < main.pci->nodes.size()) {
+            
             sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
+            
             if (sample.x < -Float(0.5)) sample = main.rRec.nextSample2D();
         } else
             sample = main.rRec.nextSample2D();
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
+        
+        
+        if (main.rRec.depth < main.pci->nodes.size()) 
+            main.pci->nodes[main.rRec.depth].weight_multiplier = mainBsdfResult.weight;
 
         if (mainBsdfResult.pdf <= (Float) 0.0) {
             // Impossible base path.
