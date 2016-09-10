@@ -251,71 +251,75 @@ struct HalfVectorShiftResult {
     Vector3 wo; ///< Tangent space outgoing vector for the shift.
 };
 
+inline Float fabs(const Float& a)
+{
+    return (a > 0) ? a : -a;
+}
+
 /// Calculates the outgoing direction of a shift by duplicating the local half-vector.
-
 HalfVectorShiftResult halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
-    HalfVectorShiftResult result;
+	HalfVectorShiftResult result;
 
-    if (Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float) 0) {
-        // Refraction.
+	if(Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float)0) {
+		// Refraction.
 
-        // Refuse to shift if one of the Etas is exactly 1. This causes degenerate half-vectors.
-        if (mainEta == (Float) 1 || shiftedEta == (Float) 1) {
-            // This could be trivially handled as a special case if ever needed.
-            result.success = false;
-            return result;
-        }
+		// Refuse to shift if one of the Etas is exactly 1. This causes degenerate half-vectors.
+		if(mainEta == (Float)1 || shiftedEta == (Float)1) {
+			// This could be trivially handled as a special case if ever needed.
+			result.success = false;
+			return result;
+		}
 
-        // Get the non-normalized half vector.
-        Vector3 tangentSpaceHalfVectorNonNormalizedMain;
-        if (Frame::cosTheta(tangentSpaceMainWi) < (Float) 0) {
-            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi * mainEta + tangentSpaceMainWo);
-        } else {
-            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi + tangentSpaceMainWo * mainEta);
-        }
+		// Get the non-normalized half vector.
+		Vector3 tangentSpaceHalfVectorNonNormalizedMain;
+		if(Frame::cosTheta(tangentSpaceMainWi) < (Float)0) {
+			tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi * mainEta + tangentSpaceMainWo);
+		} else {
+			tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi + tangentSpaceMainWo * mainEta);
+		}
 
-        // Get the normalized half vector.
-        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceHalfVectorNonNormalizedMain);
+		// Get the normalized half vector.
+		Vector3 tangentSpaceHalfVector = normalize(tangentSpaceHalfVectorNonNormalizedMain);
 
-        // Refract to get the outgoing direction.
-        Vector3 tangentSpaceShiftedWo = refract(tangentSpaceShiftedWi, tangentSpaceHalfVector, shiftedEta);
+		// Refract to get the outgoing direction.
+		Vector3 tangentSpaceShiftedWo = refract(tangentSpaceShiftedWi, tangentSpaceHalfVector, shiftedEta);
 
-        // Refuse to shift between transmission and full internal reflection.
-        // This shift would not be invertible: reflections always shift to other reflections.
-        if (tangentSpaceShiftedWo.isZero()) {
-            result.success = false;
-            return result;
-        }
+		// Refuse to shift between transmission and full internal reflection.
+		// This shift would not be invertible: reflections always shift to other reflections.
+		if(tangentSpaceShiftedWo.isZero()) {
+			result.success = false;
+			return result;
+		}
 
-        // Calculate the Jacobian.
-        Vector3 tangentSpaceHalfVectorNonNormalizedShifted;
-        if (Frame::cosTheta(tangentSpaceShiftedWi) < (Float) 0) {
-            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi * shiftedEta + tangentSpaceShiftedWo);
-        } else {
-            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi + tangentSpaceShiftedWo * shiftedEta);
-        }
+		// Calculate the Jacobian.
+		Vector3 tangentSpaceHalfVectorNonNormalizedShifted;
+		if(Frame::cosTheta(tangentSpaceShiftedWi) < (Float)0) {
+			tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi * shiftedEta + tangentSpaceShiftedWo);
+		} else {
+			tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi + tangentSpaceShiftedWo * shiftedEta);
+		}
 
-        Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
-        Float WoDotH = abs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + abs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
+		Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
+		Float WoDotH = fabs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + fabs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
 
-        // Output results.
-        result.success = true;
-        result.wo = tangentSpaceShiftedWo;
-        result.jacobian = hLengthSquared * WoDotH;
-    } else {
-        // Reflection.
-        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceMainWi + tangentSpaceMainWo);
-        Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
+		// Output results.
+		result.success = true;
+		result.wo = tangentSpaceShiftedWo;
+		result.jacobian = hLengthSquared * WoDotH;
+	} else {
+		// Reflection.
+		Vector3 tangentSpaceHalfVector = normalize(tangentSpaceMainWi + tangentSpaceMainWo);
+		Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
 
-        Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
-        Float jacobian = abs(WoDotH);
+		Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
+		Float jacobian = fabs(WoDotH);
 
-        result.success = true;
-        result.wo = tangentSpaceShiftedWo;
-        result.jacobian = jacobian;
-    }
+		result.success = true;
+		result.wo = tangentSpaceShiftedWo;
+		result.jacobian = jacobian;
+	}
 
-    return result;
+	return result;
 }
 
 
@@ -651,7 +655,7 @@ public:
 
                                     mainContribution = main.throughput * (mainBSDFValue * mainEmitterRadiance);
                                     shiftedContribution = jacobian * shifted.throughput * (shiftedBsdfValue * shiftedEmitterRadiance);
-
+                                    
                                     // Note: The Jacobians were baked into shifted.pdf and shifted.throughput at connection phase.
                                 } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
                                     // Follow the base path. The current vertex is shared, but the incoming directions differ.
@@ -876,6 +880,7 @@ public:
 
                         mainContribution = main.throughput * mainEmitterRadiance;
                         shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
+
                     } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
                         // Recently connected - follow the base path but evaluate BSDF to the new direction.
                         Vector3 incomingDirection = normalize(shifted.rRec.its.p - main.ray.o);
@@ -903,6 +908,7 @@ public:
 
                         mainContribution = main.throughput * mainEmitterRadiance;
                         shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
+
                     } else {
                         // Not connected - apply either reconnection or half-vector duplication shift.
 
@@ -1002,6 +1008,7 @@ public:
                                 }
                             }
                         } else {
+                            
                             // Use half-vector duplication shift. These paths could not have been sampled by light sampling (by our decision).
                             Vector3 tangentSpaceIncomingDirection = shifted.rRec.its.toLocal(-shifted.ray.d);
                             Vector3 tangentSpaceOutgoingDirection;
@@ -1124,6 +1131,7 @@ public:
                                 if (shifted.rRec.its.hasSubsurface() && (shifted.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
                                     shiftedEmitterRadiance += shifted.rRec.its.LoSub(scene, shifted.rRec.sampler, -shifted.ray.d, main.rRec.depth);
                                 }
+                                
                             }
 
 

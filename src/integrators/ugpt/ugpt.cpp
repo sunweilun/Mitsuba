@@ -1799,6 +1799,11 @@ UnstructuredGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 ma
 
 /// Calculates the outgoing direction of a shift by duplicating the local half-vector.
 
+inline Float fabs(const Float& a)
+{
+    return (a > 0) ? a : -a;
+}
+
 UnstructuredGradientPathIntegrator::HalfVectorShiftResult
 UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
     HalfVectorShiftResult result;
@@ -1843,7 +1848,7 @@ UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, 
         }
 
         Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
-        Float WoDotH = abs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + abs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
+        Float WoDotH = fabs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + fabs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
 
         // Output results.
         result.success = true;
@@ -1855,7 +1860,7 @@ UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, 
         Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
 
         Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
-        Float jacobian = abs(WoDotH);
+        Float jacobian = fabs(WoDotH);
 
         result.success = true;
         result.wo = tangentSpaceShiftedWo;
