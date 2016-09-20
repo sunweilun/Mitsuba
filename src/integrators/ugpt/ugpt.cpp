@@ -62,7 +62,7 @@ const Float D_EPSILON = std::numeric_limits<Float>::min();
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT
-//#define USE_FILTERS
+#define USE_FILTERS
 #define USE_LOB_FACTOR
 
 #if defined(PRINT_TIMING)
@@ -1228,7 +1228,6 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                     // Note: mainBSDF is the BSDF at previousMainIts, which is the current position of the offset path.
 
                     EMeasure measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
-                    if(mainBsdfResult.bRec.sampledType == 0x8) printf("%x\n", mainBsdfResult.bRec.sampledType);
 
                     Spectrum shiftedBsdfValue = mainBSDF->eval(bRec, measure);
                     Float shiftedBsdfPdf = mainBSDF->pdf(bRec, measure);
