@@ -62,6 +62,8 @@ const Float D_EPSILON = std::numeric_limits<Float>::min();
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT
+//#define USE_FILTERS
+#define USE_LOB_FACTOR
 
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
@@ -154,7 +156,7 @@ bool similar(const Spectrum& c1, const Spectrum& c2)
 }
 
 bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
-    
+#if defined(USE_FILTERS)
     // filter normal
     if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.9f) return false;
 
@@ -173,7 +175,8 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     
     if(!similar(diff, n_diff)) return false;
     if(!similar(spec, n_spec)) return false;
-    
+
+#endif
     Float dist = distance(neighbor->its.p, its.p);
 
     neighbors.push_back(neighbor);
@@ -360,6 +363,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
         RadianceQueryRecord rRec(scene, sampler);
 
         Point2i offset((blockIndex % bx) * bSize, (blockIndex / bx) * bSize);
+        sampler->generate(offset);
 
         for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
             int x = offset.x + pointIndex % bSize;
@@ -1071,7 +1075,9 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
             
             if (sample.x < -Float(0.5)) sample = main.rRec.nextSample2D();
         } else
+        {
             sample = main.rRec.nextSample2D();
+        }
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
         
@@ -1222,6 +1228,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                     // Note: mainBSDF is the BSDF at previousMainIts, which is the current position of the offset path.
 
                     EMeasure measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
+                    if(mainBsdfResult.bRec.sampledType == 0x8) printf("%x\n", mainBsdfResult.bRec.sampledType);
 
                     Spectrum shiftedBsdfValue = mainBSDF->eval(bRec, measure);
                     Float shiftedBsdfPdf = mainBSDF->pdf(bRec, measure);

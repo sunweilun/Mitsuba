@@ -47,6 +47,7 @@ struct GBDPTConfiguration {
 	bool m_reconstructL1;
 	bool m_reconstructL2;
 	float m_reconstructAlpha;
+        int m_nJacobiIters;
 
 	inline GBDPTConfiguration() { }
 

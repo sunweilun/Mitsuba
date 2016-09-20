@@ -220,6 +220,7 @@ public:
 
 	Point2 next2D() {
 		Assert(m_sampleIndex < m_sampleCount);
+                
 		if (m_dimension2D < m_maxDimension)
 			return m_samples2D[m_dimension2D++][m_sampleIndex];
 		else

@@ -346,7 +346,7 @@ protected:
         result.weight = bsdf->sample(result.bRec, result.pdf, sample);
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
-
+        
         SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }

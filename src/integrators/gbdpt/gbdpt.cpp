@@ -14,7 +14,7 @@
 
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include <mitsuba/bidir/vertex.h>
 #include <mitsuba/bidir/edge.h>
@@ -78,23 +78,25 @@ MTS_NAMESPACE_BEGIN
  */
 class GBDPTIntegrator : public Integrator {
 public:
+
     GBDPTIntegrator(const Properties &props) : Integrator(props) {
         /* Load the parameters / defaults */
         m_config.maxDepth = props.getInteger("maxDepth", -1);
         m_config.rrDepth = props.getInteger("rrDepth", 5);
         m_config.lightImage = props.getBoolean("lightImage", true);
 
-		m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
+        m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
 
-		m_config.m_reconstructL1 = props.getBoolean("reconstructL1", true);	//no matter what is chosen, both reconstructions are written to disc. this only changes which one is shown in the GUI
-		m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
-		m_config.m_reconstructAlpha = (Float)props.getFloat("reconstructAlpha", Float(0.2));
+        m_config.m_reconstructL1 = props.getBoolean("reconstructL1", true); //no matter what is chosen, both reconstructions are written to disc. this only changes which one is shown in the GUI
+        m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
+        m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
+        m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
+        
+        if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
+            Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
 
-		if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
-			Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
-
-		if (m_config.m_reconstructAlpha <= 0.0f)
-			Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
+        if (m_config.m_reconstructAlpha <= 0.0f)
+            Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
 
         m_config.nNeighbours = 4; //fixed at the moment
 
@@ -106,8 +108,9 @@ public:
     }
 
     /// Unserialize from a binary data stream
+
     GBDPTIntegrator(Stream *stream, InstanceManager *manager)
-     : Integrator(stream, manager) {
+    : Integrator(stream, manager) {
         m_config = GBDPTConfiguration(stream);
     }
 
@@ -138,9 +141,8 @@ public:
         sampler->setFilmResolution(scene->getFilm()->getCropSize(), true);
     }
 
-
     bool render(Scene *scene, RenderQueue *queue, const RenderJob *job,
-        int sceneResID, int sensorResID, int samplerResID) {
+            int sceneResID, int sensorResID, int samplerResID) {
 
         ref<Scheduler> scheduler = Scheduler::getInstance();
         ref<Sensor> sensor = scene->getSensor();
@@ -149,11 +151,11 @@ public:
         size_t nCores = scheduler->getCoreCount();
 
         Log(EDebug, "Size of data structures: PathVertex=%i bytes, PathEdge=%i bytes",
-            (int) sizeof(PathVertex), (int) sizeof(PathEdge));
+                (int) sizeof (PathVertex), (int) sizeof (PathEdge));
 
         Log(EInfo, "Starting render job (%ix%i, " SIZE_T_FMT " samples, " SIZE_T_FMT
-            " %s, " SSE_STR ") ..", film->getCropSize().x, film->getCropSize().y,
-            sampleCount, nCores, nCores == 1 ? "core" : "cores");
+                " %s, " SSE_STR ") ..", film->getCropSize().x, film->getCropSize().y,
+                sampleCount, nCores, nCores == 1 ? "core" : "cores");
 
         m_config.blockSize = scene->getBlockSize();
         m_config.cropSize = film->getCropSize();
@@ -162,20 +164,20 @@ public:
         m_config.dump();
 
         /* setup MultiFilm */
-		std::vector<std::string> outNames;
-                outNames.push_back(m_config.m_reconstructL1 ? "-L1" : "-L2");
-                outNames.push_back("-gradientNegY");
-                outNames.push_back("-gradientNegX");
-                outNames.push_back("-gradientPosX");
-                outNames.push_back("-gradientPosY");
-                outNames.push_back(m_config.m_reconstructL1 ? "-L2" : "-L1");
-                outNames.push_back("-primal");
-        if (!film->setBuffers(outNames)){
+        std::vector<std::string> outNames;
+        outNames.push_back(m_config.m_reconstructL1 ? "-L1" : "-L2");
+        outNames.push_back("-gradientNegY");
+        outNames.push_back("-gradientNegX");
+        outNames.push_back("-gradientPosX");
+        outNames.push_back("-gradientPosY");
+        outNames.push_back(m_config.m_reconstructL1 ? "-L2" : "-L1");
+        outNames.push_back("-primal");
+        if (!film->setBuffers(outNames)) {
             Log(EError, "Cannot render image! G-BDPT has been called without MultiFilm.");
             return false;
         }
-        
-        /* run job */		
+
+        /* run job */
         ref<GBDPTProcess> process = new GBDPTProcess(job, queue, m_config);
         m_process = process;
         process->bindResource("scene", sceneResID);
@@ -188,25 +190,31 @@ public:
         process->develop();
 
         /* data buffers for solver */
-        int len = 3 * film->getCropSize().x*film->getCropSize().y;
+        int len = 3 * film->getCropSize().x * film->getCropSize().y;
         std::vector< float > imgf(len, 0.f);
         std::vector< float > dxf(len, 0.f);
         std::vector< float > dyf(len, 0.f);
+#ifdef USE_ORIGINAL_REC
         std::vector< float > rec(len, 0.f);
+#else
+        std::vector< float > rec[2];
+        rec[0].resize(len);
+        rec[1].resize(len);
+#endif
         std::vector<Float *> grad(m_config.nNeighbours);
 
         /* allocate temporary bitmaps for solvers */
         ref<Bitmap> imgBaseBuff, recBuff, errBuff;
-        std::vector< ref<Bitmap> >  gradBuff;
+        std::vector< ref<Bitmap> > gradBuff;
         imgBaseBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
         recBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
         errBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
-        for (int j = 0; j < m_config.nNeighbours; j++){
+        for (int j = 0; j < m_config.nNeighbours; j++) {
             gradBuff.push_back(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
         }
 
         /* develop primal and gradient data into bitmaps */
-        film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), imgBaseBuff, 0); 
+        film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), imgBaseBuff, 0);
         for (int j = 1; j <= m_config.nNeighbours; j++)
             film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), gradBuff[j - 1], j);
 
@@ -219,18 +227,19 @@ public:
         prepareDataForSolver(1.f, &imgf[0], dataImg, len, NULL, 0);
         prepareDataForSolver(1.f, &dyf[0], grad[3], len, grad[0], film->getCropSize().x);
         prepareDataForSolver(1.f, &dxf[0], grad[2], len, grad[1], 1);
+        rec[0].assign(imgf.begin(), imgf.end());
 
 #ifdef USE_ORIGINAL_REC
         /* initialize solvers */
         poisson::Solver::Params pL2;
 
-		poisson::Solver::Params pL1;
+        poisson::Solver::Params pL1;
 
-		pL1.setConfigPreset("L1D");
-		pL2.setConfigPreset("L2D");
+        pL1.setConfigPreset("L1D");
+        pL2.setConfigPreset("L2D");
 
-		pL2.alpha = (float)m_config.m_reconstructAlpha;
-		pL1.alpha = (float)m_config.m_reconstructAlpha;
+        pL2.alpha = (float) m_config.m_reconstructAlpha;
+        pL1.alpha = (float) m_config.m_reconstructAlpha;
 
         poisson::Solver solverL2(pL2);
         poisson::Solver solverL1(pL1);
@@ -242,10 +251,10 @@ public:
         solverL2.exportImagesMTS(&rec[0]);
         setBitmapFromArray(recBuff, &rec[0]);
 
-		if (m_config.m_reconstructL1)
-			film->setBitmapMulti(recBuff, 1, m_config.nNeighbours + 1);
-		else
-			film->setBitmapMulti(recBuff, 1, 0);
+        if (m_config.m_reconstructL1)
+            film->setBitmapMulti(recBuff, 1, m_config.nNeighbours + 1);
+        else
+            film->setBitmapMulti(recBuff, 1, 0);
 
         /* apply L1 solver to reconstruct L1 image and store result in recBuff */
         solverL1.importImagesMTS(&dxf[0], &dyf[0], &imgf[0], NULL, film->getCropSize().x, film->getCropSize().y);
@@ -255,49 +264,108 @@ public:
         setBitmapFromArray(recBuff, &rec[0]);
 
         /* put L1 image on screen buffer */
-		if (m_config.m_reconstructL1)
-			film->setBitmapMulti(recBuff, 1, 0); 
-		else
-			film->setBitmapMulti(recBuff, 1, m_config.nNeighbours + 1);
+        if (m_config.m_reconstructL1)
+            film->setBitmapMulti(recBuff, 1, 0);
+        else
+            film->setBitmapMulti(recBuff, 1, m_config.nNeighbours + 1);
 #else
-        
+        const int& w = film->getCropSize().x;
+        const int& h = film->getCropSize().y;
+#if defined(MTS_OPENMP)
+        Thread::initializeOpenMP(nCores);
 #endif
+        int chunk_size = scene->getBlockSize();
+        chunk_size *= chunk_size;
+
+        const int& n_iters = m_config.m_nJacobiIters;
+        float alpha = (Float) m_config.m_reconstructAlpha;
+        float alpha_sqr = alpha * alpha;
+        
+        for (int iter = 0; iter < n_iters; iter++) {
+            int src = iter % 2;
+            int dst = 1 - src;
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic)
+#endif
+            for (int i = 0; i < w * h; i += chunk_size) {
+                for (int c = 0; c < chunk_size; c++) {
+                    int index = i + c;
+                    int x = index % w;
+                    int y = index / w;
+                    if (x >= w || y >= h) continue;
+                    
+                    for(int channel = 0; channel < 3; channel ++)
+                    {
+                        float color = 0.f;
+                        float weight = 0.f;
+                        const float& prim = rec[src][(y*w+x)*3+channel];
+                        color += prim*alpha_sqr;
+                        weight += alpha_sqr;
+                        if (x > 0) {
+                            color += dxf[(y*w+x-1)*3+channel];
+                            color += rec[src][(y*w+x-1)*3+channel];
+                            weight += 1.f;
+                        }
+                        if (x + 1 < w) {
+                            color -= dxf[(y*w+x)*3+channel];
+                            color += rec[src][(y*w+x+1)*3+channel];
+                            weight += 1.f;
+                        }
+                        if (y > 0) {
+                            color += dyf[((y-1)*w+x)*3+channel];
+                            color += rec[src][((y-1)*w+x)*3+channel];
+                            weight += 1.f;
+                        }
+                        if (y + 1 < h) {
+                            color -= dyf[(y*w+x)*3+channel];
+                            color += rec[src][((y+1)*w+x)*3+channel];
+                            weight += 1.f;
+                        }
+                        rec[dst][(y*w+x)*3+channel] = color / weight;
+                    }
+                }
+            }
+        }
+        setBitmapFromArray(recBuff, &rec[0][0]);
+        film->setBitmapMulti(recBuff, 1, 0);
+#endif
+        
 
         /* need to put primal img back into film such that it can be written to disc */
-        film->setBitmapMulti(imgBaseBuff, 1, m_config.nNeighbours + 2); 
+        film->setBitmapMulti(imgBaseBuff, 1, m_config.nNeighbours + 2);
 
 
-        if (!process->getReturnStatus() == ParallelProcess::ESuccess )
+        if (!process->getReturnStatus() == ParallelProcess::ESuccess)
             return false;
 
         return true;
     }
 
-    void prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2, int offset){
+    void prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2, int offset) {
 
         for (int i = 0; i < len; i++)
-            out[i] = w*float(data[i]);
+            out[i] = w * float(data[i]);
 
         //used to merge inverse directions into one buffer
-        if (data2 != NULL){
+        if (data2 != NULL) {
             int io;
-            for (int i = 0; i < len; i++){
-                io = i + 3*offset;
-                if (io >= 0 && io < len){
+            for (int i = 0; i < len; i++) {
+                io = i + 3 * offset;
+                if (io >= 0 && io < len) {
                     out[i] *= 0.5;
-                    out[i] -= 0.5*w*float(data2[io]);
+                    out[i] -= 0.5 * w * float(data2[io]);
                 }
             }
         }
     }
 
-    void setBitmapFromArray(ref<Bitmap> &bitmap, float *img)
-    {
+    void setBitmapFromArray(ref<Bitmap> &bitmap, float *img) {
         int x, y;
         Float tmp[3];
-        for (int i = 0; i < bitmap->getSize().x*bitmap->getSize().y; i++){
+        for (int i = 0; i < bitmap->getSize().x * bitmap->getSize().y; i++) {
             y = i / bitmap->getSize().x;
-            x = i - y*bitmap->getSize().x;
+            x = i - y * bitmap->getSize().x;
             tmp[0] = Float(img[3 * i]);
             tmp[1] = Float(img[3 * i + 1]);
             tmp[2] = Float(img[3 * i + 2]);
