@@ -43,6 +43,7 @@ struct UnstructuredGradientPathTracerConfig {
     int m_nJacobiIters;
     int m_minMergeDepth;
     int m_maxMergeDepth;
+    int m_batchSize;
     bool m_usePixelNeighbors;
 };
 
@@ -95,7 +96,7 @@ protected:
 
     void iterateJacobi(const Scene *scene);
 
-    void setOutputBuffer(const Scene *scene, Sensor *sensor);
+    void setOutputBuffer(const Scene *scene, Sensor *sensor, int batchSize);
 
     enum NeighborMethod {
         NEIGHBOR_RADIUS, NEIGHBOR_KNN
@@ -122,6 +123,7 @@ protected:
         Point2 bsdfSample; // 2d bsdf sample for generating the next ray
         Float rrSample; // Rassian roulette sample
         Spectrum weight_multiplier; // weight multiplier that happened in between current node and previous node
+        Spectrum current_weight; // multiplied weight before arriving at this node
         Spectrum direct_lighting; // estimated direct lighting for the node
         
         Spectrum estRad[2]; // estimated radiance for the ray before intersection
@@ -130,7 +132,7 @@ protected:
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
             Spectrum grad; // Gradient to that neighbor.
-            Spectrum weight;
+            Spectrum weight; // Weight for this connection. We set this to 1 for now.
 
             Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), weight(Spectrum(Float(0))) {
             }
@@ -157,7 +159,7 @@ protected:
         PathNode() {
             neighbors.reserve(5);
             estRad[0] = estRad[1] = direct_lighting = Spectrum(Float(0));
-            weight_multiplier = Spectrum(Float(1));
+            weight_multiplier = current_weight = Spectrum(Float(1));
             bsdfSample = Point2(-1.f, -1.f);
 #if defined(MTS_OPENMP)
             omp_init_lock(&writelock);
@@ -217,10 +219,15 @@ protected:
             Spectrum color = (mainContrib - shiftContrib) * weight;
             neighbor->grad += color;
         }
+        
+        inline Spectrum getCurrentWeight() const
+        {
+            return neighbor->node->current_weight;
+        }
 
         RayDifferential ray; ///< Current ray.
         Spectrum throughput; ///< Current throughput of the path.
-        Float pdf; ///< Current PDF of the path.
+        Float pdf; ///< Current PDF of the path as if this shifted path was actively sampled.
         // Note: Instead of storing throughput and pdf, it is possible to store Veach-style weight (throughput divided by pdf), if relative PDF (offset_pdf divided by base_pdf) is also stored. This might be more stable numerically.
         RadianceQueryRecord rRec; ///< The radiance query record for this ray.
         Intersection its;
@@ -255,6 +262,7 @@ protected:
             Spectrum throughput = mainBsdfResult.weight * mainBsdfResult.pdf;
             this->throughput *= throughput;
             this->pdf *= mainBsdfResult.pdf;
+            
             eta *= mainBsdfResult.bRec.eta;
             if (rRec.depth >= pci->nodes.size())
             {
@@ -298,6 +306,7 @@ protected:
 
         std::vector<ShiftedRayState> shiftedRays;
         void spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays); // spawns shifted rays for current depth
+        
     };
 
 
@@ -346,6 +355,14 @@ protected:
         result.weight = bsdf->sample(result.bRec, result.pdf, sample);
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
+        
+        if(!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01))
+        {
+            printf("%f %f\n", sample.x, sample.y);
+            printf("%f\n", result.bRec.wo.length());
+            result.pdf = 0;
+            return result;
+        }
         
         SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;

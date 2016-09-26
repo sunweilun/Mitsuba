@@ -873,6 +873,7 @@ public:
                         // Update throughput and pdf.
                         shifted.throughput *= shiftedBsdfValue;
                         shifted.pdf *= shiftedBsdfPdf;
+                        shifted.eta *= mainBsdfResult.bRec.eta;
 
                         // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
                         Float shiftedWeightDenominator = (shiftedPreviousPdf * shiftedPreviousPdf) * ((shiftedLumPdf * shiftedLumPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
@@ -899,6 +900,7 @@ public:
                         // Update throughput and pdf.
                         shifted.throughput *= shiftedBsdfValue;
                         shifted.pdf *= shiftedBsdfPdf;
+                        shifted.eta *= mainBsdfResult.bRec.eta;
 
                         shifted.connection_status = RAY_CONNECTED;
 
@@ -961,6 +963,7 @@ public:
                                 // Update throughput and pdf.
                                 shifted.throughput *= shiftedBsdfValue * shiftResult.jacobian;
                                 shifted.pdf *= shiftedBsdfPdf * shiftResult.jacobian;
+                                shifted.eta *= bRec.eta;
 
                                 shifted.connection_status = RAY_RECENTLY_CONNECTED;
 
@@ -1201,6 +1204,7 @@ shift_failed:
                 main.pdf *= q;
                 for (int i = 0; i < secondaryCount; ++i) {
                     RayState& shifted = shiftedRays[i];
+                    q = std::min((shifted.throughput / (D_EPSILON + shifted.pdf)).max() * shifted.eta * shifted.eta, (Float) 0.95f);
                     shifted.pdf *= q;
                 }
             }
