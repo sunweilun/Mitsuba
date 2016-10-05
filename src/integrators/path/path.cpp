@@ -224,7 +224,7 @@ public:
 
             bool hitEmitter = false;
             Spectrum value;
-
+            
             /* Trace a ray in this direction */
             ray = Ray(its.p, wo, ray.time);
             if (scene->rayIntersect(ray, its)) {

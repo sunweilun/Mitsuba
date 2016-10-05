@@ -479,6 +479,14 @@ public:
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
 
+        if(!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01))
+        {
+            printf("%f %f\n", sample.x, sample.y);
+            printf("%f\n", result.bRec.wo.length());
+            result.pdf = 0;
+            return result;
+        }
+        
         SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }

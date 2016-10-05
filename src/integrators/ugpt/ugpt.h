@@ -24,8 +24,14 @@
 #include <omp.h>
 #endif
 
-MTS_NAMESPACE_BEGIN
+//#define DUMP_GRAPH // dump graph structure as graph.txt if defined
+#define PRINT_TIMING // print out timing info if defined
+//#define USE_ADAPTIVE_WEIGHT
+#define USE_FILTERS
+#define USE_LOB_FACTOR
+#define USE_NORMAL_NN
 
+MTS_NAMESPACE_BEGIN
 
 /* ==================================================================== */
 /*                         Configuration storage                        */

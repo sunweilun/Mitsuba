@@ -59,12 +59,6 @@ MTS_NAMESPACE_BEGIN
         /// A threshold to use in positive denominators to avoid division by zero. Use double for robustness.
         const Float D_EPSILON = std::numeric_limits<Float>::min();
 
-//#define DUMP_GRAPH // dump graph structure as graph.txt if defined
-#define PRINT_TIMING // print out timing info if defined
-//#define USE_ADAPTIVE_WEIGHT
-#define USE_FILTERS
-#define USE_LOB_FACTOR
-
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
 #endif
@@ -183,8 +177,8 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     Spectrum n_diff = neighbor->its.getBSDF()->getDiffuseReflectance(neighbor->its);
     Spectrum n_spec = neighbor->its.getBSDF()->getSpecularReflectance(neighbor->its);
 
-    if (!similar(diff, n_diff)) return false;
-    if (!similar(spec, n_spec)) return false;
+    // if (!similar(diff, n_diff)) return false;
+    // if (!similar(spec, n_spec)) return false;
 
 #endif
     Float dist = distance(neighbor->its.p, its.p);
@@ -249,7 +243,12 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
             typedef nanoflann::KDTreeSingleIndexAdaptor<
                     nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
                     PointCloud, 3 /* dim */ > kd_tree_t;
-            kd_tree_t* index = new kd_tree_t(3, m_pc, nanoflann::KDTreeSingleIndexAdaptorParams());
+            kd_tree_t* index;
+#if defined(USE_NORMAL_NN)
+            index = new kd_tree_t(6, m_pc, nanoflann::KDTreeSingleIndexAdaptorParams());
+#else
+            index = new kd_tree_t(3, m_pc, nanoflann::KDTreeSingleIndexAdaptorParams());
+#endif
             index->buildIndex();
 
             switch (neighborMethod) {
@@ -464,7 +463,6 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
 
 
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
-
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
             int dst = 1 - src;
