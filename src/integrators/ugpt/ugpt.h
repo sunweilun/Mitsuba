@@ -29,7 +29,8 @@
 //#define USE_ADAPTIVE_WEIGHT
 #define USE_FILTERS
 #define USE_LOB_FACTOR
-#define USE_NORMAL_NN
+//#define USE_NORMAL_NN
+#define ADAPTIVE_DIFF_SAMPLING
 
 MTS_NAMESPACE_BEGIN
 
@@ -134,13 +135,15 @@ protected:
         
         Spectrum estRad[2]; // estimated radiance for the ray before intersection
         // We need 2 spectrum vectors to perform Jacobi iterations.
+        int sampleCount; // number of samples for direct lighting
         
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
             Spectrum grad; // Gradient to that neighbor.
             Spectrum weight; // Weight for this connection. We set this to 1 for now.
+            int sampleCount; // number of samples for gradient
 
-            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), weight(Spectrum(Float(0))) {
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), weight(Spectrum(Float(0))), sampleCount(1) {
             }
 
             Neighbor() {
@@ -166,6 +169,7 @@ protected:
             neighbors.reserve(5);
             estRad[0] = estRad[1] = direct_lighting = Spectrum(Float(0));
             weight_multiplier = current_weight = Spectrum(Float(1));
+            sampleCount = 1;
             bsdfSample = Point2(-1.f, -1.f);
 #if defined(MTS_OPENMP)
             omp_init_lock(&writelock);
@@ -258,7 +262,6 @@ protected:
         throughput(Spectrum(1.0f)),
         lastNode_throughput(Spectrum(1.0f)),
         lastNode_pdf(1.0f) {
-            shiftedRays.reserve(10);
         }
 
         /// Adds radiance to the ray.
@@ -310,7 +313,6 @@ protected:
         Float eta; ///< Current refractive index of the ray.
         PrecursorCacheInfo* pci; // Cached information from precursor
 
-        std::vector<ShiftedRayState> shiftedRays;
         void spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays); // spawns shifted rays for current depth
         
     };
@@ -318,7 +320,7 @@ protected:
 
 
     void evaluateDiff(MainRayState& main);
-
+    void evaluateDiffSplit(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in);
     void evaluatePrecursor(MainRayState& main);
 
 
@@ -425,11 +427,20 @@ protected:
             const Float d0 = p1[0] - nodes[idx_p2]->its.p.x;
             const Float d1 = p1[1] - nodes[idx_p2]->its.p.y;
             const Float d2 = p1[2] - nodes[idx_p2]->its.p.z;
-            return d0 * d0 + d1 * d1 + d2 * d2;
+            Float sqr_dist = d0 * d0 + d1 * d1 + d2 * d2;
+#if defined(USE_NORMAL_NN)
+            const Float n0 = p1[3] - nodes[idx_p2]->its.geoFrame.n.x;
+            const Float n1 = p1[4] - nodes[idx_p2]->its.geoFrame.n.y;
+            const Float n2 = p1[5] - nodes[idx_p2]->its.geoFrame.n.z;
+            sqr_dist += (n0 * n0 + n1 * n1 + n2 * n2);
+#endif
+            return sqr_dist;
         }
 
         inline Float kdtree_get_pt(const size_t idx, int dim) const {
-            return nodes[idx]->its.p[dim];
+            if(dim < 3)
+                return nodes[idx]->its.p[dim];
+            return nodes[idx]->its.geoFrame.n[dim-3];
         }
 
         template <class BBOX>

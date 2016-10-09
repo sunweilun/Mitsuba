@@ -586,7 +586,7 @@
                 <param name="maxMergeDepth" readableName="Maximum Merging Depth" type="integer" default="0">
 			Maximum merging depth for neighbor graph.
 		</param>
-                <param name="usePixelNeighbors" readableName="Using Pixel Neighbor Definition" type="boolean" default="true">
+                <param name="usePixelNeighbors" readableName="Use Pixel Neighbor Definition" type="boolean" default="true">
 			Use pixel neighbor definition for first bounce merging.
 		</param>
 	</plugin>
