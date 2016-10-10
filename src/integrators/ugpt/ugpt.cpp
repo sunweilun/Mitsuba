@@ -1073,11 +1073,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiffSplit(MainRayState& main_in
         main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
 
 
-        if (main.rRec.depth < main.pci->nodes.size()) {
-            main.rRec.its = main.pci->nodes[main.rRec.depth].its; // use cached intersection if possible
-            main.ray = main.pci->nodes[main.rRec.depth].lastRay;
-        } else
-            scene->rayIntersect(main.ray, main.rRec.its);
+        scene->rayIntersect(main.ray, main.rRec.its); // always try to intersect because this is splitted path.
 
         if (main.rRec.its.isValid()) {
             // Intersected something - check if it was a luminaire.
@@ -1131,7 +1127,7 @@ void UnstructuredGradientPathIntegrator::evaluateDiffSplit(MainRayState& main_in
         if (main.rRec.depth + 1 >= m_config.m_minDepth) {
             Spectrum estimated_radiance = Spectrum(mainBsdfResult.pdf / (D_EPSILON + (mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf)));
             estimated_radiance *= mainEmitterRadiance * mainBsdfResult.weight * mainBsdfResult.pdf;
-            main.addRadiance(estimated_radiance);
+            //main.addRadiance(estimated_radiance);
         }
 
         main.multiply(mainBsdfResult);
@@ -1551,6 +1547,42 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
     main.rRec.depth = 1;
 
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
+        
+#if defined(ADAPTIVE_DIFF_SAMPLING)
+        if(main.rRec.depth == 2)
+        {
+            std::vector<ShiftedRayState> splitRays;
+            std::vector<int> splitNum(shiftedRays.size(), 0);
+            for(int i=0; i<shiftedRays.size(); i++)
+            {
+                auto& shifted = shiftedRays[i];
+                Float numerator = (shifted.main_throughput-shifted.throughput).abs().max();
+                Float m = shifted.main_throughput.max();
+                Float s = shifted.throughput.max();
+                Float denominator = std::max(m, s);
+                Float metric = numerator / (D_EPSILON + denominator);
+                splitNum[i] = std::floor(metric * 5);
+                splitNum[i] *= splitNum[i];
+                shifted.neighbor->grad *= 1+splitNum[i]; // Scale gradient values that has already been samples.
+            }
+            
+            while(1)
+            {
+                bool done = true;
+                splitRays.clear();
+                for(int i=0; i<shiftedRays.size(); i++)
+                {
+                    if(splitNum[i] == 0) continue;
+                    done = false;
+                    splitNum[i]--;
+                    splitRays.push_back(shiftedRays[i]);
+                }
+                if(done) break;
+                evaluateDiffSplit(main, splitRays);
+            }
+        }
+#endif
+        
         main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
 
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
@@ -1766,28 +1798,6 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
         } else {
             sample = main.rRec.nextSample2D();
         }
-        
-#if defined(ADAPTIVE_DIFF_SAMPLING)
-        if(main.rRec.depth == 2)
-        {
-            std::vector<ShiftedRayState> splitRays;
-            for(auto& shifted : shiftedRays)
-            {
-                Float m = shifted.main_throughput.max();
-                Float s = shifted.throughput.max();
-                Float numerator = fabs(m-s);
-                Float denominator = std::max(m, s);
-                Float metric = numerator / (D_EPSILON + denominator);
-                if(metric > 0.8f) splitRays.push_back(shifted);
-            }
-            if(splitRays.size() > 0)
-            {
-                for(int i=0; i<100; i++)
-                    evaluateDiffSplit(main, splitRays);
-            }
-        }
-#endif
-        
         
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
 
