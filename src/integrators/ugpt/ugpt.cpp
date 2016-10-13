@@ -469,8 +469,6 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
     Float alpha_sqr = m_config.m_reconstructAlpha;
     alpha_sqr *= alpha_sqr;
 
-
-
     for (int i = m_config.m_maxMergeDepth; i >= m_config.m_minMergeDepth; i--) {
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
             int src = j % 2;
@@ -489,14 +487,14 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                         auto& node = pci.nodes[i];
                         Spectrum w(Float(0));
                         Spectrum color(Float(0));
-                        color += node.estRad[src] * alpha_sqr;
+                        color += node.estRad * alpha_sqr;
                         w += Spectrum(alpha_sqr);
                         for (auto& n : node.neighbors) {
-                            color += n.node->estRad[src] * n.weight;
+                            color += n.node->estRadBuffer[src] * n.weight;
                             color += n.grad * n.weight;
                             w += n.weight;
                         }
-                        node.estRad[dst] = color / w; // update
+                        node.estRadBuffer[dst] = color / w; // update
                         // avg_diff += (node.estRad[dst] - node.estRad[src]).max();
                     }
                 }
@@ -517,9 +515,10 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                 auto& pci = m_preCacheInfoList[index];
 
                 if (i >= pci.nodes.size()) continue;
-                pci.nodes[i - 1].estRad[0] = pci.nodes[i - 1].direct_lighting;
-                pci.nodes[i - 1].estRad[0] += pci.nodes[i].estRad[m_config.m_nJacobiIters % 2] * pci.nodes[i].weight_multiplier;
-
+                pci.nodes[i - 1].estRad = pci.nodes[i - 1].direct_lighting;
+                pci.nodes[i - 1].estRad += pci.nodes[i].estRadBuffer[m_config.m_nJacobiIters % 2] * 
+                        pci.nodes[i].weight_multiplier;
+                pci.nodes[i - 1].estRadBuffer[0] = pci.nodes[i - 1].estRad;
             }
         }
     }
@@ -564,7 +563,7 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
             PrecursorCacheInfo &pci = m_preCacheInfoList[y * cx + x];
             int bufferID = m_config.m_nJacobiIters % 2;
             if (pci.nodes.size() >= 1) {
-                Spectrum color = pci.nodes[0].estRad[bufferID] * pci.nodes[0].weight_multiplier;
+                Spectrum color = pci.nodes[0].estRadBuffer[bufferID] * pci.nodes[0].weight_multiplier;
                 color += pci.very_direct_lighting;
                 block->put(pci.samplePos, color / Float(batchSize), 1.f);
             }
@@ -2678,7 +2677,7 @@ UnstructuredGradientPathIntegrator::getVertexType(ShiftedRayState& ray, const Un
 UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Properties & props)
 : MonteCarloIntegrator(props) {
     m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
-    m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(1));
+    m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
     m_config.m_nJacobiIters = (int) props.getInteger("nJacobiIters", 50);
     m_config.m_minMergeDepth = (int) props.getInteger("minMergeDepth", 0);
     m_config.m_maxMergeDepth = (int) props.getInteger("maxMergeDepth", 0);

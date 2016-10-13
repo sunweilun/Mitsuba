@@ -971,7 +971,8 @@ public:
                                 // Update throughput and pdf.
                                 shifted.throughput *= shiftedBsdfValue * shiftResult.jacobian;
                                 shifted.pdf *= shiftedBsdfPdf * shiftResult.jacobian;
-                                shifted.eta *= bRec.eta;
+                                //shifted.eta *= bRec.eta;
+                                // ignore eta here
 
                                 shifted.connection_status = RAY_RECENTLY_CONNECTED;
 
@@ -1237,7 +1238,7 @@ GradientPathIntegrator::GradientPathIntegrator(const Properties &props)
     m_config.m_reconstructL1 = props.getBoolean("reconstructL1", true);
     m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
-    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 40);
+    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
 
     if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
         Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
@@ -1557,7 +1558,7 @@ bool GradientPathIntegrator::render(Scene *scene,
                 if(x >= w || y >= h) continue;
                 Spectrum color(0.f);
                 Float weight = 0.f;
-                const Spectrum& prim = iterBufferBitmap[src]->getPixel(Point2i(x, y));
+                const Spectrum& prim = throughputBitmap->getPixel(Point2i(x, y));
                 color += prim*alpha_sqr;
                 weight += alpha_sqr;
                 if(x > 0)
@@ -1584,7 +1585,6 @@ bool GradientPathIntegrator::render(Scene *scene,
                     color += iterBufferBitmap[src]->getPixel(Point2i(x, y+1));
                     weight += 1.f;
                 }
-                
                 iterBufferBitmap[dst]->setPixel(Point2i(x, y), color / weight);
             }
         }

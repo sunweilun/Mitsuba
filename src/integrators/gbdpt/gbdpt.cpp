@@ -299,7 +299,7 @@ public:
                     {
                         float color = 0.f;
                         float weight = 0.f;
-                        const float& prim = rec[src][(y*w+x)*3+channel];
+                        const float& prim = imgf[(y*w+x)*3+channel];
                         color += prim*alpha_sqr;
                         weight += alpha_sqr;
                         if (x > 0) {

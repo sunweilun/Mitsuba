@@ -30,7 +30,7 @@
 #define USE_FILTERS
 #define USE_LOB_FACTOR
 //#define USE_NORMAL_NN
-#define ADAPTIVE_DIFF_SAMPLING
+//#define ADAPTIVE_DIFF_SAMPLING
 
 MTS_NAMESPACE_BEGIN
 
@@ -133,7 +133,8 @@ protected:
         Spectrum current_weight; // multiplied weight before arriving at this node
         Spectrum direct_lighting; // estimated direct lighting for the node
         
-        Spectrum estRad[2]; // estimated radiance for the ray before intersection
+        Spectrum estRadBuffer[2]; // estimated radiance buffer for Jacobi iterations
+        Spectrum estRad; // estimated radiance for the ray before intersection
         // We need 2 spectrum vectors to perform Jacobi iterations.
         int sampleCount; // number of samples for direct lighting
         
@@ -167,7 +168,8 @@ protected:
 
         PathNode() {
             neighbors.reserve(5);
-            estRad[0] = estRad[1] = direct_lighting = Spectrum(Float(0));
+            estRadBuffer[0] = estRadBuffer[1] = direct_lighting = Spectrum(Float(0));
+            estRad = Spectrum(Float(0));
             weight_multiplier = current_weight = Spectrum(Float(1));
             sampleCount = 1;
             bsdfSample = Point2(-1.f, -1.f);
@@ -296,7 +298,8 @@ protected:
             }
             else
             {
-                pci->nodes.back().estRad[0] += lastNode_throughput * estimated_radiance / lastNode_pdf;
+                pci->nodes.back().estRad += lastNode_throughput * estimated_radiance / lastNode_pdf;
+                pci->nodes.back().estRadBuffer[0] = pci->nodes.back().estRad; // set initial guess
             }
         }
 
