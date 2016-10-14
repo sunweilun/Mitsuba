@@ -24,13 +24,15 @@
 #include <omp.h>
 #endif
 
+#include "nanoflann.hpp"
+
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT
 #define USE_FILTERS
 #define USE_LOB_FACTOR
-//#define USE_NORMAL_NN
-//#define ADAPTIVE_DIFF_SAMPLING
+#define ADAPTIVE_DIFF_SAMPLING
+#define USE_RECON_RAYS
 
 MTS_NAMESPACE_BEGIN
 
@@ -53,8 +55,6 @@ struct UnstructuredGradientPathTracerConfig {
     int m_batchSize;
     bool m_usePixelNeighbors;
 };
-
-
 
 /* ==================================================================== */
 /*                         Integrator                         */
@@ -122,7 +122,7 @@ protected:
         Spectrum weight; ///< BSDF weight of the sampled direction.
         Float pdf; ///< PDF of the BSDF sample.
     };
-    
+
     struct PathNode {
         RayDifferential lastRay; // ray before intersection
         Intersection its; // intersection info
@@ -132,12 +132,12 @@ protected:
         Spectrum weight_multiplier; // weight multiplier that happened in between current node and previous node
         Spectrum current_weight; // multiplied weight before arriving at this node
         Spectrum direct_lighting; // estimated direct lighting for the node
-        
+
         Spectrum estRadBuffer[2]; // estimated radiance buffer for Jacobi iterations
         Spectrum estRad; // estimated radiance for the ray before intersection
         // We need 2 spectrum vectors to perform Jacobi iterations.
         int sampleCount; // number of samples for direct lighting
-        
+
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
             Spectrum grad; // Gradient to that neighbor.
@@ -161,7 +161,7 @@ protected:
         std::vector<Neighbor> neighbors; // neighbors of this node
         bool addNeighborWithFilter(PathNode* neighbor);
         BSDFSampleResult getBSDFSampleResult() const;
-        
+
 #if defined(MTS_OPENMP)
         omp_lock_t writelock;
 #endif
@@ -202,8 +202,6 @@ protected:
         }
     };
 
-    std::vector<PrecursorCacheInfo> m_preCacheInfoList;
-
     UnstructuredGradientPathTracerConfig m_config;
 
     enum RayConnection {
@@ -231,9 +229,8 @@ protected:
             Spectrum color = (mainContrib - shiftContrib) * weight;
             neighbor->grad += color;
         }
-        
-        inline Spectrum getCurrentWeight() const
-        {
+
+        inline Spectrum getCurrentWeight() const {
             return neighbor->node->current_weight;
         }
 
@@ -252,8 +249,6 @@ protected:
         Spectrum main_throughput; // record main throughput starting from activeDepth for shifted samples
         Float main_pdf; // record main pdf starting from activeDepth for shifted samples
     };
-    
-    
 
     struct MainRayState {
 
@@ -268,36 +263,29 @@ protected:
 
         /// Adds radiance to the ray.
 
-        inline void multiply(const BSDFSampleResult& mainBsdfResult)
-        {
+        inline void multiply(const BSDFSampleResult& mainBsdfResult) {
             Spectrum throughput = mainBsdfResult.weight * mainBsdfResult.pdf;
             this->throughput *= throughput;
             this->pdf *= mainBsdfResult.pdf;
-            
+
             eta *= mainBsdfResult.bRec.eta;
-            if (rRec.depth >= pci->nodes.size())
-            {
+            if (rRec.depth >= pci->nodes.size()) {
                 lastNode_throughput *= throughput;
                 lastNode_pdf *= mainBsdfResult.pdf;
             }
         }
-        
-        inline void multiplyPDF(const Float& pdf)
-        {
+
+        inline void multiplyPDF(const Float& pdf) {
             this->pdf *= pdf;
-            if (rRec.depth - 1 >= pci->nodes.size())
-            {
+            if (rRec.depth - 1 >= pci->nodes.size()) {
                 lastNode_pdf *= pdf;
             }
         }
-        
+
         inline void addRadiance(const Spectrum& estimated_radiance) {
-            if (rRec.depth < pci->nodes.size())
-            {
-                pci->nodes[rRec.depth-1].direct_lighting += estimated_radiance;
-            }
-            else
-            {
+            if (rRec.depth < pci->nodes.size()) {
+                pci->nodes[rRec.depth - 1].direct_lighting += estimated_radiance;
+            } else {
                 pci->nodes.back().estRad += lastNode_throughput * estimated_radiance / lastNode_pdf;
                 pci->nodes.back().estRadBuffer[0] = pci->nodes.back().estRad; // set initial guess
             }
@@ -311,13 +299,13 @@ protected:
         // Note: Instead of storing throughput and pdf, it is possible to store Veach-style weight (throughput divided by pdf), if relative PDF (offset_pdf divided by base_pdf) is also stored. This might be more stable numerically.
         Spectrum lastNode_throughput;
         Float lastNode_pdf;
-        
+
         RadianceQueryRecord rRec; ///< The radiance query record for this ray.
         Float eta; ///< Current refractive index of the ray.
         PrecursorCacheInfo* pci; // Cached information from precursor
 
         void spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays); // spawns shifted rays for current depth
-        
+
     };
 
 
@@ -366,15 +354,14 @@ protected:
         result.weight = bsdf->sample(result.bRec, result.pdf, sample);
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
-        
-        if(!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01))
-        {
+
+        if (!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01)) {
             printf("%f %f\n", sample.x, sample.y);
             printf("%f\n", result.bRec.wo.length());
             result.pdf = 0;
             return result;
         }
-        
+
         SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }
@@ -441,9 +428,9 @@ protected:
         }
 
         inline Float kdtree_get_pt(const size_t idx, int dim) const {
-            if(dim < 3)
+            if (dim < 3)
                 return nodes[idx]->its.p[dim];
-            return nodes[idx]->its.geoFrame.n[dim-3];
+            return nodes[idx]->its.geoFrame.n[dim - 3];
         }
 
         template <class BBOX>
@@ -451,8 +438,20 @@ protected:
             return false;
         }
     };
-    PointCloud m_pc;
+    
+    std::shared_ptr<PointCloud> m_pc;
+    std::shared_ptr<std::vector<PrecursorCacheInfo> > m_preCacheInfoList;
+    
+    typedef nanoflann::KDTreeSingleIndexAdaptor<
+                    nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
+                    PointCloud, 3 /* dim */ > kd_tree_t;
 
+#if defined(USE_RECON_RAYS)
+    enum CurrentMode{ SAMPLE_MODE, RECON_MODE } m_currentMode;
+    std::shared_ptr<std::vector<PrecursorCacheInfo> > m_preCacheInfoListBuffer;
+    std::shared_ptr<PointCloud> m_pcBuffer;
+    std::shared_ptr<kd_tree_t> m_treeBuffer;
+#endif
 };
 
 
