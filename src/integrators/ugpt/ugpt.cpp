@@ -236,7 +236,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
         {
             std::shared_ptr<kd_tree_t> index;
 
-            
+
 #if defined(USE_RECON_RAYS)
             if (m_currentMode == RECON_MODE)
                 m_pc.reset(new PointCloud());
@@ -273,7 +273,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
             }
 #else
             // collect nodes for mergeDepth
-            index.reset(new kd_tree_t(3, m_pc, nanoflann::KDTreeSingleIndexAdaptorParams()));
+            index.reset(new kd_tree_t(3, *m_pc, nanoflann::KDTreeSingleIndexAdaptorParams()));
             index->buildIndex();
             std::shared_ptr<PointCloud> m_pcBuffer = m_pc;
 #endif
@@ -304,7 +304,9 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
                 case NEIGHBOR_KNN:
                 {
                     int nn = 10;
-                    if(m_currentMode == RECON_MODE) nn = 1;
+#if defined(USE_RECON_RAYS)
+                    if (m_currentMode == RECON_MODE) nn = 1;
+#endif
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -422,7 +424,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
             int y = offset.y + pointIndex / bSize;
 
             if (x >= cx || y >= cy) continue;
-            
+
             PrecursorCacheInfo &pci = (*m_preCacheInfoList)[y * cx + x];
 
             rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
@@ -437,7 +439,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
             mainRay.rRec.its = rRec.its;
             mainRay.pci = &pci;
             evaluateDiff(mainRay);
-            
+
 #if defined(USE_RECON_RAYS)
             /*if(m_currentMode == RECON_MODE) // evaluate diff in the other direction for reconstruction
             {
@@ -562,6 +564,12 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
             }
 
         }
+        
+        
+        int dstBuffer = m_config.m_nJacobiIters % 2;
+#if defined(USE_RECON_RAYS)
+        if (i == 1 && m_currentMode == RECON_MODE) dstBuffer = 1;
+#endif
 
         if (i == 0) continue;
 
@@ -577,7 +585,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
 
                 if (i >= pci.nodes.size()) continue;
                 pci.nodes[i - 1].estRad = pci.nodes[i - 1].direct_lighting;
-                pci.nodes[i - 1].estRad += pci.nodes[i].estRadBuffer[m_config.m_nJacobiIters % 2] *
+                pci.nodes[i - 1].estRad += pci.nodes[i].estRadBuffer[dstBuffer] *
                         pci.nodes[i].weight_multiplier;
                 pci.nodes[i - 1].estRadBuffer[0] = pci.nodes[i - 1].estRadBuffer[1] = pci.nodes[i - 1].estRad;
             }
@@ -645,7 +653,7 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
 
     /* Get config from the parent class. */
     m_config.m_maxDepth = m_maxDepth;
-    m_config.m_minDepth = 3; // m_minDepth;
+    m_config.m_minDepth = 1; // debug
     m_config.m_rrDepth = m_rrDepth;
     m_config.m_strictNormals = m_strictNormals;
 
