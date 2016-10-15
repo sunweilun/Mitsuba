@@ -258,7 +258,8 @@ protected:
         pdf(1.0f),
         throughput(Spectrum(1.0f)),
         lastNode_throughput(Spectrum(1.0f)),
-        lastNode_pdf(1.0f) {
+        lastNode_pdf(1.0f),
+        accumulateRadiance(true) {
         }
 
         /// Adds radiance to the ray.
@@ -283,6 +284,7 @@ protected:
         }
 
         inline void addRadiance(const Spectrum& estimated_radiance) {
+            if(!accumulateRadiance) return;
             if (rRec.depth < pci->nodes.size()) {
                 pci->nodes[rRec.depth - 1].direct_lighting += estimated_radiance;
             } else {
@@ -291,6 +293,7 @@ protected:
             }
         }
 
+        bool accumulateRadiance;
         RayDifferential ray; ///< Current ray.
 
         Spectrum throughput; ///< Current throughput of the path.
@@ -438,16 +441,19 @@ protected:
             return false;
         }
     };
-    
+
     std::shared_ptr<PointCloud> m_pc;
     std::shared_ptr<std::vector<PrecursorCacheInfo> > m_preCacheInfoList;
-    
+
     typedef nanoflann::KDTreeSingleIndexAdaptor<
-                    nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
-                    PointCloud, 3 /* dim */ > kd_tree_t;
+    nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
+    PointCloud, 3 /* dim */ > kd_tree_t;
 
 #if defined(USE_RECON_RAYS)
-    enum CurrentMode{ SAMPLE_MODE, RECON_MODE } m_currentMode;
+
+    enum CurrentMode {
+        SAMPLE_MODE, RECON_MODE
+    } m_currentMode;
     std::shared_ptr<std::vector<PrecursorCacheInfo> > m_preCacheInfoListBuffer;
     std::shared_ptr<PointCloud> m_pcBuffer;
     std::shared_ptr<kd_tree_t> m_treeBuffer;

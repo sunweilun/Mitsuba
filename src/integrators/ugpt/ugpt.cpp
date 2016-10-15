@@ -164,11 +164,11 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     if (fabs(dot(its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
 
     // filter # of neighbors
-    if (neighbors.size() >= 6) return false;
+    if (neighbors.size() >= 8) return false;
 
     // filter glossy vertices
-    //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
-    //if (vertexType == VERTEX_TYPE_GLOSSY) return false;
+    if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
+    if (vertexType == VERTEX_TYPE_GLOSSY) return false;
 
     Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
     Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
@@ -441,7 +441,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
             evaluateDiff(mainRay);
 
 #if defined(USE_RECON_RAYS)
-            /*if(m_currentMode == RECON_MODE) // evaluate diff in the other direction for reconstruction
+            if (m_currentMode == RECON_MODE) // evaluate diff in the other direction for reconstruction
             {
                 PrecursorCacheInfo &pci = (*m_preCacheInfoListBuffer)[y * cx + x];
 
@@ -450,6 +450,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
                 // Initialize the base path.
 
                 MainRayState mainRay;
+                mainRay.accumulateRadiance = false;
                 mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray,
                         pci.samplePos, pci.apertureSample, pci.timeSample);
                 mainRay.ray.scaleDifferential(diffScaleFactor);
@@ -457,7 +458,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
                 mainRay.rRec.its = rRec.its;
                 mainRay.pci = &pci;
                 evaluateDiff(mainRay);
-            }*/
+            }
 #endif
         }
     }
@@ -516,6 +517,33 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
                     }
                 }
             }
+#if defined(USE_RECON_RAYS)
+            if(m_currentMode == RECON_MODE)
+            {
+                auto& pci = (*m_preCacheInfoListBuffer)[i + k];
+                for (auto& node : pci.nodes) {
+                    for (auto& neighbor : node.neighbors) {
+                        neighbor.weight = Spectrum(Float(1));
+#if defined(USE_ADAPTIVE_WEIGHT)
+                        Float dist = distance(node.its.p, neighbor.node->its.p);
+                        neighbor.weight = Spectrum(exp(-dist / avg_dist));
+#endif
+                        if (neighbor.node > &node) // unidirectional update to avoid conflict
+                        {
+                            auto& nn = neighbor.node->neighbors;
+                            auto it = std::find_if(nn.begin(), nn.end(),
+                                    [&node] (const PathNode::Neighbor & n) {
+                                        return n.node == &node;
+                                    });
+                            it->grad /= Float(it->sampleCount);
+                            neighbor.grad /= Float(neighbor.sampleCount);
+                            neighbor.grad -= it->grad;
+                            it->grad = -neighbor.grad;
+                        }
+                    }
+                }
+            }
+#endif
         }
     }
 }
@@ -552,10 +580,11 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
                         Spectrum color(Float(0));
                         color += node.estRad * alpha_sqr;
                         w += Spectrum(alpha_sqr);
+                        Float connWeight = node.neighbors.size() / 4.0;
                         for (auto& n : node.neighbors) {
-                            color += n.node->estRadBuffer[src] * n.weight;
-                            color += n.grad * n.weight;
-                            w += n.weight;
+                            color += n.node->estRadBuffer[src] * n.weight * connWeight;
+                            color += n.grad * n.weight * connWeight;
+                            w += n.weight * connWeight;
                         }
                         node.estRadBuffer[dst] = color / w; // update
                         // avg_diff += (node.estRad[dst] - node.estRad[src]).max();
@@ -564,8 +593,8 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
             }
 
         }
-        
-        
+
+
         int dstBuffer = m_config.m_nJacobiIters % 2;
 #if defined(USE_RECON_RAYS)
         if (i == 1 && m_currentMode == RECON_MODE) dstBuffer = 1;
