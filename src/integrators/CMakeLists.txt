@@ -26,6 +26,9 @@ add_integrator(gpt      gpt/gpt.cpp gpt/gpt.h gpt/gpt_proc.cpp
 add_integrator(ugpt      ugpt/ugpt.cpp ugpt/ugpt.h
                 ugpt/nanoflann.hpp  )
 
+add_integrator(agpt      agpt/agpt.cpp agpt/agpt.h
+                agpt/nanoflann.hpp  )
+
 # Photon mapping-based techniques
 add_integrator(photonmapper photonmapper/photonmapper.cpp photonmapper/bre.cpp)
 add_integrator(ppm          photonmapper/ppm.cpp)

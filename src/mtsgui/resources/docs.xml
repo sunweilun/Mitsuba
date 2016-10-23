@@ -556,7 +556,7 @@
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">
 			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
 		</param>	
-                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="40">
+                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="200">
 			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
 		</param>
 	</plugin>
@@ -574,7 +574,37 @@
 			<p>Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', for the purposes of constructing paths pairs for estimating pixel differences.</p>
 			<p>This value should usually be somewhere between 0.0005 and 0.01. If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.</p>
 		</param>
-                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="40">
+                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="200">
+			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
+		</param>
+		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">
+			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
+		</param>
+                <param name="minMergeDepth" readableName="Minimum Merging Depth" type="integer" default="0">
+			Minimum merging depth for neighbor graph.
+		</param>
+                <param name="maxMergeDepth" readableName="Maximum Merging Depth" type="integer" default="0">
+			Maximum merging depth for neighbor graph.
+		</param>
+                <param name="usePixelNeighbors" readableName="Use Pixel Neighbor Definition" type="boolean" default="true">
+			Use pixel neighbor definition for first bounce merging.
+		</param>
+	</plugin>
+        
+        <plugin type="integrator" name="agpt" readableName="Adaptive Gradient-Domain Path Tracer" show="true"
+			className="AdaptiveGradientIntegrator" extends="MonteCarloIntegrator">
+		<descr>
+			<p>This plugin implements a gradient-domain path tracer (short: G-PT) as described in the paper "Gradient-Domain Path Tracing" by Kettunen et al. It samples difference images in addition to the standard color image, and reconstructs the final image based on these.</p>
+			<p>
+			It supports classical materials like diffuse, specular and glossy materials, and area and point lights, depth-of-field, and low discrepancy samplers. There is also experimental support for sub-surface scattering and motion blur.</p> 
+			<p>Note that this is still an experimental implementation of Gradient-Domain Path Tracing that has not been tested with all of Mitsuba's features. Notably there is no support yet for any kind of participating media or directional lights. Environment maps are supported, though. Does not support the 'hide emitters' option even though it is displayed.
+			</p>
+		</descr>
+		<param name="shiftThreshold" readableName="Shift Threshold" type="float" default="0.001">
+			<p>Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', for the purposes of constructing paths pairs for estimating pixel differences.</p>
+			<p>This value should usually be somewhere between 0.0005 and 0.01. If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.</p>
+		</param>
+                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="200">
 			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
 		</param>
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">

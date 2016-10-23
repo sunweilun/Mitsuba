@@ -29,7 +29,7 @@
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT
-#define USE_FILTERS
+//#define USE_FILTERS
 //#define USE_LOB_FACTOR
 #define ADAPTIVE_DIFF_SAMPLING
 //#define USE_RECON_RAYS
@@ -42,7 +42,7 @@ MTS_NAMESPACE_BEGIN
 
 
 /// Configuration for the gradient path tracer.
-struct UnstructuredGradientPathTracerConfig {
+struct AdaptiveGradientPathTracerConfig {
     int m_maxDepth;
     int m_minDepth;
     int m_rrDepth;
@@ -61,12 +61,12 @@ struct UnstructuredGradientPathTracerConfig {
 
 /* ==================================================================== */
 
-class UnstructuredGradientPathIntegrator : public MonteCarloIntegrator {
+class AdaptiveGradientPathIntegrator : public MonteCarloIntegrator {
 public:
-    UnstructuredGradientPathIntegrator(const Properties &props);
+    AdaptiveGradientPathIntegrator(const Properties &props);
 
     /// Unserialize from a binary data stream
-    UnstructuredGradientPathIntegrator(Stream *stream, InstanceManager *manager);
+    AdaptiveGradientPathIntegrator(Stream *stream, InstanceManager *manager);
 
 
     /// Starts the rendering process.
@@ -202,7 +202,7 @@ protected:
         }
     };
 
-    UnstructuredGradientPathTracerConfig m_config;
+    AdaptiveGradientPathTracerConfig m_config;
 
     enum RayConnection {
         RAY_NOT_CONNECTED, ///< Not yet connected - shifting in progress.
@@ -232,6 +232,14 @@ protected:
 
         inline Spectrum getCurrentWeight() const {
             return neighbor->node->current_weight;
+        }
+        
+        inline Float getImportance() const {
+            Float numerator = (main_throughput - throughput).abs().max();
+            Float m = main_throughput.max();
+            Float s = throughput.max();
+            Float denominator = std::max(m, s);
+            return numerator / denominator;
         }
 
         RayDifferential ray; ///< Current ray.
@@ -314,7 +322,7 @@ protected:
 
 
     void evaluateDiff(MainRayState& main);
-    void evaluateDiffSplit(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in);
+    void evaluateDiffBranch(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in);
     void evaluatePrecursor(MainRayState& main);
 
 
@@ -369,7 +377,7 @@ protected:
         return result;
     }
 
-    VertexType getVertexTypeByRoughness(Float roughness, const UnstructuredGradientPathTracerConfig& config) {
+    VertexType getVertexTypeByRoughness(Float roughness, const AdaptiveGradientPathTracerConfig& config) {
         if (roughness <= config.m_shiftThreshold) {
             return VERTEX_TYPE_GLOSSY;
         } else {
@@ -388,11 +396,11 @@ protected:
     /// For this reason, we vary the classification a little bit based on the situation.
     /// This is perfectly valid, and should be done.
 
-    VertexType getVertexType(const BSDF* bsdf, Intersection& its, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType);
+    VertexType getVertexType(const BSDF* bsdf, Intersection& its, const AdaptiveGradientPathTracerConfig& config, unsigned int bsdfType);
 
-    VertexType getVertexType(MainRayState& ray, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType);
+    VertexType getVertexType(MainRayState& ray, const AdaptiveGradientPathTracerConfig& config, unsigned int bsdfType);
 
-    VertexType getVertexType(ShiftedRayState& ray, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType);
+    VertexType getVertexType(ShiftedRayState& ray, const AdaptiveGradientPathTracerConfig& config, unsigned int bsdfType);
 
     /// Result of a half vector shift.
 

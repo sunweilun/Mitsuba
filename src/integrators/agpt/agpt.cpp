@@ -21,7 +21,7 @@
 #include <mitsuba/core/statistics.h>
 #include <mitsuba/render/renderproc.h>
 #include "mitsuba/core/plugin.h"
-#include "ugpt.h"
+#include "agpt.h"
 
 
 MTS_NAMESPACE_BEGIN
@@ -71,7 +71,7 @@ inline size_t ceil(size_t num, size_t denom) {
     return 1 + (num - 1) / denom;
 }
 
-void UnstructuredGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
+void AdaptiveGradientPathIntegrator::tracePrecursor(const Scene *scene, const Sensor *sensor, Sampler *sampler) {
     bool needsApertureSample = sensor->needsApertureSample();
     bool needsTimeSample = sensor->needsTimeSample();
     // Get ready for sampling.
@@ -154,7 +154,7 @@ bool similar(const Spectrum& c1, const Spectrum& c2) {
     return true;
 }
 
-bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
+bool AdaptiveGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
 #if defined(USE_FILTERS)
     // filter normal
     if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.8f) return false;
@@ -188,7 +188,7 @@ bool UnstructuredGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNod
     return true;
 }
 
-void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
+void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const Sensor *sensor) {
     if (m_cancelled) return;
     if (m_config.m_nJacobiIters == 0) return;
     neighborMethod = NEIGHBOR_KNN;
@@ -381,6 +381,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
     FILE* file = fopen("graph.txt", "w");
     for (auto& pci : *m_preCacheInfoList) {
         for (auto& node : pci.nodes) {
+            fprintf(file, "p %f %f %f\n", node.its.p.x, node.its.p.y, node.its.p.z);
             for (auto& neighbor : node.neighbors) {
                 fprintf(file, "l %f %f %f ", neighbor.node->its.p.x, neighbor.node->its.p.y, neighbor.node->its.p.z);
                 fprintf(file, "%f %f %f\n", node.its.p.x, node.its.p.y, node.its.p.z);
@@ -392,7 +393,7 @@ void UnstructuredGradientPathIntegrator::decideNeighbors(const Scene *scene, con
 
 }
 
-void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor *sensor, Sampler * sampler) {
+void AdaptiveGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor *sensor, Sampler * sampler) {
     if (m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
@@ -464,7 +465,7 @@ void UnstructuredGradientPathIntegrator::traceDiff(const Scene *scene, const Sen
     }
 }
 
-void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scene * scene) {
+void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * scene) {
     if (m_cancelled) return;
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
@@ -547,7 +548,7 @@ void UnstructuredGradientPathIntegrator::communicateBidirectionalDiff(const Scen
     }
 }
 
-void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
+void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene) {
     if (m_cancelled) return;
     size_t chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
@@ -621,7 +622,7 @@ void UnstructuredGradientPathIntegrator::iterateJacobi(const Scene * scene) {
     }
 }
 
-void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor, int batchSize) {
+void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor, int batchSize) {
     if (m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
@@ -665,11 +666,11 @@ void UnstructuredGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sen
                 block->put(pci.samplePos, color / Float(batchSize), 1.f);
             }
         }
-        film->putMulti(block, 0);
+        film->put(block);
     }
 }
 
-bool UnstructuredGradientPathIntegrator::render(Scene *scene,
+bool AdaptiveGradientPathIntegrator::render(Scene *scene,
         RenderQueue *queue, const RenderJob *job,
         int sceneResID, int sensorResID, int samplerResID) {
     m_cancelled = false;
@@ -691,13 +692,6 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
 
     /* Set up MultiFilm. */
     ref<Film> film = sensor->getFilm();
-
-    std::vector<std::string> outNames;
-    outNames.push_back("-final");
-    if (!film->setBuffers(outNames)) {
-        Log(EError, "Cannot render image! G-PT has been called without MultiFilm.");
-        return false;
-    }
 
     size_t nCores = sched->getCoreCount();
     Sampler *sampler = static_cast<Sampler *> (sched->getResource(samplerResID, 0));
@@ -828,7 +822,7 @@ bool UnstructuredGradientPathIntegrator::render(Scene *scene,
 
 static StatsCounter avgPathLength("Unstructured Gradient Path Tracer", "Average path length", EAverage);
 
-void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
+void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
     const Scene *scene = main.rRec.scene;
     // Perform the first ray intersection for the base path (or ignore if the intersection has already been provided).
 
@@ -936,7 +930,7 @@ void UnstructuredGradientPathIntegrator::evaluatePrecursor(MainRayState & main) 
 
 #if defined(ADAPTIVE_DIFF_SAMPLING)
 
-void UnstructuredGradientPathIntegrator::evaluateDiffSplit(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in) {
+void AdaptiveGradientPathIntegrator::evaluateDiffBranch(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in) {
     MainRayState main = main_in;
     main.rRec.its = main_in.rRec.its;
     std::vector<ShiftedRayState> shiftedRays = shiftedRays_in;
@@ -1050,9 +1044,9 @@ void UnstructuredGradientPathIntegrator::evaluateDiffSplit(MainRayState& main_in
                                 Float shiftedWeightDenominator = (jacobian * shifted.pdf) * (jacobian * shifted.pdf) * ((shiftedDRecPdf * shiftedDRecPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
                                 weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
 
-
                                 mainContribution = main_throughput * (mainBSDFValue * mainEmitterRadiance);
                                 shiftedContribution = jacobian * shifted.throughput * (shiftedBsdfValue * shiftedEmitterRadiance);
+
 
                                 // Note: The Jacobians were baked into shifted.pdf and shifted.throughput at connection phase.
                             } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
@@ -1615,7 +1609,7 @@ shift_failed:
 
 #endif
 
-void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evaluate difference to neighbors
+void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evaluate difference to neighbors
     const Scene *scene = main.rRec.scene;
 
     std::vector<ShiftedRayState> shiftedRays;
@@ -1661,20 +1655,23 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
 
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
 
+        main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
 #if defined(ADAPTIVE_DIFF_SAMPLING)
-        if (main.rRec.depth == 2) {
+        if (main.rRec.depth == 1) {
             std::vector<ShiftedRayState> splitRays;
             std::vector<int> splitNum(shiftedRays.size(), 0);
             for (int i = 0; i < shiftedRays.size(); i++) {
                 auto& shifted = shiftedRays[i];
-                Float numerator = (shifted.main_throughput - shifted.throughput).abs().max();
-                Float m = shifted.main_throughput.max();
-                Float s = shifted.throughput.max();
-                Float denominator = std::max(m, s);
-                Float metric = numerator / (D_EPSILON + denominator);
-                splitNum[i] = std::floor(metric * 5);
-                splitNum[i] *= splitNum[i];
+
+                Float importance = shifted.getImportance();
+
+                Float d = dot(shifted.its.geoFrame.n, main.rRec.its.geoFrame.n);
+                if (d < 0.8) importance = 1;
+
+                splitNum[i] = std::floor(importance * importance * 16);
                 shifted.neighbor->grad *= 1 + splitNum[i]; // Scale gradient values that has already been samples.
+
+
             }
 
             while (1) {
@@ -1687,12 +1684,12 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
                     splitRays.push_back(shiftedRays[i]);
                 }
                 if (done) break;
-                evaluateDiffSplit(main, splitRays);
+                evaluateDiffBranch(main, splitRays);
             }
         }
 #endif
 
-        main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
+
 
         // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
         // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
@@ -1939,7 +1936,6 @@ void UnstructuredGradientPathIntegrator::evaluateDiff(MainRayState& main) { // e
         VertexType mainNextVertexType;
 
         main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
-
 
         if (main.rRec.depth < main.pci->nodes.size()) {
             main.rRec.its = main.pci->nodes[main.rRec.depth].its; // use cached intersection if possible
@@ -2418,7 +2414,7 @@ bool testEnvironmentVisibility(const Scene* scene, const Ray & ray) {
     return !scene->rayIntersect(shadowRay);
 }
 
-void UnstructuredGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays) {
+void AdaptiveGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays) {
     int activeDpeth = rRec.depth - 1;
     if (activeDpeth >= pci->nodes.size()) return;
     for (auto& neighbor : pci->nodes[activeDpeth].neighbors) {
@@ -2433,7 +2429,7 @@ void UnstructuredGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vect
     }
 }
 
-Spectrum UnstructuredGradientPathIntegrator::Li(const RayDifferential &r, RadianceQueryRecord & rRec) const {
+Spectrum AdaptiveGradientPathIntegrator::Li(const RayDifferential &r, RadianceQueryRecord & rRec) const {
     // Duplicate of MIPathTracer::Li to support sub-surface scattering initialization.
 
     /* Some aliases and local variables */
@@ -2609,8 +2605,8 @@ Spectrum UnstructuredGradientPathIntegrator::Li(const RayDifferential &r, Radian
     return Li;
 }
 
-UnstructuredGradientPathIntegrator::ReconnectionShiftResult
-UnstructuredGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 mainSourceVertex, Point3 targetVertex, Point3 shiftSourceVertex, Vector3 targetNormal, Float time) {
+AdaptiveGradientPathIntegrator::ReconnectionShiftResult
+AdaptiveGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 mainSourceVertex, Point3 targetVertex, Point3 shiftSourceVertex, Vector3 targetNormal, Float time) {
     ReconnectionShiftResult result;
 
     // Check visibility of the connection.
@@ -2648,8 +2644,8 @@ UnstructuredGradientPathIntegrator::reconnectShift(const Scene* scene, Point3 ma
 
 /// Calculates the outgoing direction of a shift by duplicating the local half-vector.
 
-UnstructuredGradientPathIntegrator::HalfVectorShiftResult
-UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
+AdaptiveGradientPathIntegrator::HalfVectorShiftResult
+AdaptiveGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
     HalfVectorShiftResult result;
 
     if (Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float) 0) {
@@ -2716,8 +2712,8 @@ UnstructuredGradientPathIntegrator::halfVectorShift(Vector3 tangentSpaceMainWi, 
 
 /// Tries to connect the offset path to a the environment emitter.
 
-UnstructuredGradientPathIntegrator::ReconnectionShiftResult
-UnstructuredGradientPathIntegrator::environmentShift(const Scene* scene, const Ray& mainRay, Point3 shiftSourceVertex) {
+AdaptiveGradientPathIntegrator::ReconnectionShiftResult
+AdaptiveGradientPathIntegrator::environmentShift(const Scene* scene, const Ray& mainRay, Point3 shiftSourceVertex) {
     const Emitter* env = scene->getEnvironmentEmitter();
 
     ReconnectionShiftResult result;
@@ -2737,8 +2733,8 @@ UnstructuredGradientPathIntegrator::environmentShift(const Scene* scene, const R
     return result;
 }
 
-UnstructuredGradientPathIntegrator::VertexType
-UnstructuredGradientPathIntegrator::getVertexType(const BSDF* bsdf, Intersection& its, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType) {
+AdaptiveGradientPathIntegrator::VertexType
+AdaptiveGradientPathIntegrator::getVertexType(const BSDF* bsdf, Intersection& its, const AdaptiveGradientPathTracerConfig& config, unsigned int bsdfType) {
     // Return the lowest roughness value of the components of the vertex's BSDF.
     // If 'bsdfType' does not have a delta component, do not take perfect speculars (zero roughness) into account in this.
 
@@ -2772,19 +2768,19 @@ UnstructuredGradientPathIntegrator::getVertexType(const BSDF* bsdf, Intersection
     return getVertexTypeByRoughness(lowest_roughness, config);
 }
 
-UnstructuredGradientPathIntegrator::VertexType
-UnstructuredGradientPathIntegrator::getVertexType(MainRayState& ray, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType) {
+AdaptiveGradientPathIntegrator::VertexType
+AdaptiveGradientPathIntegrator::getVertexType(MainRayState& ray, const AdaptiveGradientPathTracerConfig& config, unsigned int bsdfType) {
     const BSDF* bsdf = ray.rRec.its.getBSDF(ray.ray);
     return getVertexType(bsdf, ray.rRec.its, config, bsdfType);
 }
 
-UnstructuredGradientPathIntegrator::VertexType
-UnstructuredGradientPathIntegrator::getVertexType(ShiftedRayState& ray, const UnstructuredGradientPathTracerConfig& config, unsigned int bsdfType) {
+AdaptiveGradientPathIntegrator::VertexType
+AdaptiveGradientPathIntegrator::getVertexType(ShiftedRayState& ray, const AdaptiveGradientPathTracerConfig& config, unsigned int bsdfType) {
     const BSDF* bsdf = ray.its.getBSDF(ray.ray);
     return getVertexType(bsdf, ray.rRec.its, config, bsdfType);
 }
 
-UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Properties & props)
+AdaptiveGradientPathIntegrator::AdaptiveGradientPathIntegrator(const Properties & props)
 : MonteCarloIntegrator(props) {
     m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
@@ -2798,7 +2794,7 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(const Pro
         Log(EError, "'reconstructAlpha' must be set to a value greater than zero!");
 }
 
-UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *stream, InstanceManager * manager)
+AdaptiveGradientPathIntegrator::AdaptiveGradientPathIntegrator(Stream *stream, InstanceManager * manager)
 : MonteCarloIntegrator(stream, manager) {
     m_config.m_shiftThreshold = stream->readFloat();
     m_config.m_reconstructAlpha = stream->readFloat();
@@ -2809,7 +2805,7 @@ UnstructuredGradientPathIntegrator::UnstructuredGradientPathIntegrator(Stream *s
     m_config.m_batchSize = stream->readInt();
 }
 
-void UnstructuredGradientPathIntegrator::serialize(Stream *stream, InstanceManager * manager) const {
+void AdaptiveGradientPathIntegrator::serialize(Stream *stream, InstanceManager * manager) const {
     MonteCarloIntegrator::serialize(stream, manager);
     stream->writeFloat(m_config.m_shiftThreshold);
     stream->writeFloat(m_config.m_reconstructAlpha);
@@ -2820,7 +2816,7 @@ void UnstructuredGradientPathIntegrator::serialize(Stream *stream, InstanceManag
     stream->writeInt(m_config.m_batchSize);
 }
 
-std::string UnstructuredGradientPathIntegrator::toString() const {
+std::string AdaptiveGradientPathIntegrator::toString() const {
     std::ostringstream oss;
     oss << "UnstructuredGradientPathTracer[" << endl
             << "  maxDepth = " << m_maxDepth << "," << endl
@@ -2837,6 +2833,6 @@ std::string UnstructuredGradientPathIntegrator::toString() const {
 }
 
 
-MTS_IMPLEMENT_CLASS_S(UnstructuredGradientPathIntegrator, false, MonteCarloIntegrator)
-MTS_EXPORT_PLUGIN(UnstructuredGradientPathIntegrator, "Unstructured Gradient Path Integrator");
+MTS_IMPLEMENT_CLASS_S(AdaptiveGradientPathIntegrator, false, MonteCarloIntegrator)
+MTS_EXPORT_PLUGIN(AdaptiveGradientPathIntegrator, "Unstructured Gradient Path Integrator");
 MTS_NAMESPACE_END

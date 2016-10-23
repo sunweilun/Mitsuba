@@ -1461,6 +1461,7 @@ bool GradientPathIntegrator::render(Scene *scene,
     ref<Bitmap> directBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
     ref<Bitmap> dxBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
     ref<Bitmap> dyBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
 
     /* Develop primal and gradient data into bitmaps. */
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), throughputBitmap, BUFFER_THROUGHPUT);
@@ -1469,7 +1470,7 @@ bool GradientPathIntegrator::render(Scene *scene,
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), directBitmap, BUFFER_VERY_DIRECT);
 
 #ifdef USE_ORIGINAL_REC
-    ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    
     if (m_config.m_reconstructL1 || m_config.m_reconstructL2) {
 
 
@@ -1525,15 +1526,34 @@ bool GradientPathIntegrator::render(Scene *scene,
         film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL);
     }
 #else
-    ref<Bitmap> iterBufferBitmap[2];
-    iterBufferBitmap[0] = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
-    film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), iterBufferBitmap[0], BUFFER_THROUGHPUT);
-    iterBufferBitmap[1] = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
+    /* Transform the data for the solver. */
+        int w = film->getCropSize().x;
+        int h = film->getCropSize().y;
+        size_t subPixelCount = 3 * w * h;
+        std::vector<float> throughputVector(subPixelCount);
+        std::vector<float> dxVector(subPixelCount);
+        std::vector<float> dyVector(subPixelCount);
+        std::vector<float> directVector(subPixelCount);
+        std::vector<float> reconstructionVector[2];
+        reconstructionVector[0].resize(subPixelCount);
+        reconstructionVector[1].resize(subPixelCount);
+
+        std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, throughputVector.begin(), [](Float x) {
+            return (float) x; });
+        std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, reconstructionVector[0].begin(), [](Float x) {
+            return (float) x; });
+        std::transform(dxBitmap->getFloatData(), dxBitmap->getFloatData() + subPixelCount, dxVector.begin(), [](Float x) {
+            return (float) x; });
+        std::transform(dyBitmap->getFloatData(), dyBitmap->getFloatData() + subPixelCount, dyVector.begin(), [](Float x) {
+            return (float) x; });
+        std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
+            return (float) x; });
+            
+            
     float alpha = (Float) m_config.m_reconstructAlpha;
     float alpha_sqr = alpha * alpha;
     
-    int w = iterBufferBitmap[0]->getSize().x;
-    int h = iterBufferBitmap[0]->getSize().y;
+    
     
 #if defined(MTS_OPENMP)
     Thread::initializeOpenMP(nCores);
@@ -1556,36 +1576,36 @@ bool GradientPathIntegrator::render(Scene *scene,
                 int x = index % w;
                 int y = index / w;
                 if(x >= w || y >= h) continue;
-                Spectrum color(0.f);
-                Float weight = 0.f;
-                const Spectrum& prim = throughputBitmap->getPixel(Point2i(x, y));
+                Vector3f color(0.f);
+                float weight = 0.f;
+                const Vector3f& prim = ((Vector3f*)throughputVector.data())[y*w+x];
                 color += prim*alpha_sqr;
                 weight += alpha_sqr;
                 if(x > 0)
                 {
-                    color += dxBitmap->getPixel(Point2i(x-1, y));
-                    color += iterBufferBitmap[src]->getPixel(Point2i(x-1, y));
+                    color += ((Vector3f*)dxVector.data())[y*w+x-1];
+                    color += ((Vector3f*)reconstructionVector[src].data())[y*w+x-1];
                     weight += 1.f;
                 }
                 if(x+1 < w)
                 {
-                    color -= dxBitmap->getPixel(Point2i(x, y));
-                    color += iterBufferBitmap[src]->getPixel(Point2i(x+1, y));
+                    color -= ((Vector3f*)dxVector.data())[y*w+x];
+                    color += ((Vector3f*)reconstructionVector[src].data())[y*w+x+1];
                     weight += 1.f;
                 }
                 if(y > 0)
                 {
-                    color += dyBitmap->getPixel(Point2i(x, y-1));
-                    color += iterBufferBitmap[src]->getPixel(Point2i(x, y-1));
+                    color += ((Vector3f*)dyVector.data())[(y-1)*w+x];
+                    color += ((Vector3f*)reconstructionVector[src].data())[(y-1)*w+x];
                     weight += 1.f;
                 }
                 if(y+1 < h)
                 {
-                    color -= dyBitmap->getPixel(Point2i(x, y));
-                    color += iterBufferBitmap[src]->getPixel(Point2i(x, y+1));
+                    color -= ((Vector3f*)dyVector.data())[y*w+x];
+                    color += ((Vector3f*)reconstructionVector[src].data())[(y+1)*w+x];
                     weight += 1.f;
                 }
-                iterBufferBitmap[dst]->setPixel(Point2i(x, y), color / weight);
+                ((Vector3f*)reconstructionVector[dst].data())[y*w+x] = color / weight;
             }
         }
     }
@@ -1600,13 +1620,15 @@ bool GradientPathIntegrator::render(Scene *scene,
             int x = index % w;
             int y = index / w;
             if(x >= w || y >= h) continue;
-            const Spectrum& color = iterBufferBitmap[n_iters%2]->getPixel(Point2i(x, y));
-            const Spectrum& direct = directBitmap->getPixel(Point2i(x, y));
-            iterBufferBitmap[n_iters%2]->setPixel(Point2i(x, y), color + direct);
+            const Vector3f& color = ((Vector3f*)reconstructionVector[n_iters%2].data())[y*w+x];
+            const Vector3f& direct = ((Vector3f*)directVector.data())[y*w+x];
+            Float specColor[] = {color.x, color.y, color.z};
+            Float specDirect[] = {direct.x, direct.y, direct.z};
+            reconstructionBitmap->setPixel(Point2i(x, y), Spectrum(specColor) + Spectrum(specDirect));
         }
     }
 
-    film->setBitmapMulti(iterBufferBitmap[n_iters%2], 1, BUFFER_FINAL);
+    film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL);
 #endif
 
 #endif
