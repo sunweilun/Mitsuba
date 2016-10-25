@@ -616,6 +616,9 @@
                 <param name="maxMergeDepth" readableName="Maximum Merging Depth" type="integer" default="0">
 			Maximum merging depth for neighbor graph.
 		</param>
+                <param name="batchSize" readableName="Batch Size" type="integer" default="1">
+			Batch size for updating the structure.
+		</param>
                 <param name="usePixelNeighbors" readableName="Use Pixel Neighbor Definition" type="boolean" default="true">
 			Use pixel neighbor definition for first bounce merging.
 		</param>

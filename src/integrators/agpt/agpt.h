@@ -26,15 +26,19 @@
 
 #include "nanoflann.hpp"
 
+
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT
-//#define USE_FILTERS
+#define USE_FILTERS
 //#define USE_LOB_FACTOR
 #define ADAPTIVE_DIFF_SAMPLING
 //#define USE_RECON_RAYS
+//#define FACTOR_MATERIAL
 
 MTS_NAMESPACE_BEGIN
+
+const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 /* ==================================================================== */
 /*                         Configuration storage                        */
@@ -98,6 +102,8 @@ protected:
     void decideNeighbors(const Scene *scene, const Sensor *sensor);
 
     void traceDiff(const Scene *scene, const Sensor *sensor, Sampler *sampler);
+    
+    void getMaxBlendingNum(const Scene *scene);
 
     void communicateBidirectionalDiff(const Scene *scene);
 
@@ -136,15 +142,24 @@ protected:
         Spectrum estRadBuffer[2]; // estimated radiance buffer for Jacobi iterations
         Spectrum estRad; // estimated radiance for the ray before intersection
         // We need 2 spectrum vectors to perform Jacobi iterations.
-        int sampleCount; // number of samples for direct lighting
+        int sampleCount; // number of samples for branching
+        int graph_index; // index of the corresponding vertex in boost graph
+        int maxBlendingNum; // maximum number of nodes that can be used for blending
+        
+        int getSamplingRate() const { 
+            int sr = maxBlendingNum >= 100 ? 1 : 100 / maxBlendingNum;
+            return sr;
+        }
 
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
-            Spectrum grad; // Gradient to that neighbor.
+            Spectrum grad; // Gradient to the neighbor.
+            Spectrum accum_grad; // Accumulated Gradient
             Spectrum weight; // Weight for this connection. We set this to 1 for now.
             int sampleCount; // number of samples for gradient
+            
 
-            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), weight(Spectrum(Float(0))), sampleCount(1) {
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), accum_grad(Spectrum(Float(0))), weight(Spectrum(Float(0))), sampleCount(1) {
             }
 
             Neighbor() {
@@ -173,6 +188,7 @@ protected:
             weight_multiplier = current_weight = Spectrum(Float(1));
             sampleCount = 1;
             bsdfSample = Point2(-1.f, -1.f);
+            maxBlendingNum = 1;
 #if defined(MTS_OPENMP)
             omp_init_lock(&writelock);
 #endif
@@ -191,10 +207,13 @@ protected:
         Point2 apertureSample;
         Float timeSample;
         Spectrum very_direct_lighting;
+        Spectrum factor;
+        int maxBlendingNum; // 
         std::vector<PathNode> nodes;
 
         PrecursorCacheInfo() {
             nodes.reserve(5);
+            factor = Spectrum(Float(1));
         }
 
         void clear() {
@@ -227,7 +246,7 @@ protected:
 
         inline void addGradient(const Spectrum& mainContrib, const Spectrum& shiftContrib, Float weight) {
             Spectrum color = (mainContrib - shiftContrib) * weight;
-            neighbor->grad += color;
+            neighbor->grad += color / Spectrum(Float(neighbor->node->getSamplingRate())) / Float(neighbor->sampleCount);
         }
 
         inline Spectrum getCurrentWeight() const {
@@ -294,10 +313,10 @@ protected:
         inline void addRadiance(const Spectrum& estimated_radiance) {
             if(!accumulateRadiance) return;
             if (rRec.depth < pci->nodes.size()) {
-                pci->nodes[rRec.depth - 1].direct_lighting += estimated_radiance;
+                pci->nodes[rRec.depth - 1].direct_lighting += estimated_radiance / Float(pci->nodes.front().getSamplingRate());
             } else {
-                pci->nodes.back().estRad += lastNode_throughput * estimated_radiance / lastNode_pdf;
-                pci->nodes.back().estRadBuffer[0] = pci->nodes.back().estRad; // set initial guess
+                pci->nodes.back().estRad += lastNode_throughput * estimated_radiance / lastNode_pdf / Float(pci->nodes.front().getSamplingRate());
+                pci->nodes.back().estRadBuffer[0] = pci->nodes.back().estRad; // set initial values
             }
         }
 
@@ -314,15 +333,16 @@ protected:
         RadianceQueryRecord rRec; ///< The radiance query record for this ray.
         Float eta; ///< Current refractive index of the ray.
         PrecursorCacheInfo* pci; // Cached information from precursor
-
         void spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays); // spawns shifted rays for current depth
 
     };
 
 
-
-    void evaluateDiff(MainRayState& main);
-    void evaluateDiffBranch(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in);
+    struct BranchArguments
+    {
+        std::vector<ShiftedRayState> shiftedRays;
+    };
+    void evaluateDiff(MainRayState& main, BranchArguments* branchArguments = NULL);
     void evaluatePrecursor(MainRayState& main);
 
 
@@ -456,6 +476,7 @@ protected:
     typedef nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
     PointCloud, 3 /* dim */ > kd_tree_t;
+    enum PrecursorTask{PRECURSOR_GET_FACTOR, PRECURSOR_LOOP} m_precursorTask;
 
 #if defined(USE_RECON_RAYS)
 

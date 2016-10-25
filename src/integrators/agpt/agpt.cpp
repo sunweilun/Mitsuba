@@ -23,41 +23,43 @@
 #include "mitsuba/core/plugin.h"
 #include "agpt.h"
 
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/connected_components.hpp>
 
 MTS_NAMESPACE_BEGIN
 
-        /*!\plugin{ugpt}{Unstructured Gradient-domain path tracer}
-         * \order{20}
-         * \parameters{
-         *	   \parameter{reconstructL1}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method 
-         *           that efficiently kills many image artifacts. The reconstruction is slightly biased, but the bias will go away by increasing sample count. \default{\code{true}}
-         *     }
-         *	   \parameter{reconstructL2}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method that is unbiased, 
-         *			but sometimes introduces severe dipole artifacts. \default{\code{false}}
-         *     }
-         *	   \parameter{shiftThreshold}{\Float}{Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', 
-         *			for the purposes of constructing paths pairs for estimating pixel differences. This value should usually be somewhere between 0.0005 and 0.01. 
-         *			If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.\default{\code{0.001}}
-         *	   }
-         *	   \parameter{reconstructAlpha}{\Float}{	
-         *			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. 
-         *			The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.\default{\code{0.2}}
-                   }
-         * }
-         *
-         *
-         * This plugin implements a gradient-domain path tracer (short: G-PT) as described in the paper "Gradient-Domain Path Tracing" by Kettunen et al. 
-         * It samples difference images in addition to the standard color image, and reconstructs the final image based on these.
-         * It supports classical materials like diffuse, specular and glossy materials, and area and point lights, depth-of-field, and low discrepancy samplers. 
-         * There is also experimental support for sub-surface scattering and motion blur. Note that this is still an experimental implementation of Gradient-Domain Path Tracing 
-         * that has not been tested with all of Mitsuba's features. Notably there is no support yet for any kind of participating media or directional lights. 
-         * Environment maps are supported, though. Does not support the 'hide emitters' option even though it is displayed.
+/*!\plugin{ugpt}{Unstructured Gradient-domain path tracer}
+ * \order{20}
+ * \parameters{
+ *	   \parameter{reconstructL1}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method 
+ *           that efficiently kills many image artifacts. The reconstruction is slightly biased, but the bias will go away by increasing sample count. \default{\code{true}}
+ *     }
+ *	   \parameter{reconstructL2}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method that is unbiased, 
+ *			but sometimes introduces severe dipole artifacts. \default{\code{false}}
+ *     }
+ *	   \parameter{shiftThreshold}{\Float}{Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', 
+ *			for the purposes of constructing paths pairs for estimating pixel differences. This value should usually be somewhere between 0.0005 and 0.01. 
+ *			If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.\default{\code{0.001}}
+ *	   }
+ *	   \parameter{reconstructAlpha}{\Float}{	
+ *			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. 
+ *			The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.\default{\code{0.2}}
+           }
+ * }
+ *
+ *
+ * This plugin implements a gradient-domain path tracer (short: G-PT) as described in the paper "Gradient-Domain Path Tracing" by Kettunen et al. 
+ * It samples difference images in addition to the standard color image, and reconstructs the final image based on these.
+ * It supports classical materials like diffuse, specular and glossy materials, and area and point lights, depth-of-field, and low discrepancy samplers. 
+ * There is also experimental support for sub-surface scattering and motion blur. Note that this is still an experimental implementation of Gradient-Domain Path Tracing 
+ * that has not been tested with all of Mitsuba's features. Notably there is no support yet for any kind of participating media or directional lights. 
+ * Environment maps are supported, though. Does not support the 'hide emitters' option even though it is displayed.
 
-         *
-         */
+ *
+ */
 
-        /// A threshold to use in positive denominators to avoid division by zero. Use double for robustness.
-        const Float D_EPSILON = std::numeric_limits<Float>::min();
+/// A threshold to use in positive denominators to avoid division by zero. Use double for robustness.
+
 
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
@@ -111,7 +113,11 @@ void AdaptiveGradientPathIntegrator::tracePrecursor(const Scene *scene, const Se
             sampler->generate(offset);
             rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
 
-            Point2 samplePos(Point2(offset) + Vector2(rRec.nextSample2D()));
+            Point2 samplePos;
+            if (m_precursorTask == PRECURSOR_LOOP)
+                samplePos = Point2(offset) + Vector2(rRec.nextSample2D());
+            else
+                samplePos = Point2(offset) + Vector2(0.5, 0.5);
 
             rRec.nextSample2D();
 
@@ -202,29 +208,26 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
     for (int mergeDepth = m_config.m_minMergeDepth; mergeDepth <= m_config.m_maxMergeDepth; mergeDepth++) {
 
         if (mergeDepth == 0 && m_config.m_usePixelNeighbors) {
+
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
-            for (size_t base = 0; base < (*m_preCacheInfoList).size(); base += chunk_size) {
-                for (size_t k = 0; k < chunk_size; k++) {
-                    size_t i = base + k;
-                    if (i >= cx * cy) continue;
-                    if (!(*m_preCacheInfoList)[i].nodes[0].its.isValid()) continue;
-                    int x = i % cx;
-                    int y = i / cx;
-                    Vector2i center(x, y);
-                    std::vector<Vector2i> neighbors;
-                    neighbors.push_back(center + Vector2i(-1, 0));
-                    neighbors.push_back(center + Vector2i(1, 0));
-                    neighbors.push_back(center + Vector2i(0, -1));
-                    neighbors.push_back(center + Vector2i(0, 1));
-                    for (auto& n : neighbors) {
-                        if (n.x >= cx || n.y >= cy || n.x < 0 || n.y < 0)
-                            continue;
-                        int j = n.y * cx + n.x;
-                        if (!(*m_preCacheInfoList)[j].nodes[0].its.isValid()) continue;
-                        (*m_preCacheInfoList)[i].nodes[0].addNeighborWithFilter(&(*m_preCacheInfoList)[j].nodes[0]);
-                    }
+            for (size_t i = 0; i < (*m_preCacheInfoList).size(); i++) {
+                if (!(*m_preCacheInfoList)[i].nodes[0].its.isValid()) continue;
+                int x = i % cx;
+                int y = i / cx;
+                Vector2i center(x, y);
+                std::vector<Vector2i> neighbors(4);
+                neighbors[0] = Vector2i(center + Vector2i(-1, 0));
+                neighbors[1] = Vector2i(center + Vector2i(1, 0));
+                neighbors[2] = Vector2i(center + Vector2i(0, -1));
+                neighbors[3] = Vector2i(center + Vector2i(0, 1));
+                for (auto& n : neighbors) {
+                    if (n.x >= cx || n.y >= cy || n.x < 0 || n.y < 0)
+                        continue;
+                    int j = n.y * cx + n.x;
+                    if (!(*m_preCacheInfoList)[j].nodes[0].its.isValid()) continue;
+                    (*m_preCacheInfoList)[i].nodes[0].addNeighborWithFilter(&(*m_preCacheInfoList)[j].nodes[0]);
                 }
             }
             continue;
@@ -285,18 +288,14 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic)
 #endif
-                    for (size_t base = 0; base < (*m_pc).nodes.size(); base += chunk_size) {
-                        for (size_t k = 0; k < chunk_size; k++) {
-                            size_t i = base + k;
-                            if (i >= (*m_pc).nodes.size()) continue;
-                            Float* query_pt = (Float*) & (*m_pc).nodes[i]->its.p;
-                            std::vector<std::pair<size_t, Float> > indices_dists;
-                            nanoflann::RadiusResultSet<Float> resultSet(radius, indices_dists);
-                            index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
-                            for (auto& item : indices_dists) {
-                                if (item.first == i) continue; // exclude self
-                                (*m_pc).nodes[i]->addNeighborWithFilter((*m_pc).nodes[item.first]);
-                            }
+                    for (size_t i = 0; i < (*m_pc).nodes.size(); i++) {
+                        Float* query_pt = (Float*) & (*m_pc).nodes[i]->its.p;
+                        std::vector<std::pair<size_t, Float> > indices_dists;
+                        nanoflann::RadiusResultSet<Float> resultSet(radius, indices_dists);
+                        index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+                        for (auto& item : indices_dists) {
+                            if (item.first == i) continue; // exclude self
+                            (*m_pc).nodes[i]->addNeighborWithFilter((*m_pc).nodes[item.first]);
                         }
                     }
                     break;
@@ -308,67 +307,59 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                     if (m_currentMode == RECON_MODE) nn = 1;
 #endif
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
-                    for (size_t base = 0; base < (*m_pc).nodes.size(); base += chunk_size) {
-                        for (size_t k = 0; k < chunk_size; k++) {
-                            size_t i = base + k;
-                            if (i >= (*m_pc).nodes.size()) continue;
-                            Float* query_pt = (Float*) & (*m_pc).nodes[i]->its.p;
-                            std::vector<size_t> indices(nn);
-                            std::vector<Float> dist_sqr(nn);
-                            nanoflann::KNNResultSet<Float> resultSet(nn);
-                            resultSet.init(indices.data(), dist_sqr.data());
-                            index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
-                            for (auto& neighbor_idx : indices) {
+                    for (size_t i = 0; i < (*m_pc).nodes.size(); i++) {
+                        Float* query_pt = (Float*) & (*m_pc).nodes[i]->its.p;
+                        std::vector<size_t> indices(nn);
+                        std::vector<Float> dist_sqr(nn);
+                        nanoflann::KNNResultSet<Float> resultSet(nn);
+                        resultSet.init(indices.data(), dist_sqr.data());
+                        index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+                        for (auto& neighbor_idx : indices) {
 #if defined(USE_RECON_RAYS)
-                                if (neighbor_idx == i && m_currentMode == SAMPLE_MODE) continue;
+                            if (neighbor_idx == i && m_currentMode == SAMPLE_MODE) continue;
 #else
-                                if (neighbor_idx == i) continue; // exclude self
+                            if (neighbor_idx == i) continue; // exclude self
 #endif
 #if defined(MTS_OPENMP)
-                                omp_set_lock(&(*m_pc).nodes[i]->writelock);
+                            omp_set_lock(&(*m_pc).nodes[i]->writelock);
 #endif
 
 #if defined(USE_RECON_RAYS)     
-                                bool unfiltered = (*m_pc).nodes[i]->addNeighborWithFilter((*m_pcBuffer).nodes[neighbor_idx]);
+                            bool unfiltered = (*m_pc).nodes[i]->addNeighborWithFilter((*m_pcBuffer).nodes[neighbor_idx]);
 #else
-                                bool unfiltered = (*m_pc).nodes[i]->addNeighborWithFilter((*m_pc).nodes[neighbor_idx]);
+                            bool unfiltered = (*m_pc).nodes[i]->addNeighborWithFilter((*m_pc).nodes[neighbor_idx]);
 #endif
 
 #if defined(MTS_OPENMP)
-                                omp_unset_lock(&(*m_pc).nodes[i]->writelock);
+                            omp_unset_lock(&(*m_pc).nodes[i]->writelock);
 #endif                                
-                                if (!unfiltered) continue;
+                            if (!unfiltered) continue;
 #if defined(MTS_OPENMP)                           
-                                omp_set_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
+                            omp_set_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
 #endif
-                                // make sure the graph is bidirectional, this may produce duplicated neighbors.
+                            // make sure the graph is bidirectional, this may produce duplicated neighbors.
 #if defined(USE_RECON_RAYS)
-                                (*m_pcBuffer).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]); // the neighbors are the old ones in the buffer
+                            (*m_pcBuffer).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]); // the neighbors are the old ones in the buffer
 #else
-                                (*m_pc).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]);
+                            (*m_pc).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]);
 #endif
 
 #if defined(MTS_OPENMP)
-                                omp_unset_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
+                            omp_unset_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
 #endif
-                            }
                         }
                     }
                     // take out duplicated neighbors
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
-                    for (size_t base = 0; base < (*m_pc).nodes.size(); base += chunk_size) {
-                        for (size_t k = 0; k < chunk_size; k++) {
-                            size_t i = base + k;
-                            if (i >= (*m_pc).nodes.size()) continue;
-                            auto& neighbors = (*m_pc).nodes[i]->neighbors;
-                            std::sort(neighbors.begin(), neighbors.end());
-                            auto it = std::unique(neighbors.begin(), neighbors.end());
-                            neighbors.resize(it - neighbors.begin());
-                        }
+                    for (size_t i = 0; i < (*m_pc).nodes.size(); i++) {
+                        auto& neighbors = (*m_pc).nodes[i]->neighbors;
+                        std::sort(neighbors.begin(), neighbors.end());
+                        auto it = std::unique(neighbors.begin(), neighbors.end());
+                        neighbors.resize(it - neighbors.begin());
                     }
 
                     break;
@@ -390,6 +381,45 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
     }
     fclose(file);
 #endif
+
+}
+
+void AdaptiveGradientPathIntegrator::getMaxBlendingNum(const Scene *scene) {
+    int chunk_size = scene->getBlockSize();
+    chunk_size *= chunk_size;
+
+    size_t nNodes = 0;
+    for (int i = 0; i < m_preCacheInfoList->size(); i++) {
+        PathNode& pn = (*m_preCacheInfoList)[i].nodes.front();
+        if (!(*m_preCacheInfoList)[i].nodes.front().its.isValid()) {
+            pn.maxBlendingNum = 1;
+            continue;
+        }
+
+        pn.graph_index = nNodes++;
+    }
+
+    boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS> graph;
+    std::vector<int> components(nNodes);
+    for (int i = 0; i < m_preCacheInfoList->size(); i++) {
+        if (!(*m_preCacheInfoList)[i].nodes.front().its.isValid()) continue;
+        PathNode& pn = (*m_preCacheInfoList)[i].nodes.front();
+        for (const auto& neighbor : pn.neighbors) {
+            boost::add_edge(pn.graph_index, neighbor.node->graph_index, graph);
+        }
+    }
+    int nComp = connected_components(graph, &components[0]);
+    std::vector<int> component_sizes(nComp, 0);
+    for (auto it = components.begin(); it != components.end(); it++)
+        component_sizes[*it]++;
+
+    for (int i = 0; i < m_preCacheInfoList->size(); i++) {
+        if (!(*m_preCacheInfoList)[i].nodes.front().its.isValid()) continue;
+        PathNode& pn = (*m_preCacheInfoList)[i].nodes.front();
+        pn.maxBlendingNum = component_sizes[components[pn.graph_index]];
+    }
+
+    // for(int i=0; i<nComp; i++) printf("Size of comp#%d = %d\n", i, component_sizes[i]);
 
 }
 
@@ -432,14 +462,18 @@ void AdaptiveGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor 
 
             // Initialize the base path.
 
-            MainRayState mainRay;
-            mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray,
-                    pci.samplePos, pci.apertureSample, pci.timeSample);
-            mainRay.ray.scaleDifferential(diffScaleFactor);
-            mainRay.rRec = rRec;
-            mainRay.rRec.its = rRec.its;
-            mainRay.pci = &pci;
-            evaluateDiff(mainRay);
+
+
+            for (int i = 0; i < pci.nodes.front().getSamplingRate(); i++) {
+                MainRayState mainRay;
+                mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray,
+                        pci.samplePos, pci.apertureSample, pci.timeSample);
+                mainRay.ray.scaleDifferential(diffScaleFactor);
+                mainRay.rRec = rRec;
+                mainRay.rRec.its = rRec.its;
+                mainRay.pci = &pci;
+                evaluateDiff(mainRay);
+            }
 
 #if defined(USE_RECON_RAYS)
             if (m_currentMode == RECON_MODE) // evaluate diff in the other direction for reconstruction
@@ -474,29 +508,48 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
     size_t n_pairs = 0;
     // Do some stats
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic) reduction(+: avg_dist, n_pairs)
+#pragma omp parallel for schedule(dynamic, chunk_size) reduction(+: avg_dist, n_pairs)
 #endif
-    for (int i = 0; i < (*m_preCacheInfoList).size(); i += chunk_size) {
-        for (int k = 0; k < chunk_size; k++) {
-            if (i + k >= (*m_preCacheInfoList).size()) continue;
-            auto& pci = (*m_preCacheInfoList)[i + k];
-            for (auto& node : pci.nodes) {
-                for (auto& neighbor : node.neighbors) {
-                    avg_dist += distance(node.its.p, neighbor.node->its.p);
-                    n_pairs++;
-                }
+    for (int i = 0; i < (*m_preCacheInfoList).size(); i++) {
+        auto& pci = (*m_preCacheInfoList)[i];
+        for (auto& node : pci.nodes) {
+            for (auto& neighbor : node.neighbors) {
+                avg_dist += distance(node.its.p, neighbor.node->its.p);
+                n_pairs++;
             }
         }
     }
     avg_dist /= n_pairs;
 
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
-    for (int i = 0; i < (*m_preCacheInfoList).size(); i += chunk_size) {
-        for (int k = 0; k < chunk_size; k++) {
-            if (i + k >= (*m_preCacheInfoList).size()) continue;
-            auto& pci = (*m_preCacheInfoList)[i + k];
+    for (int i = 0; i < (*m_preCacheInfoList).size(); i++) {
+        auto& pci = (*m_preCacheInfoList)[i];
+        for (auto& node : pci.nodes) {
+            for (auto& neighbor : node.neighbors) {
+                neighbor.weight = Spectrum(Float(1));
+#if defined(USE_ADAPTIVE_WEIGHT)
+                Float dist = distance(node.its.p, neighbor.node->its.p);
+                neighbor.weight = Spectrum(exp(-dist / avg_dist));
+#endif
+                if (neighbor.node > &node) // unidirectional update to avoid conflict
+                {
+                    auto& nn = neighbor.node->neighbors;
+                    auto it = std::find_if(nn.begin(), nn.end(),
+                            [&node] (const PathNode::Neighbor & n) {
+                                return n.node == &node;
+                            });
+                    it->grad /= Float(it->sampleCount);
+                    neighbor.grad /= Float(neighbor.sampleCount);
+                    neighbor.grad -= it->grad;
+                    it->grad = -neighbor.grad;
+                }
+            }
+        }
+#if defined(USE_RECON_RAYS)
+        if (m_currentMode == RECON_MODE) {
+            auto& pci = (*m_preCacheInfoListBuffer)[i];
             for (auto& node : pci.nodes) {
                 for (auto& neighbor : node.neighbors) {
                     neighbor.weight = Spectrum(Float(1));
@@ -518,33 +571,8 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
                     }
                 }
             }
-#if defined(USE_RECON_RAYS)
-            if (m_currentMode == RECON_MODE) {
-                auto& pci = (*m_preCacheInfoListBuffer)[i + k];
-                for (auto& node : pci.nodes) {
-                    for (auto& neighbor : node.neighbors) {
-                        neighbor.weight = Spectrum(Float(1));
-#if defined(USE_ADAPTIVE_WEIGHT)
-                        Float dist = distance(node.its.p, neighbor.node->its.p);
-                        neighbor.weight = Spectrum(exp(-dist / avg_dist));
-#endif
-                        if (neighbor.node > &node) // unidirectional update to avoid conflict
-                        {
-                            auto& nn = neighbor.node->neighbors;
-                            auto it = std::find_if(nn.begin(), nn.end(),
-                                    [&node] (const PathNode::Neighbor & n) {
-                                        return n.node == &node;
-                                    });
-                            it->grad /= Float(it->sampleCount);
-                            neighbor.grad /= Float(neighbor.sampleCount);
-                            neighbor.grad -= it->grad;
-                            it->grad = -neighbor.grad;
-                        }
-                    }
-                }
-            }
-#endif
         }
+#endif
     }
 }
 
@@ -567,28 +595,24 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene) {
             //Float avg_diff = 0.f;
             // update current buffer
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)// reduction(+: avg_diff)
+#pragma omp parallel for schedule(dynamic, chunk_size)// reduction(+: avg_diff)
 #endif
-            for (size_t k = 0; k < (*m_preCacheInfoList).size(); k += chunk_size) {
-                for (size_t n = 0; n < chunk_size; n++) {
-                    size_t index = k + n;
-                    if (index >= (*m_preCacheInfoList).size()) continue;
-                    auto& pci = (*m_preCacheInfoList)[index];
-                    if (i < pci.nodes.size()) {
-                        auto& node = pci.nodes[i];
-                        Spectrum w(Float(0));
-                        Spectrum color(Float(0));
-                        color += node.estRad * alpha_sqr;
-                        w += Spectrum(alpha_sqr);
-                        Float connWeight = node.neighbors.size() / 4.0;
-                        for (auto& n : node.neighbors) {
-                            color += n.node->estRadBuffer[src] * n.weight * connWeight;
-                            color += n.grad * n.weight * connWeight;
-                            w += n.weight * connWeight;
-                        }
-                        node.estRadBuffer[dst] = color / w; // update
-                        // avg_diff += (node.estRad[dst] - node.estRad[src]).max();
+            for (size_t index = 0; index < (*m_preCacheInfoList).size(); index++) {
+                auto& pci = (*m_preCacheInfoList)[index];
+                if (i < pci.nodes.size()) {
+                    auto& node = pci.nodes[i];
+                    Spectrum w(Float(0));
+                    Spectrum color(Float(0));
+                    color += node.estRad * alpha_sqr;
+                    w += Spectrum(alpha_sqr);
+                    Float connWeight = node.neighbors.size() / 4.0;
+                    for (auto& n : node.neighbors) {
+                        color += n.node->estRadBuffer[src] * n.weight * connWeight;
+                        color += n.grad * n.weight * connWeight;
+                        w += n.weight * connWeight;
                     }
+                    node.estRadBuffer[dst] = color / w; // update
+                    // avg_diff += (node.estRad[dst] - node.estRad[src]).max();
                 }
             }
 
@@ -603,21 +627,18 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene) {
         if (i == 0) continue;
 
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
         // propagate to previous depth
-        for (size_t k = 0; k < (*m_preCacheInfoList).size(); k += chunk_size) {
-            for (size_t n = 0; n < chunk_size; n++) {
-                size_t index = k + n;
-                if (index >= (*m_preCacheInfoList).size()) continue;
-                auto& pci = (*m_preCacheInfoList)[index];
+        for (size_t index = 0; index < (*m_preCacheInfoList).size(); index += chunk_size) {
+            if (index >= (*m_preCacheInfoList).size()) continue;
+            auto& pci = (*m_preCacheInfoList)[index];
 
-                if (i >= pci.nodes.size()) continue;
-                pci.nodes[i - 1].estRad = pci.nodes[i - 1].direct_lighting;
-                pci.nodes[i - 1].estRad += pci.nodes[i].estRadBuffer[dstBuffer] *
-                        pci.nodes[i].weight_multiplier;
-                pci.nodes[i - 1].estRadBuffer[0] = pci.nodes[i - 1].estRadBuffer[1] = pci.nodes[i - 1].estRad;
-            }
+            if (i >= pci.nodes.size()) continue;
+            pci.nodes[i - 1].estRad = pci.nodes[i - 1].direct_lighting;
+            pci.nodes[i - 1].estRad += pci.nodes[i].estRadBuffer[dstBuffer] *
+                    pci.nodes[i].weight_multiplier;
+            pci.nodes[i - 1].estRadBuffer[0] = pci.nodes[i - 1].estRadBuffer[1] = pci.nodes[i - 1].estRad;
         }
     }
 }
@@ -663,7 +684,8 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
             if (pci.nodes.size() >= 1) {
                 Spectrum color = pci.nodes[0].estRadBuffer[bufferID] * pci.nodes[0].weight_multiplier;
                 color += pci.very_direct_lighting;
-                block->put(pci.samplePos, color / Float(batchSize), 1.f);
+                block->put(pci.samplePos, color / Float(batchSize) * pci.factor, 1.f);
+                // block->put(pci.samplePos, Spectrum(pci.nodes.front().maxBlendingNum*1e-5), 1.f); // output max blending num
             }
         }
         film->put(block);
@@ -742,6 +764,8 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     Thread::initializeOpenMP(nCores);
 #endif
 
+    m_precursorTask = PRECURSOR_LOOP;
+
     for (int i = 0; i < sampler->getSampleCount(); i += m_config.m_batchSize) {
 
 #if defined(USE_RECON_RAYS)
@@ -767,6 +791,16 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
 #if defined(PRINT_TIMING)
         printf("%-20s %5.0lf ms\n", "neighbors", timer.toc()*1e3);
 #endif
+
+        // figure out blending number for each vertex through graph connectivity
+#if defined(PRINT_TIMING)
+        timer.tic();
+#endif
+        getMaxBlendingNum(scene);
+#if defined(PRINT_TIMING)
+        printf("%-20s %5.0lf ms\n", "get-blending-num", timer.toc()*1e3);
+#endif
+
         int batchSize;
         for (batchSize = 0; batchSize < m_config.m_batchSize; batchSize++) {
             if (i + batchSize >= sampler->getSampleCount()) break;
@@ -928,737 +962,68 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
     }
 }
 
-#if defined(ADAPTIVE_DIFF_SAMPLING)
-
-void AdaptiveGradientPathIntegrator::evaluateDiffBranch(MainRayState& main_in, std::vector<ShiftedRayState>& shiftedRays_in) {
-    MainRayState main = main_in;
-    main.rRec.its = main_in.rRec.its;
-    std::vector<ShiftedRayState> shiftedRays = shiftedRays_in;
-    for (int i = 0; i < shiftedRays.size(); i++) {
-        shiftedRays[i].its = shiftedRays_in[i].its;
-        shiftedRays[i].neighbor->sampleCount++;
-    }
-
-    const Scene *scene = main.rRec.scene;
-    while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
-        //main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
-
-        // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
-        // If 'strictNormals'=true, when the geometric and shading normals classify the incident direction to the same side, then the main path is still good.
-        if (m_config.m_strictNormals) {
-            if (dot(main.ray.d, main.rRec.its.geoFrame.n) * Frame::cosTheta(main.rRec.its.wi) >= 0) {
-                // This is an impossible main path, and there are no more paths to shift.
-                return;
-            }
-
-            for (auto& shifted : shiftedRays) {
-                if (dot(shifted.ray.d, shifted.its.geoFrame.n) * Frame::cosTheta(shifted.its.wi) >= 0) {
-                    // This is an impossible offset path.
-                    shifted.alive = false;
-                }
-            }
-        }
-
-        // Some optimizations can be made if this is the last traced segment.
-        bool lastSegment = (main.rRec.depth + 1 == m_config.m_maxDepth);
-
-        /* ==================================================================== */
-        /*                     Direct illumination sampling                     */
-        /* ==================================================================== */
-
-
-        // Sample incoming radiance from lights (next event estimation).
-        {
-            const BSDF* mainBSDF = main.rRec.its.getBSDF(main.ray);
-
-            if (main.rRec.type & RadianceQueryRecord::EDirectSurfaceRadiance && mainBSDF->getType() & BSDF::ESmooth && main.rRec.depth + 1 >= m_config.m_minDepth) {
-                // Sample an emitter and evaluate f = f/p * p for it. */
-                DirectSamplingRecord dRec(main.rRec.its);
-
-                mitsuba::Point2 lightSample = main.rRec.nextSample2D();
-
-                std::pair<Spectrum, bool> emitterTuple = scene->sampleEmitterDirectVisible(dRec, lightSample);
-                Spectrum mainEmitterRadiance = emitterTuple.first * dRec.pdf;
-                bool mainEmitterVisible = emitterTuple.second;
-
-                const Emitter *emitter = static_cast<const Emitter *> (dRec.object);
-
-                // If the emitter sampler produces a non-emitter, that's a problem.
-                SAssert(emitter != NULL);
-
-                // Add radiance and gradients to the base path and its offset path.
-                // Query the BSDF to the emitter's direction.
-
-                BSDFSamplingRecord mainBRec(main.rRec.its, main.rRec.its.toLocal(dRec.d), ERadiance);
-
-
-                // Evaluate BSDF * cos(theta).
-                Spectrum mainBSDFValue = mainBSDF->eval(mainBRec);
-
-                // Calculate the probability density of having generated the sampled path segment by BSDF sampling. Note that if the emitter is not visible, the probability density is zero.
-                // Even if the BSDF sampler has zero probability density, the light sampler can still sample it.
-                Float mainBsdfPdf = (emitter->isOnSurface() && dRec.measure == ESolidAngle && mainEmitterVisible) ? mainBSDF->pdf(mainBRec) : 0;
-
-                // There values are probably needed soon for the Jacobians.
-                Float mainDistanceSquared = (main.rRec.its.p - dRec.p).lengthSquared();
-                Float mainOpposingCosine = dot(dRec.n, (main.rRec.its.p - dRec.p)) / sqrt(mainDistanceSquared);
-
-                // Power heuristic weights for the following strategies: light sample from base, BSDF sample from base.
-                Float mainWeightNumerator = main.pdf * dRec.pdf;
-                Float mainWeightDenominator = (main.pdf * main.pdf) * ((dRec.pdf * dRec.pdf) + (mainBsdfPdf * mainBsdfPdf));
-
-                Spectrum estimated_radiance = Spectrum(main.pdf * mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
-                estimated_radiance *= (mainBSDFValue * mainEmitterRadiance);
-
-                //main.addRadiance(estimated_radiance);
-
-
-                // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
-                if (!m_config.m_strictNormals || dot(main.rRec.its.geoFrame.n, dRec.d) * Frame::cosTheta(mainBRec.wo) > 0) {
-                    // The base path is good. Add radiance differences to offset paths.
-                    for (auto& shifted : shiftedRays) {
-
-                        Spectrum &main_throughput = shifted.main_throughput;
-                        Float &main_pdf = shifted.main_pdf;
-                        Float mainWeightNumerator = main_pdf * dRec.pdf;
-                        Float mainWeightDenominator = (main_pdf * main_pdf) * ((dRec.pdf * dRec.pdf) + (mainBsdfPdf * mainBsdfPdf));
-
-                        Spectrum mainContribution(Float(0));
-                        Spectrum shiftedContribution(Float(0));
-                        Float weight = Float(0);
-
-                        bool shiftSuccessful = shifted.alive;
-
-                        // Construct the offset path.
-                        if (shiftSuccessful) {
-                            // Generate the offset path.
-                            if (shifted.connection_status == RAY_CONNECTED) {
-                                // Follow the base path. All relevant vertices are shared. 
-                                Float shiftedBsdfPdf = mainBsdfPdf;
-                                Float shiftedDRecPdf = dRec.pdf;
-                                Spectrum shiftedBsdfValue = mainBSDFValue;
-                                Spectrum shiftedEmitterRadiance = mainEmitterRadiance;
-                                Float jacobian = (Float) 1;
-
-                                // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
-                                Float shiftedWeightDenominator = (jacobian * shifted.pdf) * (jacobian * shifted.pdf) * ((shiftedDRecPdf * shiftedDRecPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
-                                weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
-
-                                mainContribution = main_throughput * (mainBSDFValue * mainEmitterRadiance);
-                                shiftedContribution = jacobian * shifted.throughput * (shiftedBsdfValue * shiftedEmitterRadiance);
-
-
-                                // Note: The Jacobians were baked into shifted.pdf and shifted.throughput at connection phase.
-                            } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
-                                // Follow the base path. The current vertex is shared, but the incoming directions differ.
-                                Vector3 incomingDirection = normalize(shifted.its.p - main.rRec.its.p);
-
-                                BSDFSamplingRecord bRec(main.rRec.its, main.rRec.its.toLocal(incomingDirection), main.rRec.its.toLocal(dRec.d), ERadiance);
-
-                                // Sample the BSDF.
-                                Float shiftedBsdfPdf = (emitter->isOnSurface() && dRec.measure == ESolidAngle && mainEmitterVisible) ? mainBSDF->pdf(bRec) : 0; // The BSDF sampler can not sample occluded path segments.
-                                Float shiftedDRecPdf = dRec.pdf;
-                                Spectrum shiftedBsdfValue = mainBSDF->eval(bRec);
-                                Spectrum shiftedEmitterRadiance = mainEmitterRadiance;
-                                Float jacobian = (Float) 1;
-
-                                // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
-                                Float shiftedWeightDenominator = (jacobian * shifted.pdf) * (jacobian * shifted.pdf) * ((shiftedDRecPdf * shiftedDRecPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
-                                weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
-
-
-                                mainContribution = main_throughput * (mainBSDFValue * mainEmitterRadiance);
-                                shiftedContribution = jacobian * shifted.throughput * (shiftedBsdfValue * shiftedEmitterRadiance);
-
-                                // Note: The Jacobians were baked into shifted.pdf and shifted.throughput at connection phase.
-                            } else {
-                                // Reconnect to the sampled light vertex. No shared vertices.
-                                SAssert(shifted.connection_status == RAY_NOT_CONNECTED);
-
-                                const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
-
-                                // This implementation uses light sampling only for the reconnect-shift.
-                                // When one of the BSDFs is very glossy, light sampling essentially reduces to a failed shift anyway.
-                                bool mainAtPointLight = (dRec.measure == EDiscrete);
-
-                                VertexType mainVertexType = getVertexType(main, m_config, BSDF::ESmooth);
-                                VertexType shiftedVertexType = getVertexType(shifted, m_config, BSDF::ESmooth);
-
-                                if (mainAtPointLight || (mainVertexType == VERTEX_TYPE_DIFFUSE && shiftedVertexType == VERTEX_TYPE_DIFFUSE)) {
-                                    // Get emitter radiance.
-                                    DirectSamplingRecord shiftedDRec(shifted.its);
-                                    std::pair<Spectrum, bool> emitterTuple = scene->sampleEmitterDirectVisible(shiftedDRec, lightSample);
-                                    bool shiftedEmitterVisible = emitterTuple.second;
-
-                                    Spectrum shiftedEmitterRadiance = emitterTuple.first * shiftedDRec.pdf;
-                                    Float shiftedDRecPdf = shiftedDRec.pdf;
-
-                                    // Sample the BSDF.
-                                    Float shiftedDistanceSquared = (dRec.p - shifted.its.p).lengthSquared();
-                                    Vector emitterDirection = (dRec.p - shifted.its.p) / sqrt(shiftedDistanceSquared);
-                                    Float shiftedOpposingCosine = -dot(dRec.n, emitterDirection);
-
-                                    BSDFSamplingRecord bRec(shifted.its, shifted.its.toLocal(emitterDirection), ERadiance);
-
-                                    // Strict normals check, to make the output match with bidirectional methods when normal maps are present.
-                                    if (m_config.m_strictNormals && dot(shifted.its.geoFrame.n, emitterDirection) * Frame::cosTheta(bRec.wo) < 0) {
-                                        // Invalid, non-samplable offset path.
-                                        shiftSuccessful = false;
-                                    } else {
-                                        Spectrum shiftedBsdfValue = shiftedBSDF->eval(bRec);
-                                        Float shiftedBsdfPdf = (emitter->isOnSurface() && dRec.measure == ESolidAngle && shiftedEmitterVisible) ? shiftedBSDF->pdf(bRec) : 0;
-                                        Float jacobian = std::abs(shiftedOpposingCosine * mainDistanceSquared) / (Epsilon + std::abs(mainOpposingCosine * shiftedDistanceSquared));
-
-                                        // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
-                                        Float shiftedWeightDenominator = (jacobian * shifted.pdf) * (jacobian * shifted.pdf) * ((shiftedDRecPdf * shiftedDRecPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
-                                        weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
-
-                                        mainContribution = main_throughput * (mainBSDFValue * mainEmitterRadiance);
-                                        shiftedContribution = jacobian * shifted.throughput * (shiftedBsdfValue * shiftedEmitterRadiance);
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!shiftSuccessful) {
-                            // The offset path cannot be generated; Set offset PDF and offset throughput to zero. This is what remains.
-
-                            // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset. (Offset path has zero PDF)
-                            weight = mainWeightNumerator / (D_EPSILON + mainWeightDenominator);
-
-                            mainContribution = main_throughput * (mainBSDFValue * mainEmitterRadiance);
-                            shiftedContribution = Spectrum((Float) 0);
-                        }
-
-                        // Note: Using also the offset paths for the throughput estimate, like we do here, provides some advantage when a large reconstruction alpha is used,
-                        // but using only throughputs of the base paths doesn't usually lose by much.
-                        shifted.addGradient(mainContribution, shiftedContribution, weight);
-                    }
-                } // Strict normals
-            }
-        } // Sample incoming radiance from lights.
-
-        /* ==================================================================== */
-        /*               BSDF sampling and emitter hits                         */
-        /* ==================================================================== */
-
-        // Sample a new direction from BSDF * cos(theta).
-
-        Point2 sample = main.rRec.nextSample2D();
-
-
-        BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample); // always generate new direction for split samples
-
-        if (mainBsdfResult.pdf <= (Float) 0.0) {
-            // Impossible base path.
-            break;
-        }
-
-        const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
-
-        // Prevent light leaks due to the use of shading normals.
-        Float mainWoDotGeoN = dot(main.rRec.its.geoFrame.n, mainWo);
-        if (m_config.m_strictNormals && mainWoDotGeoN * Frame::cosTheta(mainBsdfResult.bRec.wo) <= 0) {
-            break;
-        }
-
-        // The old intersection structure is still needed after main.rRec.its gets updated.
-        Intersection previousMainIts = main.rRec.its;
-
-        // Trace a ray in the sampled direction.
-        bool mainHitEmitter = false;
-        Spectrum mainEmitterRadiance = Spectrum((Float) 0);
-
-        DirectSamplingRecord mainDRec(main.rRec.its);
-        const BSDF* mainBSDF = main.rRec.its.getBSDF(main.ray);
-
-
-        // Update the vertex types.
-        VertexType mainVertexType = getVertexType(main, m_config, mainBsdfResult.bRec.sampledType);
-        VertexType mainNextVertexType;
-
-        main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
-
-
-        scene->rayIntersect(main.ray, main.rRec.its); // always try to intersect because this is splitted path.
-
-        if (main.rRec.its.isValid()) {
-            // Intersected something - check if it was a luminaire.
-            if (main.rRec.its.isEmitter()) {
-                mainEmitterRadiance = main.rRec.its.Le(-main.ray.d);
-
-                mainDRec.setQuery(main.ray, main.rRec.its);
-                mainHitEmitter = true;
-            }
-
-            // Sub-surface scattering.
-            if (main.rRec.its.hasSubsurface() && (main.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
-                mainEmitterRadiance += main.rRec.its.LoSub(scene, main.rRec.sampler, -main.ray.d, main.rRec.depth);
-            }
-
-            // Update the vertex type.
-            mainNextVertexType = getVertexType(main, m_config, mainBsdfResult.bRec.sampledType);
-        } else {
-            // Intersected nothing -- perhaps there is an environment map?
-            const Emitter *env = scene->getEnvironmentEmitter();
-
-            if (env) {
-                // Hit the environment map.
-                mainEmitterRadiance = env->evalEnvironment(main.ray);
-                if (!env->fillDirectSamplingRecord(mainDRec, main.ray))
-                    break;
-                mainHitEmitter = true;
-
-                // Handle environment connection as diffuse (that's ~infinitely far away).
-
-                // Update the vertex type.
-                mainNextVertexType = VERTEX_TYPE_DIFFUSE;
-            } else {
-                // Nothing to do anymore.
-                break;
-            }
-        }
-
-        // Continue the shift.
-
-        // Compute the probability density of generating base path's direction using the implemented direct illumination sampling technique.
-        const Float mainLumPdf = (mainHitEmitter && main.rRec.depth + 1 >= m_config.m_minDepth && !(mainBsdfResult.bRec.sampledType & BSDF::EDelta)) ?
-                scene->pdfEmitterDirect(mainDRec) : 0;
-
-        // Power heuristic weights for the following strategies: light sample from base, BSDF sample from base.
-        Float mainWeightNumerator = main.pdf * mainBsdfResult.pdf;
-        Float mainWeightDenominator = (main.pdf * main.pdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf));
-
-
-
-        if (main.rRec.depth + 1 >= m_config.m_minDepth) {
-            Spectrum estimated_radiance = Spectrum(mainBsdfResult.pdf / (D_EPSILON + (mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf)));
-            estimated_radiance *= mainEmitterRadiance * mainBsdfResult.weight * mainBsdfResult.pdf;
-            //main.addRadiance(estimated_radiance);
-        }
-
-        main.multiply(mainBsdfResult);
-
-
-        // Construct the offset paths and evaluate emitter hits.
-
-        for (auto& shifted : shiftedRays) {
-            Spectrum& main_throughput = shifted.main_throughput;
-            Float& main_pdf = shifted.main_pdf;
-            Float mainPrevPdf = main_pdf;
-            main_pdf *= mainBsdfResult.pdf;
-            main_throughput *= mainBsdfResult.weight * mainBsdfResult.pdf;
-
-            Float mainWeightNumerator = mainPrevPdf * mainBsdfResult.pdf;
-            Float mainWeightDenominator = (mainPrevPdf * mainPrevPdf) * ((mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf));
-
-            Spectrum mainContribution(Float(0));
-            Spectrum shiftedContribution(Float(0));
-            Float weight(0);
-
-            bool postponedShiftEnd = false; // Kills the shift after evaluating the current radiance.
-
-
-            if (shifted.alive) {
-                // The offset path is still good, so it makes sense to continue its construction.
-                Float shiftedPreviousPdf = shifted.pdf;
-
-                if (shifted.connection_status == RAY_CONNECTED) {
-                    // The offset path keeps following the base path.
-                    // As all relevant vertices are shared, we can just reuse the sampled values.
-                    Spectrum shiftedBsdfValue = mainBsdfResult.weight * mainBsdfResult.pdf;
-                    Float shiftedBsdfPdf = mainBsdfResult.pdf;
-                    Float shiftedLumPdf = mainLumPdf;
-                    Spectrum shiftedEmitterRadiance = mainEmitterRadiance;
-
-                    // Update throughput and pdf.
-                    shifted.throughput *= shiftedBsdfValue;
-                    shifted.pdf *= shiftedBsdfPdf;
-
-                    // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
-                    Float shiftedWeightDenominator = (shiftedPreviousPdf * shiftedPreviousPdf) * ((shiftedLumPdf * shiftedLumPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
-                    weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
-
-                    mainContribution = main_throughput * mainEmitterRadiance;
-                    shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
-                } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
-                    // Recently connected - follow the base path but evaluate BSDF to the new direction.
-                    Vector3 incomingDirection = normalize(shifted.its.p - main.ray.o);
-                    BSDFSamplingRecord bRec(previousMainIts, previousMainIts.toLocal(incomingDirection), previousMainIts.toLocal(main.ray.d), ERadiance);
-
-                    // Note: mainBSDF is the BSDF at previousMainIts, which is the current position of the offset path.
-
-                    EMeasure measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
-
-                    Spectrum shiftedBsdfValue = mainBSDF->eval(bRec, measure);
-                    Float shiftedBsdfPdf = mainBSDF->pdf(bRec, measure);
-
-                    Float shiftedLumPdf = mainLumPdf;
-                    Spectrum shiftedEmitterRadiance = mainEmitterRadiance;
-
-                    // Update throughput and pdf.
-                    shifted.throughput *= shiftedBsdfValue;
-                    shifted.pdf *= shiftedBsdfPdf;
-
-                    shifted.connection_status = RAY_CONNECTED;
-
-                    // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
-                    Float shiftedWeightDenominator = (shiftedPreviousPdf * shiftedPreviousPdf) * ((shiftedLumPdf * shiftedLumPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
-                    weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
-
-                    mainContribution = main_throughput * mainEmitterRadiance;
-                    shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
-                } else {
-                    // Not connected - apply either reconnection or half-vector duplication shift.
-
-                    const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
-
-                    // Update the vertex type of the offset path.
-                    VertexType shiftedVertexType = getVertexType(shifted, m_config, mainBsdfResult.bRec.sampledType);
-
-                    if (mainVertexType == VERTEX_TYPE_DIFFUSE && mainNextVertexType == VERTEX_TYPE_DIFFUSE && shiftedVertexType == VERTEX_TYPE_DIFFUSE) {
-                        // Use reconnection shift.
-
-                        // Optimization: Skip the last raycast and BSDF evaluation for the offset path when it won't contribute and isn't needed anymore.
-                        if (!lastSegment || mainHitEmitter || main.rRec.its.hasSubsurface()) {
-                            ReconnectionShiftResult shiftResult;
-                            bool environmentConnection = false;
-
-                            if (main.rRec.its.isValid()) {
-                                // This is an actual reconnection shift.
-                                shiftResult = reconnectShift(scene, main.ray.o, main.rRec.its.p, shifted.its.p, main.rRec.its.geoFrame.n, main.ray.time);
-                            } else {
-                                // This is a reconnection at infinity in environment direction.
-                                const Emitter* env = scene->getEnvironmentEmitter();
-                                SAssert(env != NULL);
-
-                                environmentConnection = true;
-                                shiftResult = environmentShift(scene, main.ray, shifted.its.p);
-                            }
-
-                            if (!shiftResult.success) {
-                                // Failed to construct the offset path.
-                                shifted.alive = false;
-                                goto shift_failed;
-                            }
-
-                            Vector3 incomingDirection = -shifted.ray.d;
-                            Vector3 outgoingDirection = shiftResult.wo;
-
-                            BSDFSamplingRecord bRec(shifted.its, shifted.its.toLocal(incomingDirection), shifted.its.toLocal(outgoingDirection), ERadiance);
-
-                            // Strict normals check.
-                            if (m_config.m_strictNormals && dot(outgoingDirection, shifted.its.geoFrame.n) * Frame::cosTheta(bRec.wo) <= 0) {
-                                shifted.alive = false;
-                                goto shift_failed;
-                            }
-
-                            // Evaluate the BRDF to the new direction.
-                            Spectrum shiftedBsdfValue = shiftedBSDF->eval(bRec);
-                            Float shiftedBsdfPdf = shiftedBSDF->pdf(bRec);
-
-                            // Update throughput and pdf.
-                            shifted.throughput *= shiftedBsdfValue * shiftResult.jacobian;
-                            shifted.pdf *= shiftedBsdfPdf * shiftResult.jacobian;
-
-                            shifted.connection_status = RAY_RECENTLY_CONNECTED;
-
-                            if (mainHitEmitter || main.rRec.its.hasSubsurface()) {
-                                // Also the offset path hit the emitter, as visibility was checked at reconnectShift or environmentShift.
-
-                                // Evaluate radiance to this direction.
-                                Spectrum shiftedEmitterRadiance(Float(0));
-                                Float shiftedLumPdf = Float(0);
-
-                                if (main.rRec.its.isValid()) {
-                                    // Hit an object.
-                                    if (mainHitEmitter) {
-                                        shiftedEmitterRadiance = main.rRec.its.Le(-outgoingDirection);
-
-                                        // Evaluate the light sampling PDF of the new segment.
-                                        DirectSamplingRecord shiftedDRec;
-                                        shiftedDRec.p = mainDRec.p;
-                                        shiftedDRec.n = mainDRec.n;
-                                        shiftedDRec.dist = (mainDRec.p - shifted.its.p).length();
-                                        shiftedDRec.d = (mainDRec.p - shifted.its.p) / shiftedDRec.dist;
-                                        shiftedDRec.ref = mainDRec.ref;
-                                        shiftedDRec.refN = shifted.its.shFrame.n;
-                                        shiftedDRec.object = mainDRec.object;
-
-                                        shiftedLumPdf = scene->pdfEmitterDirect(shiftedDRec);
-                                    }
-
-                                    // Sub-surface scattering. Note: Should use the same random numbers as the base path!
-                                    if (main.rRec.its.hasSubsurface() && (main.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
-                                        shiftedEmitterRadiance += main.rRec.its.LoSub(scene, shifted.rRec.sampler, -outgoingDirection, main.rRec.depth);
-                                    }
-                                } else {
-                                    // Hit the environment.
-                                    shiftedEmitterRadiance = mainEmitterRadiance;
-                                    shiftedLumPdf = mainLumPdf;
-                                }
-
-                                // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
-                                Float shiftedWeightDenominator = (shiftedPreviousPdf * shiftedPreviousPdf) * ((shiftedLumPdf * shiftedLumPdf) + (shiftedBsdfPdf * shiftedBsdfPdf));
-                                weight = mainWeightNumerator / (D_EPSILON + shiftedWeightDenominator + mainWeightDenominator);
-
-                                mainContribution = main_throughput * mainEmitterRadiance;
-                                shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
-                            }
-                        }
-                    } else {
-                        // Use half-vector duplication shift. These paths could not have been sampled by light sampling (by our decision).
-                        Vector3 tangentSpaceIncomingDirection = shifted.its.toLocal(-shifted.ray.d);
-                        Vector3 tangentSpaceOutgoingDirection;
-                        Spectrum shiftedEmitterRadiance(Float(0));
-
-                        const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
-
-                        HalfVectorShiftResult shiftResult;
-                        EMeasure measure;
-                        BSDFSamplingRecord bRec(shifted.its, tangentSpaceIncomingDirection, tangentSpaceOutgoingDirection, ERadiance);
-
-                        Vector3 outgoingDirection;
-                        VertexType shiftedVertexType;
-
-                        // Deny shifts between Dirac and non-Dirac BSDFs.
-                        bool bothDelta = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) && (shiftedBSDF->getType() & BSDF::EDelta);
-                        bool bothSmooth = (mainBsdfResult.bRec.sampledType & BSDF::ESmooth) && (shiftedBSDF->getType() & BSDF::ESmooth);
-                        if (!(bothDelta || bothSmooth)) {
-                            shifted.alive = false;
-                            goto half_vector_shift_failed;
-                        }
-
-                        SAssert(fabs(shifted.ray.d.lengthSquared() - 1) < 0.01);
-
-                        // Apply the local shift.
-                        shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
-                        bRec.wo = shiftResult.wo;
-
-                        if (mainBsdfResult.bRec.sampledType & BSDF::EDelta) {
-                            // Dirac delta integral is a point evaluation - no Jacobian determinant!
-                            shiftResult.jacobian = Float(1);
-                        }
-
-                        if (shiftResult.success) {
-                            // Invertible shift, success.
-                            shifted.throughput *= shiftResult.jacobian;
-                            shifted.pdf *= shiftResult.jacobian;
-                            tangentSpaceOutgoingDirection = shiftResult.wo;
-                        } else {
-                            // The shift is non-invertible so kill it.
-                            shifted.alive = false;
-                            goto half_vector_shift_failed;
-                        }
-
-                        outgoingDirection = shifted.its.toWorld(tangentSpaceOutgoingDirection);
-
-                        // Update throughput and pdf.
-                        measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
-
-
-                        shifted.throughput *= shiftedBSDF->eval(bRec, measure);
-                        shifted.pdf *= shiftedBSDF->pdf(bRec, measure);
-
-                        if (shifted.pdf == Float(0)) {
-                            // Offset path is invalid!
-                            shifted.alive = false;
-                            goto half_vector_shift_failed;
-                        }
-
-                        // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.			
-                        if (m_config.m_strictNormals && dot(outgoingDirection, shifted.its.geoFrame.n) * Frame::cosTheta(bRec.wo) <= 0) {
-                            shifted.alive = false;
-                            goto half_vector_shift_failed;
-                        }
-
-
-                        // Update the vertex type.
-                        shiftedVertexType = getVertexType(shifted, m_config, mainBsdfResult.bRec.sampledType);
-
-                        // Trace the next hit point.
-                        shifted.ray = Ray(shifted.its.p, outgoingDirection, main.ray.time);
-
-                        if (!scene->rayIntersect(shifted.ray, shifted.its)) {
-                            // Hit nothing - Evaluate environment radiance.
-                            const Emitter *env = scene->getEnvironmentEmitter();
-                            if (!env) {
-                                // Since base paths that hit nothing are not shifted, we must be symmetric and kill shifts that hit nothing.
-                                shifted.alive = false;
-                                goto half_vector_shift_failed;
-                            }
-                            if (main.rRec.its.isValid()) {
-                                // Deny shifts between env and non-env.
-                                shifted.alive = false;
-                                goto half_vector_shift_failed;
-                            }
-
-                            if (mainVertexType == VERTEX_TYPE_DIFFUSE && shiftedVertexType == VERTEX_TYPE_DIFFUSE) {
-                                // Environment reconnection shift would have been used for the reverse direction!
-                                shifted.alive = false;
-                                goto half_vector_shift_failed;
-                            }
-
-                            // The offset path is no longer valid after this path segment.
-                            shiftedEmitterRadiance = env->evalEnvironment(shifted.ray);
-                            postponedShiftEnd = true;
-                        } else {
-                            // Hit something.
-
-                            if (!main.rRec.its.isValid()) {
-                                // Deny shifts between env and non-env.
-                                shifted.alive = false;
-                                goto half_vector_shift_failed;
-                            }
-
-                            VertexType shiftedNextVertexType = getVertexType(shifted, m_config, mainBsdfResult.bRec.sampledType);
-
-                            // Make sure that the reverse shift would use this same strategy!
-                            // ==============================================================
-
-                            if (mainVertexType == VERTEX_TYPE_DIFFUSE && shiftedVertexType == VERTEX_TYPE_DIFFUSE && shiftedNextVertexType == VERTEX_TYPE_DIFFUSE) {
-                                // Non-invertible shift: the reverse-shift would use another strategy!
-                                shifted.alive = false;
-                                goto half_vector_shift_failed;
-                            }
-
-                            if (shifted.its.isEmitter()) {
-                                // Hit emitter.
-                                shiftedEmitterRadiance = shifted.its.Le(-shifted.ray.d);
-                            }
-                            // Sub-surface scattering. Note: Should use the same random numbers as the base path!
-                            if (shifted.its.hasSubsurface() && (shifted.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
-                                shiftedEmitterRadiance += shifted.its.LoSub(scene, shifted.rRec.sampler, -shifted.ray.d, main.rRec.depth);
-                            }
-                        }
-
-
-half_vector_shift_failed:
-                        if (shifted.alive) {
-                            // Evaluate radiance difference using power heuristic between BSDF samples from base and offset paths.
-                            // Note: No MIS with light sampling since we don't use it for this connection type.
-                            weight = main_pdf / (D_EPSILON + shifted.pdf * shifted.pdf + main_pdf * main_pdf);
-                            mainContribution = main_throughput * mainEmitterRadiance;
-                            shiftedContribution = shifted.throughput * shiftedEmitterRadiance; // Note: Jacobian baked into .throughput.
-                        } else {
-                            // Handle the failure without taking MIS with light sampling, as we decided not to use it in the half-vector-duplication case.
-                            // Could have used it, but so far there has been no need. It doesn't seem to be very useful.
-                            weight = Float(1) / (D_EPSILON + main_pdf);
-                            mainContribution = main_throughput * mainEmitterRadiance;
-                            shiftedContribution = Spectrum(Float(0));
-
-                            // Disable the failure detection below since the failure was already handled.
-                            shifted.alive = true;
-                            postponedShiftEnd = true;
-
-                            // (TODO: Restructure into smaller functions and get rid of the gotos... Although this may mean having lots of small functions with a large number of parameters.)
-                        }
-                    }
-                }
-            }
-
-shift_failed:
-            if (!shifted.alive) {
-                // The offset path cannot be generated; Set offset PDF and offset throughput to zero.
-                weight = mainWeightNumerator / (D_EPSILON + mainWeightDenominator);
-                mainContribution = main_throughput * mainEmitterRadiance;
-                shiftedContribution = Spectrum((Float) 0);
-            }
-
-            // Note: Using also the offset paths for the throughput estimate, like we do here, provides some advantage when a large reconstruction alpha is used,
-            // but using only throughputs of the base paths doesn't usually lose by much.
-
-            if (main.rRec.depth + 1 >= m_config.m_minDepth) {
-                shifted.addGradient(mainContribution, shiftedContribution, weight);
-            }
-
-            if (postponedShiftEnd) {
-                shifted.alive = false;
-            }
-        }
-
-        // Stop if the base path hit the environment.
-        main.rRec.type = RadianceQueryRecord::ERadianceNoEmission;
-        if (!main.rRec.its.isValid() || !(main.rRec.type & RadianceQueryRecord::EIndirectSurfaceRadiance)) {
-            break;
-        }
-
-        if (main.rRec.depth++ >= m_config.m_rrDepth) {
-            /* Russian roulette: try to keep path weights equal to one,
-               while accounting for the solid angle compression at refractive
-               index boundaries. Stop with at least some probability to avoid
-               getting stuck (e.g. due to total internal reflection) */
-
-            Float q = std::min((main.throughput / (D_EPSILON + main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
-            Float rrSample = main.rRec.nextSample1D();
-            if (main.rRec.depth - 1 < main.pci->nodes.size())
-                rrSample = main.pci->nodes[main.rRec.depth - 1].rrSample;
-            if (rrSample >= q)
-                break;
-
-            for (auto& shifted : shiftedRays) {
-                shifted.main_pdf *= q;
-                Float w = (shifted.throughput / (D_EPSILON + shifted.pdf) * shifted.getCurrentWeight()).max();
-                Float shifted_q = std::min(w, (Float) 0.95f);
-                shifted.pdf *= shifted_q;
-            }
-            main.multiplyPDF(q);
-        }
-    }
-}
-
-#endif
-
-void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evaluate difference to neighbors
+void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArguments* branchArguments) { // evaluate difference to neighbors
     const Scene *scene = main.rRec.scene;
 
     std::vector<ShiftedRayState> shiftedRays;
-    shiftedRays.reserve(20);
 
-    main.rRec.depth = 0;
+    if (!branchArguments) {
+        shiftedRays.reserve(20);
 
-    if (main.pci->nodes.size()) {
-        main.rRec.its = main.pci->nodes[0].its; // get cached intersection
-    } else
-        main.rRec.rayIntersect(main.ray);
+        main.rRec.depth = 0;
 
-    main.ray.mint = Epsilon;
+        if (main.pci->nodes.size()) {
+            main.rRec.its = main.pci->nodes[0].its; // get cached intersection
+        } else
+            main.rRec.rayIntersect(main.ray);
 
-    Spectrum & out_veryDirect = main.pci->very_direct_lighting;
-    if (!main.rRec.its.isValid()) {
-        // First hit is not in the scene so can't continue. Also there there are no paths to shift.
+        main.ray.mint = Epsilon;
 
-        // Add potential very direct light from the environment as gradients are not used for that.
-        if (main.rRec.type & RadianceQueryRecord::EEmittedRadiance) {
-            out_veryDirect += main.throughput * scene->evalEnvironment(main.ray);
+        Spectrum & out_veryDirect = main.pci->very_direct_lighting;
+        if (!main.rRec.its.isValid()) {
+            // First hit is not in the scene so can't continue. Also there there are no paths to shift.
+
+            // Add potential very direct light from the environment as gradients are not used for that.
+            if (main.rRec.type & RadianceQueryRecord::EEmittedRadiance) {
+                out_veryDirect += main.throughput * scene->evalEnvironment(main.ray);
+            }
+
+            //SLog(EInfo, "Main ray(%d): First hit not in scene.", rayCount);
+            return;
         }
+        // Add very direct light from non-environment.
+        {
+            // Include emitted radiance if requested.
+            if (main.rRec.its.isEmitter() && (main.rRec.type & RadianceQueryRecord::EEmittedRadiance)) {
+                out_veryDirect += main.throughput * main.rRec.its.Le(-main.ray.d);
+            }
 
-        //SLog(EInfo, "Main ray(%d): First hit not in scene.", rayCount);
-        return;
+            // Include radiance from a subsurface scattering model if requested. Note: Not tested!
+            if (main.rRec.its.hasSubsurface() && (main.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
+                out_veryDirect += main.throughput * main.rRec.its.LoSub(scene, main.rRec.sampler, -main.ray.d, 0);
+            }
+        }
+        
+        // Main path tracing loop.
+        main.rRec.depth = 1;
+    } else {
+        shiftedRays = branchArguments->shiftedRays;
+        for (int i = 0; i < shiftedRays.size(); i++) {
+            shiftedRays[i].its = branchArguments->shiftedRays[i].its;
+        }
     }
 
-    // Add very direct light from non-environment.
-    {
-        // Include emitted radiance if requested.
-        if (main.rRec.its.isEmitter() && (main.rRec.type & RadianceQueryRecord::EEmittedRadiance)) {
-            out_veryDirect += main.throughput * main.rRec.its.Le(-main.ray.d);
-        }
 
-        // Include radiance from a subsurface scattering model if requested. Note: Not tested!
-        if (main.rRec.its.hasSubsurface() && (main.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
-            out_veryDirect += main.throughput * main.rRec.its.LoSub(scene, main.rRec.sampler, -main.ray.d, 0);
-        }
-    }
-
-    // Main path tracing loop.
-    main.rRec.depth = 1;
 
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
-
-        main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
+        if(!branchArguments)
+        {
+            main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
+            for (int i = 0; i < shiftedRays.size(); i++) shiftedRays[i].neighbor->sampleCount = 1;
+        }
 #if defined(ADAPTIVE_DIFF_SAMPLING)
-        if (main.rRec.depth == 1) {
-            std::vector<ShiftedRayState> splitRays;
+        if (main.rRec.depth == 2 && !branchArguments) {
+            
             std::vector<int> splitNum(shiftedRays.size(), 0);
             for (int i = 0; i < shiftedRays.size(); i++) {
                 auto& shifted = shiftedRays[i];
@@ -1666,15 +1031,13 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                 Float importance = shifted.getImportance();
 
                 Float d = dot(shifted.its.geoFrame.n, main.rRec.its.geoFrame.n);
-                if (d < 0.8) importance = 1;
-
                 splitNum[i] = std::floor(importance * importance * 16);
-                shifted.neighbor->grad *= 1 + splitNum[i]; // Scale gradient values that has already been samples.
-
-
+                shifted.neighbor->sampleCount = 1 + splitNum[i];
             }
 
             while (1) {
+                BranchArguments ba;
+                std::vector<ShiftedRayState> &splitRays = ba.shiftedRays;
                 bool done = true;
                 splitRays.clear();
                 for (int i = 0; i < shiftedRays.size(); i++) {
@@ -1684,7 +1047,10 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                     splitRays.push_back(shiftedRays[i]);
                 }
                 if (done) break;
-                evaluateDiffBranch(main, splitRays);
+                MainRayState duplicateMain = main;
+                duplicateMain.rRec = main.rRec;
+                duplicateMain.rRec.its = main.rRec.its;
+                evaluateDiff(duplicateMain, &ba); // trace branched rays
             }
         }
 #endif
@@ -1747,6 +1113,13 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                 // Even if the BSDF sampler has zero probability density, the light sampler can still sample it.
                 Float mainBsdfPdf = (emitter->isOnSurface() && dRec.measure == ESolidAngle && mainEmitterVisible) ? mainBSDF->pdf(mainBRec) : 0;
 
+#if defined(FACTOR_MATERIAL)
+                if (main.rRec.depth == 1 && mainBSDFValue.max() > Float(0)) // for test
+                {
+                    mainBSDFValue /= Spectrum(D_EPSILON) + mainBSDF->getDiffuseReflectance(main.rRec.its);
+                }
+#endif
+
                 // There values are probably needed soon for the Jacobians.
                 Float mainDistanceSquared = (main.rRec.its.p - dRec.p).lengthSquared();
                 Float mainOpposingCosine = dot(dRec.n, (main.rRec.its.p - dRec.p)) / sqrt(mainDistanceSquared);
@@ -1758,7 +1131,8 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                 Spectrum estimated_radiance = Spectrum(main.pdf * mainWeightNumerator / (D_EPSILON + mainWeightDenominator));
                 estimated_radiance *= (mainBSDFValue * mainEmitterRadiance);
 
-                main.addRadiance(estimated_radiance);
+                if (estimated_radiance.max() > Float(0) && !branchArguments)
+                    main.addRadiance(estimated_radiance);
 
 
                 // Strict normals check to produce the same results as bidirectional methods when normal mapping is used.
@@ -1807,6 +1181,14 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                                 Float shiftedBsdfPdf = (emitter->isOnSurface() && dRec.measure == ESolidAngle && mainEmitterVisible) ? mainBSDF->pdf(bRec) : 0; // The BSDF sampler can not sample occluded path segments.
                                 Float shiftedDRecPdf = dRec.pdf;
                                 Spectrum shiftedBsdfValue = mainBSDF->eval(bRec);
+
+#if defined(FACTOR_MATERIAL)
+                                if (main.rRec.depth == 1 && shiftedBsdfValue.max() > Float(0)) // for test
+                                {
+                                    shiftedBsdfValue /= Spectrum(D_EPSILON) + mainBSDF->getDiffuseReflectance(main.rRec.its);
+                                }
+#endif
+
                                 Spectrum shiftedEmitterRadiance = mainEmitterRadiance;
                                 Float jacobian = (Float) 1;
 
@@ -1855,6 +1237,12 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                                     } else {
                                         Spectrum shiftedBsdfValue = shiftedBSDF->eval(bRec);
                                         Float shiftedBsdfPdf = (emitter->isOnSurface() && dRec.measure == ESolidAngle && shiftedEmitterVisible) ? shiftedBSDF->pdf(bRec) : 0;
+#if defined(FACTOR_MATERIAL)
+                                        if (main.rRec.depth == 1 && shiftedBsdfValue.max() > Float(0)) // for test
+                                        {
+                                            shiftedBsdfValue /= Spectrum(D_EPSILON) + shiftedBSDF->getDiffuseReflectance(shifted.its);
+                                        }
+#endif
                                         Float jacobian = std::abs(shiftedOpposingCosine * mainDistanceSquared) / (Epsilon + std::abs(mainOpposingCosine * shiftedDistanceSquared));
 
                                         // Power heuristic between light sample from base, BSDF sample from base, light sample from offset, BSDF sample from offset.
@@ -1896,7 +1284,7 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
 
 
 
-        if (main.rRec.depth - 1 < main.pci->nodes.size()) {
+        if (main.rRec.depth - 1 < main.pci->nodes.size() && !branchArguments) {
 
             sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
 
@@ -1906,6 +1294,13 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
         }
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
+#if defined(FACTOR_MATERIAL)
+        if (main.rRec.depth == 1) // for test
+        {
+            main.pci->factor = main.rRec.its.getBSDF()->getDiffuseReflectance(main.rRec.its);
+            mainBsdfResult.weight /= Spectrum(D_EPSILON) + main.pci->factor;
+        }
+#endif
 
         if (mainBsdfResult.pdf <= (Float) 0.0) {
             // Impossible base path.
@@ -1937,7 +1332,7 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
 
         main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
 
-        if (main.rRec.depth < main.pci->nodes.size()) {
+        if (main.rRec.depth < main.pci->nodes.size() && !branchArguments) {
             main.rRec.its = main.pci->nodes[main.rRec.depth].its; // use cached intersection if possible
             main.ray = main.pci->nodes[main.rRec.depth].lastRay;
         } else
@@ -1995,7 +1390,8 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
         if (main.rRec.depth + 1 >= m_config.m_minDepth) {
             Spectrum estimated_radiance = Spectrum(mainBsdfResult.pdf / (D_EPSILON + (mainLumPdf * mainLumPdf) + (mainBsdfResult.pdf * mainBsdfResult.pdf)));
             estimated_radiance *= mainEmitterRadiance * mainBsdfResult.weight * mainBsdfResult.pdf;
-            main.addRadiance(estimated_radiance);
+            if (estimated_radiance.max() > Float(0) && !branchArguments)
+                main.addRadiance(estimated_radiance);
         }
 
         main.multiply(mainBsdfResult);
@@ -2052,6 +1448,14 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                     EMeasure measure = (mainBsdfResult.bRec.sampledType & BSDF::EDelta) ? EDiscrete : ESolidAngle;
 
                     Spectrum shiftedBsdfValue = mainBSDF->eval(bRec, measure);
+
+#if defined(FACTOR_MATERIAL)
+                    if (main.rRec.depth == 1 && shiftedBsdfValue.max() > Float(0)) // for test
+                    {
+                        shiftedBsdfValue /= Spectrum(D_EPSILON) + main.pci->factor;
+                    }
+#endif
+
                     Float shiftedBsdfPdf = mainBSDF->pdf(bRec, measure);
 
                     Float shiftedLumPdf = mainLumPdf;
@@ -2073,7 +1477,6 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                     // Not connected - apply either reconnection or half-vector duplication shift.
 
                     const BSDF* shiftedBSDF = shifted.its.getBSDF(shifted.ray);
-
                     // Update the vertex type of the offset path.
                     VertexType shiftedVertexType = getVertexType(shifted, m_config, mainBsdfResult.bRec.sampledType);
 
@@ -2117,7 +1520,12 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main) { // evalu
                             // Evaluate the BRDF to the new direction.
                             Spectrum shiftedBsdfValue = shiftedBSDF->eval(bRec);
                             Float shiftedBsdfPdf = shiftedBSDF->pdf(bRec);
-
+#if defined(FACTOR_MATERIAL)
+                            if (main.rRec.depth == 1) // for test
+                            {
+                                shiftedBsdfValue /= Spectrum(D_EPSILON) + shiftedBSDF->getDiffuseReflectance(shifted.its);
+                            }
+#endif
                             // Update throughput and pdf.
                             shifted.throughput *= shiftedBsdfValue * shiftResult.jacobian;
                             shifted.pdf *= shiftedBsdfPdf * shiftResult.jacobian;
@@ -2352,7 +1760,7 @@ shift_failed:
 
             Float q = std::min((main.throughput / (D_EPSILON + main.pdf)).max() * main.eta * main.eta, (Float) 0.95f);
             Float rrSample = main.rRec.nextSample1D();
-            if (main.rRec.depth - 1 < main.pci->nodes.size())
+            if (main.rRec.depth - 1 < main.pci->nodes.size() && !branchArguments)
                 rrSample = main.pci->nodes[main.rRec.depth - 1].rrSample;
             if (rrSample >= q)
                 break;
@@ -2784,7 +2192,7 @@ AdaptiveGradientPathIntegrator::AdaptiveGradientPathIntegrator(const Properties 
 : MonteCarloIntegrator(props) {
     m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
-    m_config.m_nJacobiIters = (int) props.getInteger("nJacobiIters", 50);
+    m_config.m_nJacobiIters = (int) props.getInteger("nJacobiIters", 200);
     m_config.m_minMergeDepth = (int) props.getInteger("minMergeDepth", 0);
     m_config.m_maxMergeDepth = (int) props.getInteger("maxMergeDepth", 0);
     m_config.m_usePixelNeighbors = (Float) props.getBoolean("usePixelNeighbors", true);
