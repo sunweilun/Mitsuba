@@ -32,7 +32,7 @@
 //#define USE_ADAPTIVE_WEIGHT
 #define USE_FILTERS
 //#define USE_LOB_FACTOR
-#define ADAPTIVE_DIFF_SAMPLING
+//#define ADAPTIVE_DIFF_SAMPLING
 //#define USE_RECON_RAYS
 //#define FACTOR_MATERIAL
 
@@ -147,7 +147,8 @@ protected:
         int maxBlendingNum; // maximum number of nodes that can be used for blending
         
         int getSamplingRate() const { 
-            int sr = maxBlendingNum >= 100 ? 1 : 100 / maxBlendingNum;
+            return 1; // for debug
+            int sr = maxBlendingNum >= 100 ? 1 : 1 / maxBlendingNum;
             return sr;
         }
 

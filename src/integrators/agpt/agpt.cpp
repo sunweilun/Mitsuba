@@ -385,6 +385,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 }
 
 void AdaptiveGradientPathIntegrator::getMaxBlendingNum(const Scene *scene) {
+    if(m_config.m_nJacobiIters == 0) return;
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
 
@@ -540,8 +541,6 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
                             [&node] (const PathNode::Neighbor & n) {
                                 return n.node == &node;
                             });
-                    it->grad /= Float(it->sampleCount);
-                    neighbor.grad /= Float(neighbor.sampleCount);
                     neighbor.grad -= it->grad;
                     it->grad = -neighbor.grad;
                 }
@@ -1008,9 +1007,6 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
         main.rRec.depth = 1;
     } else {
         shiftedRays = branchArguments->shiftedRays;
-        for (int i = 0; i < shiftedRays.size(); i++) {
-            shiftedRays[i].its = branchArguments->shiftedRays[i].its;
-        }
     }
 
 
