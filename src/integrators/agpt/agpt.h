@@ -29,12 +29,12 @@
 
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
-//#define USE_ADAPTIVE_WEIGHT
-#define USE_FILTERS
-//#define USE_LOB_FACTOR
-//#define ADAPTIVE_DIFF_SAMPLING
-//#define USE_RECON_RAYS
-//#define FACTOR_MATERIAL
+//#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
+#define USE_FILTERS // use filters for neighbor connection
+#define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
+//#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
+//#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
+//#define FACTOR_MATERIAL // use material factorization
 
 MTS_NAMESPACE_BEGIN
 
@@ -146,9 +146,9 @@ protected:
         int graph_index; // index of the corresponding vertex in boost graph
         int maxBlendingNum; // maximum number of nodes that can be used for blending
         
-        int getSamplingRate() const { 
-            return 1; // for debug
-            int sr = maxBlendingNum >= 100 ? 1 : 1 / maxBlendingNum;
+        int getSamplingRate() const {
+            const int filter_size = 25;
+            int sr = maxBlendingNum >= filter_size ? 1 : filter_size / maxBlendingNum;
             return sr;
         }
 

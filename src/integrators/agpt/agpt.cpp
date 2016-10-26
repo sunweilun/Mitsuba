@@ -108,7 +108,7 @@ void AdaptiveGradientPathIntegrator::tracePrecursor(const Scene *scene, const Se
             if (x >= cx || y >= cy) continue;
 
             PrecursorCacheInfo &pci = (*m_preCacheInfoList)[y * cx + x];
-            pci.clear();
+            pci.clear(); // start over
             Point2i offset(x, y);
             sampler->generate(offset);
             rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
@@ -163,7 +163,7 @@ bool similar(const Spectrum& c1, const Spectrum& c2) {
 bool AdaptiveGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor) {
 #if defined(USE_FILTERS)
     // filter normal
-    if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.8f) return false;
+    if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.5f) return false;
     TVector3<Float> diff_vec = neighbor->its.p - its.p;
     Float len = diff_vec.length();
     if (fabs(dot(neighbor->its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
@@ -459,13 +459,8 @@ void AdaptiveGradientPathIntegrator::traceDiff(const Scene *scene, const Sensor 
 
             PrecursorCacheInfo &pci = (*m_preCacheInfoList)[y * cx + x];
 
-            rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
-
-            // Initialize the base path.
-
-
-
             for (int i = 0; i < pci.nodes.front().getSamplingRate(); i++) {
+                rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
                 MainRayState mainRay;
                 mainRay.throughput = sensor->sampleRayDifferential(mainRay.ray,
                         pci.samplePos, pci.apertureSample, pci.timeSample);
@@ -684,7 +679,7 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                 Spectrum color = pci.nodes[0].estRadBuffer[bufferID] * pci.nodes[0].weight_multiplier;
                 color += pci.very_direct_lighting;
                 block->put(pci.samplePos, color / Float(batchSize) * pci.factor, 1.f);
-                // block->put(pci.samplePos, Spectrum(pci.nodes.front().maxBlendingNum*1e-5), 1.f); // output max blending num
+                //block->put(pci.samplePos, Spectrum(1.0 / std::min(pci.nodes.front().maxBlendingNum, 25) * 25.0 / 255.0), 1.f); // output sampling rate
             }
         }
         film->put(block);
@@ -889,19 +884,18 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
                 return;
             }
         }
+        
+        main.pci->nodes.back().vertexType = getVertexType(main, m_config, BSDF::ESmooth);
+        
+        // break if enough number of nodes has been collected
+        if (main.pci->nodes.size() > m_config.m_maxMergeDepth) break;
 
         Point2 sample = main.rRec.nextSample2D();
         main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
         // Sample a new direction from BSDF * cos(theta).
 
-
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
 
-
-        main.pci->nodes.back().vertexType = getVertexType(main, m_config, BSDF::ESmooth);
-
-        // break if enough number of nodes has been collected
-        if (main.pci->nodes.size() > m_config.m_maxMergeDepth) break;
 
         if (mainBsdfResult.pdf <= (Float) 0.0) {
             // Impossible base path.
@@ -1015,7 +1009,6 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
         if(!branchArguments)
         {
             main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
-            for (int i = 0; i < shiftedRays.size(); i++) shiftedRays[i].neighbor->sampleCount = 1;
         }
 #if defined(ADAPTIVE_DIFF_SAMPLING)
         if (main.rRec.depth == 2 && !branchArguments) {
@@ -1026,7 +1019,6 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
 
                 Float importance = shifted.getImportance();
 
-                Float d = dot(shifted.its.geoFrame.n, main.rRec.its.geoFrame.n);
                 splitNum[i] = std::floor(importance * importance * 16);
                 shifted.neighbor->sampleCount = 1 + splitNum[i];
             }
@@ -1822,6 +1814,7 @@ void AdaptiveGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vector<S
     int activeDpeth = rRec.depth - 1;
     if (activeDpeth >= pci->nodes.size()) return;
     for (auto& neighbor : pci->nodes[activeDpeth].neighbors) {
+        neighbor.sampleCount = 1;
         shiftedRays.push_back(ShiftedRayState());
         auto &shifted = shiftedRays.back();
         shifted.ray = neighbor.node->lastRay;
