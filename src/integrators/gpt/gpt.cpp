@@ -62,8 +62,8 @@ MTS_NAMESPACE_BEGIN
          *
          */
 
-/// A threshold to use in positive denominators to avoid division by zero.
-const Float D_EPSILON = std::numeric_limits<Float>::min();
+        /// A threshold to use in positive denominators to avoid division by zero.
+        const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 /// If defined, uses only the central sample for the throughput estimate. Otherwise uses offset paths for estimating throughput too.
 #define CENTRAL_RADIANCE
@@ -251,75 +251,75 @@ struct HalfVectorShiftResult {
     Vector3 wo; ///< Tangent space outgoing vector for the shift.
 };
 
-inline Float fabs(const Float& a)
-{
+inline Float fabs(const Float& a) {
     return (a > 0) ? a : -a;
 }
 
 /// Calculates the outgoing direction of a shift by duplicating the local half-vector.
+
 HalfVectorShiftResult halfVectorShift(Vector3 tangentSpaceMainWi, Vector3 tangentSpaceMainWo, Vector3 tangentSpaceShiftedWi, Float mainEta, Float shiftedEta) {
-	HalfVectorShiftResult result;
+    HalfVectorShiftResult result;
 
-	if(Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float)0) {
-		// Refraction.
+    if (Frame::cosTheta(tangentSpaceMainWi) * Frame::cosTheta(tangentSpaceMainWo) < (Float) 0) {
+        // Refraction.
 
-		// Refuse to shift if one of the Etas is exactly 1. This causes degenerate half-vectors.
-		if(mainEta == (Float)1 || shiftedEta == (Float)1) {
-			// This could be trivially handled as a special case if ever needed.
-			result.success = false;
-			return result;
-		}
+        // Refuse to shift if one of the Etas is exactly 1. This causes degenerate half-vectors.
+        if (mainEta == (Float) 1 || shiftedEta == (Float) 1) {
+            // This could be trivially handled as a special case if ever needed.
+            result.success = false;
+            return result;
+        }
 
-		// Get the non-normalized half vector.
-		Vector3 tangentSpaceHalfVectorNonNormalizedMain;
-		if(Frame::cosTheta(tangentSpaceMainWi) < (Float)0) {
-			tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi * mainEta + tangentSpaceMainWo);
-		} else {
-			tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi + tangentSpaceMainWo * mainEta);
-		}
+        // Get the non-normalized half vector.
+        Vector3 tangentSpaceHalfVectorNonNormalizedMain;
+        if (Frame::cosTheta(tangentSpaceMainWi) < (Float) 0) {
+            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi * mainEta + tangentSpaceMainWo);
+        } else {
+            tangentSpaceHalfVectorNonNormalizedMain = -(tangentSpaceMainWi + tangentSpaceMainWo * mainEta);
+        }
 
-		// Get the normalized half vector.
-		Vector3 tangentSpaceHalfVector = normalize(tangentSpaceHalfVectorNonNormalizedMain);
+        // Get the normalized half vector.
+        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceHalfVectorNonNormalizedMain);
 
-		// Refract to get the outgoing direction.
-		Vector3 tangentSpaceShiftedWo = refract(tangentSpaceShiftedWi, tangentSpaceHalfVector, shiftedEta);
+        // Refract to get the outgoing direction.
+        Vector3 tangentSpaceShiftedWo = refract(tangentSpaceShiftedWi, tangentSpaceHalfVector, shiftedEta);
 
-		// Refuse to shift between transmission and full internal reflection.
-		// This shift would not be invertible: reflections always shift to other reflections.
-		if(tangentSpaceShiftedWo.isZero()) {
-			result.success = false;
-			return result;
-		}
+        // Refuse to shift between transmission and full internal reflection.
+        // This shift would not be invertible: reflections always shift to other reflections.
+        if (tangentSpaceShiftedWo.isZero()) {
+            result.success = false;
+            return result;
+        }
 
-		// Calculate the Jacobian.
-		Vector3 tangentSpaceHalfVectorNonNormalizedShifted;
-		if(Frame::cosTheta(tangentSpaceShiftedWi) < (Float)0) {
-			tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi * shiftedEta + tangentSpaceShiftedWo);
-		} else {
-			tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi + tangentSpaceShiftedWo * shiftedEta);
-		}
+        // Calculate the Jacobian.
+        Vector3 tangentSpaceHalfVectorNonNormalizedShifted;
+        if (Frame::cosTheta(tangentSpaceShiftedWi) < (Float) 0) {
+            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi * shiftedEta + tangentSpaceShiftedWo);
+        } else {
+            tangentSpaceHalfVectorNonNormalizedShifted = -(tangentSpaceShiftedWi + tangentSpaceShiftedWo * shiftedEta);
+        }
 
-		Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
-		Float WoDotH = fabs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + fabs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
+        Float hLengthSquared = tangentSpaceHalfVectorNonNormalizedShifted.lengthSquared() / (D_EPSILON + tangentSpaceHalfVectorNonNormalizedMain.lengthSquared());
+        Float WoDotH = fabs(dot(tangentSpaceMainWo, tangentSpaceHalfVector)) / (D_EPSILON + fabs(dot(tangentSpaceShiftedWo, tangentSpaceHalfVector)));
 
-		// Output results.
-		result.success = true;
-		result.wo = tangentSpaceShiftedWo;
-		result.jacobian = hLengthSquared * WoDotH;
-	} else {
-		// Reflection.
-		Vector3 tangentSpaceHalfVector = normalize(tangentSpaceMainWi + tangentSpaceMainWo);
-		Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
+        // Output results.
+        result.success = true;
+        result.wo = tangentSpaceShiftedWo;
+        result.jacobian = hLengthSquared * WoDotH;
+    } else {
+        // Reflection.
+        Vector3 tangentSpaceHalfVector = normalize(tangentSpaceMainWi + tangentSpaceMainWo);
+        Vector3 tangentSpaceShiftedWo = reflect(tangentSpaceShiftedWi, tangentSpaceHalfVector);
 
-		Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
-		Float jacobian = fabs(WoDotH);
+        Float WoDotH = dot(tangentSpaceShiftedWo, tangentSpaceHalfVector) / dot(tangentSpaceMainWo, tangentSpaceHalfVector);
+        Float jacobian = fabs(WoDotH);
 
-		result.success = true;
-		result.wo = tangentSpaceShiftedWo;
-		result.jacobian = jacobian;
-	}
+        result.success = true;
+        result.wo = tangentSpaceShiftedWo;
+        result.jacobian = jacobian;
+    }
 
-	return result;
+    return result;
 }
 
 
@@ -479,14 +479,13 @@ public:
 
         // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
 
-        if(!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01))
-        {
+        if (!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01)) {
             printf("%f %f\n", sample.x, sample.y);
             printf("%f\n", result.bRec.wo.length());
             result.pdf = 0;
             return result;
         }
-        
+
         SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }
@@ -663,7 +662,7 @@ public:
 
                                     mainContribution = main.throughput * (mainBSDFValue * mainEmitterRadiance);
                                     shiftedContribution = jacobian * shifted.throughput * (shiftedBsdfValue * shiftedEmitterRadiance);
-                                    
+
                                     // Note: The Jacobians were baked into shifted.pdf and shifted.throughput at connection phase.
                                 } else if (shifted.connection_status == RAY_RECENTLY_CONNECTED) {
                                     // Follow the base path. The current vertex is shared, but the incoming directions differ.
@@ -1020,7 +1019,7 @@ public:
                                 }
                             }
                         } else {
-                            
+
                             // Use half-vector duplication shift. These paths could not have been sampled by light sampling (by our decision).
                             Vector3 tangentSpaceIncomingDirection = shifted.rRec.its.toLocal(-shifted.ray.d);
                             Vector3 tangentSpaceOutgoingDirection;
@@ -1047,7 +1046,7 @@ public:
                             // Apply the local shift.
                             shiftResult = halfVectorShift(mainBsdfResult.bRec.wi, mainBsdfResult.bRec.wo, shifted.rRec.its.toLocal(-shifted.ray.d), mainBSDF->getEta(), shiftedBSDF->getEta());
                             bRec.wo = shiftResult.wo;
-                            
+
                             if (mainBsdfResult.bRec.sampledType & BSDF::EDelta) {
                                 // Dirac delta integral is a point evaluation - no Jacobian determinant!
                                 shiftResult.jacobian = Float(1);
@@ -1063,7 +1062,7 @@ public:
                                 shifted.alive = false;
                                 goto half_vector_shift_failed;
                             }
-                            
+
 
                             outgoingDirection = shifted.rRec.its.toWorld(tangentSpaceOutgoingDirection);
 
@@ -1084,7 +1083,7 @@ public:
                                 shifted.alive = false;
                                 goto half_vector_shift_failed;
                             }
-                            
+
 
                             // Update the vertex type.
                             shiftedVertexType = getVertexType(shifted, *m_config, mainBsdfResult.bRec.sampledType);
@@ -1143,7 +1142,7 @@ public:
                                 if (shifted.rRec.its.hasSubsurface() && (shifted.rRec.type & RadianceQueryRecord::ESubsurfaceRadiance)) {
                                     shiftedEmitterRadiance += shifted.rRec.its.LoSub(scene, shifted.rRec.sampler, -shifted.ray.d, main.rRec.depth);
                                 }
-                                
+
                             }
 
 
@@ -1238,7 +1237,7 @@ GradientPathIntegrator::GradientPathIntegrator(const Properties &props)
     m_config.m_reconstructL1 = props.getBoolean("reconstructL1", true);
     m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
-    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
+    m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 500);
 
     if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
         Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
@@ -1470,7 +1469,7 @@ bool GradientPathIntegrator::render(Scene *scene,
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), directBitmap, BUFFER_VERY_DIRECT);
 
 #ifdef USE_ORIGINAL_REC
-    
+
     if (m_config.m_reconstructL1 || m_config.m_reconstructL2) {
 
 
@@ -1527,105 +1526,95 @@ bool GradientPathIntegrator::render(Scene *scene,
     }
 #else
     /* Transform the data for the solver. */
-        int w = film->getCropSize().x;
-        int h = film->getCropSize().y;
-        size_t subPixelCount = 3 * w * h;
-        std::vector<float> throughputVector(subPixelCount);
-        std::vector<float> dxVector(subPixelCount);
-        std::vector<float> dyVector(subPixelCount);
-        std::vector<float> directVector(subPixelCount);
-        std::vector<float> reconstructionVector[2];
-        reconstructionVector[0].resize(subPixelCount);
-        reconstructionVector[1].resize(subPixelCount);
+    int w = film->getCropSize().x;
+    int h = film->getCropSize().y;
+    size_t subPixelCount = 3 * w * h;
+    std::vector<float> throughputVector(subPixelCount);
+    std::vector<float> dxVector(subPixelCount);
+    std::vector<float> dyVector(subPixelCount);
+    std::vector<float> directVector(subPixelCount);
+    std::vector<float> reconstructionVector[2];
+    reconstructionVector[0].resize(subPixelCount);
+    reconstructionVector[1].resize(subPixelCount);
 
-        std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, throughputVector.begin(), [](Float x) {
-            return (float) x; });
-        std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, reconstructionVector[0].begin(), [](Float x) {
-            return (float) x; });
-        std::transform(dxBitmap->getFloatData(), dxBitmap->getFloatData() + subPixelCount, dxVector.begin(), [](Float x) {
-            return (float) x; });
-        std::transform(dyBitmap->getFloatData(), dyBitmap->getFloatData() + subPixelCount, dyVector.begin(), [](Float x) {
-            return (float) x; });
-        std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
-            return (float) x; });
-            
-            
+    std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, throughputVector.begin(), [](Float x) {
+        return (float) x; });
+    std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, reconstructionVector[0].begin(), [](Float x) {
+        return (float) x; });
+    std::transform(dxBitmap->getFloatData(), dxBitmap->getFloatData() + subPixelCount, dxVector.begin(), [](Float x) {
+        return (float) x; });
+    std::transform(dyBitmap->getFloatData(), dyBitmap->getFloatData() + subPixelCount, dyVector.begin(), [](Float x) {
+        return (float) x; });
+    std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
+        return (float) x; });
+
+
     float alpha = (Float) m_config.m_reconstructAlpha;
     float alpha_sqr = alpha * alpha;
-    
-    
-    
+
+
+
 #if defined(MTS_OPENMP)
     Thread::initializeOpenMP(nCores);
 #endif
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
-    
+
     const int& n_iters = m_config.m_nJacobiIters;
-    for(int iter = 0; iter < n_iters; iter++)
-    {
-        int src = iter%2;
-        int dst = 1-src;
-        
-#if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
-#endif
-        for (int i = 0; i < w*h; i += chunk_size) {
-            for (int c = 0; c < chunk_size; c++) {
-                int index = i+c;
-                int x = index % w;
-                int y = index / w;
-                if(x >= w || y >= h) continue;
-                Vector3f color(0.f);
-                float weight = 0.f;
-                const Vector3f& prim = ((Vector3f*)throughputVector.data())[y*w+x];
-                color += prim*alpha_sqr;
-                weight += alpha_sqr;
-                if(x > 0)
-                {
-                    color += ((Vector3f*)dxVector.data())[y*w+x-1];
-                    color += ((Vector3f*)reconstructionVector[src].data())[y*w+x-1];
-                    weight += 1.f;
-                }
-                if(x+1 < w)
-                {
-                    color -= ((Vector3f*)dxVector.data())[y*w+x];
-                    color += ((Vector3f*)reconstructionVector[src].data())[y*w+x+1];
-                    weight += 1.f;
-                }
-                if(y > 0)
-                {
-                    color += ((Vector3f*)dyVector.data())[(y-1)*w+x];
-                    color += ((Vector3f*)reconstructionVector[src].data())[(y-1)*w+x];
-                    weight += 1.f;
-                }
-                if(y+1 < h)
-                {
-                    color -= ((Vector3f*)dyVector.data())[y*w+x];
-                    color += ((Vector3f*)reconstructionVector[src].data())[(y+1)*w+x];
-                    weight += 1.f;
-                }
-                ((Vector3f*)reconstructionVector[dst].data())[y*w+x] = color / weight;
-            }
-        }
-    }
-    
+    for (int iter = 0; iter < n_iters; iter++) {
+        int src = iter % 2;
+        int dst = 1 - src;
 
 #if defined(MTS_OPENMP)
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
-    for (int i = 0; i < w*h; i += chunk_size) {
-        for (int c = 0; c < chunk_size; c++) {
-            int index = i+c;
-            int x = index % w;
-            int y = index / w;
-            if(x >= w || y >= h) continue;
-            const Vector3f& color = ((Vector3f*)reconstructionVector[n_iters%2].data())[y*w+x];
-            const Vector3f& direct = ((Vector3f*)directVector.data())[y*w+x];
-            Float specColor[] = {color.x, color.y, color.z};
-            Float specDirect[] = {direct.x, direct.y, direct.z};
-            reconstructionBitmap->setPixel(Point2i(x, y), Spectrum(specColor) + Spectrum(specDirect));
+        for (int i = 0; i < w * h; i++) {
+            int x = i % w;
+            int y = i / w;
+            if (x >= w || y >= h) continue;
+            Vector3f color(0.f);
+            float weight = 0.f;
+            const Vector3f& prim = ((Vector3f*) throughputVector.data())[y * w + x];
+            color += prim*alpha_sqr;
+            weight += alpha_sqr;
+            if (x > 0) {
+                color += ((Vector3f*) dxVector.data())[y * w + x - 1];
+                color += ((Vector3f*) reconstructionVector[src].data())[y * w + x - 1];
+                weight += 1.f;
+            }
+            if (x + 1 < w) {
+                color -= ((Vector3f*) dxVector.data())[y * w + x];
+                color += ((Vector3f*) reconstructionVector[src].data())[y * w + x + 1];
+                weight += 1.f;
+            }
+            if (y > 0) {
+                color += ((Vector3f*) dyVector.data())[(y - 1) * w + x];
+                color += ((Vector3f*) reconstructionVector[src].data())[(y - 1) * w + x];
+                weight += 1.f;
+            }
+            if (y + 1 < h) {
+                color -= ((Vector3f*) dyVector.data())[y * w + x];
+                color += ((Vector3f*) reconstructionVector[src].data())[(y + 1) * w + x];
+                weight += 1.f;
+            }
+            ((Vector3f*) reconstructionVector[dst].data())[y * w + x] = color / weight;
+
         }
+    }
+
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+    for (int i = 0; i < w * h; i++) {
+        int x = i % w;
+        int y = i / w;
+        if (x >= w || y >= h) continue;
+        const Vector3f& color = ((Vector3f*) reconstructionVector[n_iters % 2].data())[y * w + x];
+        const Vector3f& direct = ((Vector3f*) directVector.data())[y * w + x];
+        Float specColor[] = {color.x, color.y, color.z};
+        Float specDirect[] = {direct.x, direct.y, direct.z};
+        reconstructionBitmap->setPixel(Point2i(x, y), Spectrum(specColor) + Spectrum(specDirect));
     }
 
     film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL);

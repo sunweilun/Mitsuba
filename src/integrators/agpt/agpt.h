@@ -24,6 +24,9 @@
 #include <omp.h>
 #endif
 
+#if defined(MTS_OPENMP)
+#define NANOFLANN_USE_OMP
+#endif
 #include "nanoflann.hpp"
 
 
@@ -31,10 +34,13 @@
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
 #define USE_FILTERS // use filters for neighbor connection
-#define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
+//#define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
 //#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
 //#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
 //#define FACTOR_MATERIAL // use material factorization
+#define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
+#define CACHE_FRIENDLY_ITERATOR
+//#define GRAD_IMPORTANCE_SAMPLING
 
 MTS_NAMESPACE_BEGIN
 
@@ -103,11 +109,19 @@ protected:
 
     void traceDiff(const Scene *scene, const Sensor *sensor, Sampler *sampler);
     
+#if defined(ADAPTIVE_GRAPH_SAMPLING)
     void getMaxBlendingNum(const Scene *scene);
+#endif
+    
+    void communicateBidirectionalDiff(const Scene *scene) 
+    {
+        for(int i=m_config.m_minMergeDepth; i<=m_config.m_maxMergeDepth; i++)
+            communicateBidirectionalDiff(scene, i);
+    }
+    
+    void communicateBidirectionalDiff(const Scene *scene, int depth);
 
-    void communicateBidirectionalDiff(const Scene *scene);
-
-    void iterateJacobi(const Scene *scene);
+    void iterateJacobi(const Scene *scene, const Sensor *sensor);
 
     void setOutputBuffer(const Scene *scene, Sensor *sensor, int batchSize);
 
@@ -141,27 +155,41 @@ protected:
 
         Spectrum estRadBuffer[2]; // estimated radiance buffer for Jacobi iterations
         Spectrum estRad; // estimated radiance for the ray before intersection
+        Vector3f color;
         // We need 2 spectrum vectors to perform Jacobi iterations.
         int sampleCount; // number of samples for branching
         int graph_index; // index of the corresponding vertex in boost graph
         int maxBlendingNum; // maximum number of nodes that can be used for blending
         
         int getSamplingRate() const {
+#if defined(ADAPTIVE_GRAPH_SAMPLING)
             const int filter_size = 25;
-            int sr = maxBlendingNum >= filter_size ? 1 : filter_size / maxBlendingNum;
+            int sr = sqrt(maxBlendingNum) >= filter_size ? 1 : filter_size / sqrt(maxBlendingNum);
             return sr;
+#else
+            return 1;
+#endif
         }
 
         struct Neighbor {
             PathNode* node; // We can use pointers here because PathNode structure is fixed when we set neighbors.
             Spectrum grad; // Gradient to the neighbor.
-            Spectrum accum_grad; // Accumulated Gradient
             Spectrum weight; // Weight for this connection. We set this to 1 for now.
             int sampleCount; // number of samples for gradient
+            int index; // index indicating neighbor's direction for 1st bounce
+#if defined(BACK_PROP_GRAD)
+            Spectrum grad_before_conn; // gradient accumulated before connection happens
+            bool merged; // indicates whether this neighbor gets merged successfully
             
-
-            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), accum_grad(Spectrum(Float(0))), weight(Spectrum(Float(0))), sampleCount(1) {
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), 
+            weight(Spectrum(Float(0))), sampleCount(1), merged(true), grad_before_conn(Spectrum(Float(0))) {
             }
+#else
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), 
+            weight(Spectrum(Float(0))), sampleCount(1) {
+            }
+#endif
+            
 
             Neighbor() {
             }
@@ -175,7 +203,7 @@ protected:
             }
         };
         std::vector<Neighbor> neighbors; // neighbors of this node
-        bool addNeighborWithFilter(PathNode* neighbor);
+        bool addNeighborWithFilter(PathNode* neighbor, int neighbor_index = 0);
         BSDFSampleResult getBSDFSampleResult() const;
 
 #if defined(MTS_OPENMP)
@@ -209,7 +237,7 @@ protected:
         Float timeSample;
         Spectrum very_direct_lighting;
         Spectrum factor;
-        int maxBlendingNum; // 
+        int maxBlendingNum;
         std::vector<PathNode> nodes;
 
         PrecursorCacheInfo() {
@@ -245,9 +273,14 @@ protected:
         }
         /// Adds gradient to the ray.
 
-        inline void addGradient(const Spectrum& mainContrib, const Spectrum& shiftContrib, Float weight) {
+        inline void addGradient(const Spectrum& mainContrib, const Spectrum& shiftContrib, Float weight, bool hitEmitter = false) {
             Spectrum color = (mainContrib - shiftContrib) * weight;
             neighbor->grad += color / Spectrum(Float(neighbor->node->getSamplingRate())) / Float(neighbor->sampleCount);
+#if defined(BACK_PROP_GRAD)
+            if(hitEmitter) return;
+            if(connection_status == RAY_NOT_CONNECTED && alive)
+                neighbor->grad_before_conn += color / Spectrum(Float(neighbor->node->getSamplingRate())) / Float(neighbor->sampleCount);
+#endif
         }
 
         inline Spectrum getCurrentWeight() const {
@@ -264,7 +297,7 @@ protected:
 
         RayDifferential ray; ///< Current ray.
         Spectrum throughput; ///< Current throughput of the path.
-        Float pdf; ///< Current PDF of the path as if this shifted path was actively sampled.
+        Float pdf; ///< Current PDF of the main path as if the shifted path was actively sampled.
         // Note: Instead of storing throughput and pdf, it is possible to store Veach-style weight (throughput divided by pdf), if relative PDF (offset_pdf divided by base_pdf) is also stored. This might be more stable numerically.
         RadianceQueryRecord rRec; ///< The radiance query record for this ray.
         Intersection its;
