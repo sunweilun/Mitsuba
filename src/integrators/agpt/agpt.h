@@ -34,13 +34,14 @@
 #define PRINT_TIMING // print out timing info if defined
 //#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
 #define USE_FILTERS // use filters for neighbor connection
-//#define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
+#define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
 //#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
 //#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
 //#define FACTOR_MATERIAL // use material factorization
 #define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
 #define CACHE_FRIENDLY_ITERATOR
 //#define GRAD_IMPORTANCE_SAMPLING
+#define GDPT_STYLE_1ST_BOUNCE // use accumulated GDPT gradient
 
 MTS_NAMESPACE_BEGIN
 
@@ -203,7 +204,7 @@ protected:
             }
         };
         std::vector<Neighbor> neighbors; // neighbors of this node
-        bool addNeighborWithFilter(PathNode* neighbor, int neighbor_index = 0);
+        bool addNeighbor(PathNode* neighbor, int neighbor_index = 0, bool filter = true);
         BSDFSampleResult getBSDFSampleResult() const;
 
 #if defined(MTS_OPENMP)

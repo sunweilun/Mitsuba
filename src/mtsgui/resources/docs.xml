@@ -608,7 +608,7 @@
 			<p>Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', for the purposes of constructing paths pairs for estimating pixel differences.</p>
 			<p>This value should usually be somewhere between 0.0005 and 0.01. If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.</p>
 		</param>
-                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="200">
+                <param name="nJacobiIters" readableName="Number of Jacobi Iterations" type="integer" default="50">
 			<p>Specifies the number of Jacobi iterations for Poisson reconstruction.</p>
 		</param>
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">

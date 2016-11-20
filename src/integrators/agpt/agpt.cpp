@@ -28,41 +28,47 @@
 
 MTS_NAMESPACE_BEGIN
 
-/*!\plugin{ugpt}{Unstructured Gradient-domain path tracer}
- * \order{20}
- * \parameters{
- *	   \parameter{reconstructL1}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method 
- *           that efficiently kills many image artifacts. The reconstruction is slightly biased, but the bias will go away by increasing sample count. \default{\code{true}}
- *     }
- *	   \parameter{reconstructL2}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method that is unbiased, 
- *			but sometimes introduces severe dipole artifacts. \default{\code{false}}
- *     }
- *	   \parameter{shiftThreshold}{\Float}{Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', 
- *			for the purposes of constructing paths pairs for estimating pixel differences. This value should usually be somewhere between 0.0005 and 0.01. 
- *			If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.\default{\code{0.001}}
- *	   }
- *	   \parameter{reconstructAlpha}{\Float}{	
- *			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. 
- *			The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.\default{\code{0.2}}
-           }
- * }
- *
- *
- * This plugin implements a gradient-domain path tracer (short: G-PT) as described in the paper "Gradient-Domain Path Tracing" by Kettunen et al. 
- * It samples difference images in addition to the standard color image, and reconstructs the final image based on these.
- * It supports classical materials like diffuse, specular and glossy materials, and area and point lights, depth-of-field, and low discrepancy samplers. 
- * There is also experimental support for sub-surface scattering and motion blur. Note that this is still an experimental implementation of Gradient-Domain Path Tracing 
- * that has not been tested with all of Mitsuba's features. Notably there is no support yet for any kind of participating media or directional lights. 
- * Environment maps are supported, though. Does not support the 'hide emitters' option even though it is displayed.
+        /*!\plugin{ugpt}{Unstructured Gradient-domain path tracer}
+         * \order{20}
+         * \parameters{
+         *	   \parameter{reconstructL1}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method 
+         *           that efficiently kills many image artifacts. The reconstruction is slightly biased, but the bias will go away by increasing sample count. \default{\code{true}}
+         *     }
+         *	   \parameter{reconstructL2}{\Boolean}{If set, the rendering method reconstructs the final image using a reconstruction method that is unbiased, 
+         *			but sometimes introduces severe dipole artifacts. \default{\code{false}}
+         *     }
+         *	   \parameter{shiftThreshold}{\Float}{Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', 
+         *			for the purposes of constructing paths pairs for estimating pixel differences. This value should usually be somewhere between 0.0005 and 0.01. 
+         *			If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.\default{\code{0.001}}
+         *	   }
+         *	   \parameter{reconstructAlpha}{\Float}{	
+         *			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. 
+         *			The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.\default{\code{0.2}}
+                   }
+         * }
+         *
+         *
+         * This plugin implements a gradient-domain path tracer (short: G-PT) as described in the paper "Gradient-Domain Path Tracing" by Kettunen et al. 
+         * It samples difference images in addition to the standard color image, and reconstructs the final image based on these.
+         * It supports classical materials like diffuse, specular and glossy materials, and area and point lights, depth-of-field, and low discrepancy samplers. 
+         * There is also experimental support for sub-surface scattering and motion blur. Note that this is still an experimental implementation of Gradient-Domain Path Tracing 
+         * that has not been tested with all of Mitsuba's features. Notably there is no support yet for any kind of participating media or directional lights. 
+         * Environment maps are supported, though. Does not support the 'hide emitters' option even though it is displayed.
 
- *
- */
+         *
+         */
 
-/// A threshold to use in positive denominators to avoid division by zero. Use double for robustness.
+        // Output buffer names.
+        static const size_t BUFFER_FINAL = 0; ///< Buffer index for the final image. Also used for preview.
+static const size_t BUFFER_THROUGHPUT = 1; ///< Buffer index for the noisy color image.
+static const size_t BUFFER_DX = 2; ///< Buffer index for the X gradients.
+static const size_t BUFFER_DY = 3; ///< Buffer index for the Y gradients.
+static const size_t BUFFER_VERY_DIRECT = 4; ///< Buffer index for very direct light.
 
 
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
+
 class MyTimer {
 protected:
     timeval ts, te;
@@ -104,6 +110,12 @@ void AdaptiveGradientPathIntegrator::tracePrecursor(const Scene *scene, const Se
     ref_vector<Sampler> samplers(nCores);
     for (int i = 0; i < nCores; i++)
         samplers[i] = sampler->clone();
+
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+    RadianceQueryRecord r(scene, samplers.front());
+    Point2 perturb = r.nextSample2D();
+#endif
+
 #pragma omp parallel for schedule(dynamic)
 #endif
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
@@ -127,11 +139,11 @@ void AdaptiveGradientPathIntegrator::tracePrecursor(const Scene *scene, const Se
             rRec.newQuery(RadianceQueryRecord::ESensorRay, sensor->getMedium());
 
             Point2 samplePos;
-            if (m_precursorTask == PRECURSOR_LOOP)
-                samplePos = Point2(offset) + Vector2(rRec.nextSample2D());
-            else
-                samplePos = Point2(offset) + Vector2(0.5, 0.5);
-
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+            samplePos = Point2(offset) + Vector2(perturb);
+#else
+            samplePos = Point2(offset) + Vector2(rRec.nextSample2D());
+#endif
             rRec.nextSample2D();
 
             if (needsApertureSample) {
@@ -169,33 +181,33 @@ bool similar(const Spectrum& c1, const Spectrum& c2) {
     return true;
 }
 
-bool AdaptiveGradientPathIntegrator::PathNode::addNeighborWithFilter(PathNode* neighbor, int neighbor_index) {
-#if defined(USE_FILTERS)
-    // filter normal
-    if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.5f) return false;
-    TVector3<Float> diff_vec = neighbor->its.p - its.p;
-    Float len = diff_vec.length();
-    if (fabs(dot(neighbor->its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
-    if (fabs(dot(its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
+bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, int neighbor_index, bool filter) {
+    if (filter) {
+        // filter normal
+        if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.5f) return false;
+        TVector3<Float> diff_vec = neighbor->its.p - its.p;
+        Float len = diff_vec.length();
+        if (fabs(dot(neighbor->its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
+        if (fabs(dot(its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
 
-    // filter # of neighbors
-    if (neighbors.size() >= 5) return false;
+        // filter # of neighbors
+        if (neighbors.size() >= 4) return false;
 
-    // filter glossy vertices
-    //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
-    //if (vertexType == VERTEX_TYPE_GLOSSY) return false;
+        // filter glossy vertices
+        //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
+        //if (vertexType == VERTEX_TYPE_GLOSSY) return false;
 
-    Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
-    Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
+        Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
+        Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
 
-    Spectrum n_diff = neighbor->its.getBSDF()->getDiffuseReflectance(neighbor->its);
-    Spectrum n_spec = neighbor->its.getBSDF()->getSpecularReflectance(neighbor->its);
+        Spectrum n_diff = neighbor->its.getBSDF()->getDiffuseReflectance(neighbor->its);
+        Spectrum n_spec = neighbor->its.getBSDF()->getSpecularReflectance(neighbor->its);
 
-    // color filter
-    if (!similar(diff, n_diff)) return false;
-    if (!similar(spec, n_spec)) return false;
+        // color filter
+        if (!similar(diff, n_diff)) return false;
+        if (!similar(spec, n_spec)) return false;
+    }
 
-#endif
     Float dist = distance(neighbor->its.p, its.p);
 
     neighbors.push_back(neighbor);
@@ -238,7 +250,11 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                         continue;
                     int j = n.y * cx + n.x;
                     if (!(*m_preCacheInfoList)[j].nodes[0].its.isValid()) continue;
-                    (*m_preCacheInfoList)[i].nodes[0].addNeighborWithFilter(&(*m_preCacheInfoList)[j].nodes[0], k);
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+                    (*m_preCacheInfoList)[i].nodes[0].addNeighbor(&(*m_preCacheInfoList)[j].nodes[0], k, false);
+#else
+                    (*m_preCacheInfoList)[i].nodes[0].addNeighbor(&(*m_preCacheInfoList)[j].nodes[0], k, true);
+#endif
                 }
             }
             continue;
@@ -305,7 +321,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                         index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
                         for (auto& item : indices_dists) {
                             if (item.first == i) continue; // exclude self
-                            (*m_pc).nodes[i]->addNeighborWithFilter((*m_pc).nodes[item.first]);
+                            (*m_pc).nodes[i]->addNeighbor((*m_pc).nodes[item.first]);
                         }
                     }
                     break;
@@ -325,7 +341,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                         std::vector<Float> dist_sqr(nn);
                         nanoflann::KNNResultSet<Float> resultSet(nn);
                         resultSet.init(indices.data(), dist_sqr.data());
-                        index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams());
+                        index->findNeighbors(resultSet, query_pt, nanoflann::SearchParams(10, 0));
                         for (auto& neighbor_idx : indices) {
 #if defined(USE_RECON_RAYS)
                             if (neighbor_idx == i && m_currentMode == SAMPLE_MODE) continue;
@@ -339,7 +355,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 #if defined(USE_RECON_RAYS)     
                             bool unfiltered = (*m_pc).nodes[i]->addNeighborWithFilter((*m_pcBuffer).nodes[neighbor_idx]);
 #else
-                            bool unfiltered = (*m_pc).nodes[i]->addNeighborWithFilter((*m_pc).nodes[neighbor_idx]);
+                            bool unfiltered = (*m_pc).nodes[i]->addNeighbor((*m_pc).nodes[neighbor_idx]);
 #endif
 
 #if defined(MTS_OPENMP)
@@ -380,12 +396,11 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 #if defined(DUMP_GRAPH)
     FILE* file = fopen("graph.txt", "w");
     for (auto& pci : *m_preCacheInfoList) {
-        for (auto& node : pci.nodes) {
-            fprintf(file, "p %f %f %f\n", node.its.p.x, node.its.p.y, node.its.p.z);
-            for (auto& neighbor : node.neighbors) {
-                fprintf(file, "l %f %f %f ", neighbor.node->its.p.x, neighbor.node->its.p.y, neighbor.node->its.p.z);
-                fprintf(file, "%f %f %f\n", node.its.p.x, node.its.p.y, node.its.p.z);
-            }
+        auto& node = pci.nodes.back();
+        fprintf(file, "p %f %f %f\n", node.its.p.x, node.its.p.y, node.its.p.z);
+        for (auto& neighbor : node.neighbors) {
+            fprintf(file, "l %f %f %f ", neighbor.node->its.p.x, neighbor.node->its.p.y, neighbor.node->its.p.z);
+            fprintf(file, "%f %f %f\n", node.its.p.x, node.its.p.y, node.its.p.z);
         }
     }
     fclose(file);
@@ -431,7 +446,7 @@ void AdaptiveGradientPathIntegrator::getMaxBlendingNum(const Scene *scene) {
             start_indices[cid + 1] += pn.neighbors.size();
         }
     }
-
+    
     for (int cid = 1; cid <= nChunks; cid++) {
         start_indices[cid] += start_indices[cid - 1];
     }
@@ -661,12 +676,17 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
 #if defined(BACK_PROP_GRAD)
         communicateBidirectionalDiff(scene, i);
 #endif
+        
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+        if (i == 0) continue;
+#endif
 
 #if defined(CACHE_FRIENDLY_ITERATOR)
         if (i == 0) {
             const int& cx = sensor->getFilm()->getCropSize().x;
             const int& cy = sensor->getFilm()->getCropSize().y;
             // prepare data
+
             std::vector<Spectrum> color[2];
             color[0].resize(cx * cy, Spectrum(Float(0)));
             color[1].resize(cx * cy, Spectrum(Float(0)));
@@ -740,9 +760,9 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
         }
 
 
-
-
 #endif
+
+
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
 #if defined(USE_RECON_RAYS)
             if (j == 1 && i == 1 && m_currentMode == RECON_MODE) break;
@@ -776,7 +796,7 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                 }
 
             }
-            if (j == 20 && i > 0) break; // for debug
+            if (j == 10 && i > 0) break; // for debug
         }
 
         int dstBuffer = m_config.m_nJacobiIters % 2;
@@ -828,7 +848,64 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
 #if defined(MTS_OPENMP)
         ref<ImageBlock> block = blocks[omp_get_thread_num()];
-#endif 
+#endif
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+        for (int buffID = 0; buffID < 5; buffID++) {
+            block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
+            block->clear();
+            for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
+
+                int x = block->getOffset().x + pointIndex % bSize;
+                int y = block->getOffset().y + pointIndex / bSize;
+                if (x >= cx || y >= cy) continue;
+
+                PrecursorCacheInfo &pci = (*m_preCacheInfoList)[y * cx + x];
+                Spectrum color(0.f);
+                Spectrum dx(0.f);
+                Spectrum dy(0.f);
+                if (pci.nodes[0].its.isValid()) {
+                    color = pci.nodes[0].estRad * pci.nodes[0].weight_multiplier;
+                    dx = color;
+                    dy = color;
+                    for (auto& n : pci.nodes[0].neighbors) {
+                        if (n.index == 1)
+                            dx = n.grad;
+                        if (n.index == 3)
+                            dy = n.grad;
+                    }
+                }
+                else {
+                    int x_next = x+1;
+                    int y_next = y+1;
+                    if(x_next < cx) {
+                        auto& nodes = (*m_preCacheInfoList)[y * cx + x_next].nodes;
+                        if(nodes.size())
+                            dx = -nodes.front().estRad * nodes.front().weight_multiplier;
+                    }
+                    if(y_next < cy) {
+                        auto& nodes = (*m_preCacheInfoList)[y_next * cx + x].nodes;
+                        if(nodes.size())
+                            dy = -nodes.front().estRad * nodes.front().weight_multiplier;
+                    }
+                }
+                
+                switch (buffID) {
+                    case BUFFER_DX:
+                        color = -dx;
+                        break;
+                    case BUFFER_DY:
+                        color = -dy;
+                        break;
+                    case BUFFER_VERY_DIRECT:
+                        color = pci.very_direct_lighting;
+                        break;
+                }
+                
+                block->put(pci.samplePos, color / Float(batchSize) * pci.factor, 1.f);
+            }
+            film->putMulti(block, buffID);
+        }
+#else
         block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
         block->clear();
         for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
@@ -847,6 +924,7 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
             }
         }
         film->put(block);
+#endif
     }
 }
 
@@ -871,6 +949,19 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
 
     /* Set up MultiFilm. */
     ref<Film> film = sensor->getFilm();
+
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+    std::vector<std::string> outNames;
+    outNames.push_back("-final");
+    outNames.push_back("-throughput");
+    outNames.push_back("-dx");
+    outNames.push_back("-dy");
+    outNames.push_back("-direct");
+    if (!film->setBuffers(outNames)) {
+        Log(EError, "Cannot render image! G-PT has been called without MultiFilm.");
+        return false;
+    }
+#endif
 
     size_t nCores = sched->getCoreCount();
     Sampler *sampler = static_cast<Sampler *> (sched->getResource(samplerResID, 0));
@@ -996,6 +1087,105 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
 
         queue->signalRefresh(job);
     }
+
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+    ref<Bitmap> throughputBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    ref<Bitmap> directBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    ref<Bitmap> dxBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    ref<Bitmap> dyBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+
+    film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), throughputBitmap, BUFFER_THROUGHPUT);
+    film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dxBitmap, BUFFER_DX);
+    film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dyBitmap, BUFFER_DY);
+    film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), directBitmap, BUFFER_VERY_DIRECT);
+
+    /* Transform the data for the solver. */
+    int w = film->getCropSize().x;
+    int h = film->getCropSize().y;
+    size_t subPixelCount = 3 * w * h;
+    std::vector<float> throughputVector(subPixelCount);
+    std::vector<float> dxVector(subPixelCount);
+    std::vector<float> dyVector(subPixelCount);
+    std::vector<float> directVector(subPixelCount);
+    std::vector<float> reconstructionVector[2];
+    reconstructionVector[0].resize(subPixelCount);
+    reconstructionVector[1].resize(subPixelCount);
+
+    std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, throughputVector.begin(), [](Float x) {
+        return (float) x; });
+    std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, reconstructionVector[0].begin(), [](Float x) {
+        return (float) x; });
+    std::transform(dxBitmap->getFloatData(), dxBitmap->getFloatData() + subPixelCount, dxVector.begin(), [](Float x) {
+        return (float) x; });
+    std::transform(dyBitmap->getFloatData(), dyBitmap->getFloatData() + subPixelCount, dyVector.begin(), [](Float x) {
+        return (float) x; });
+    std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
+        return (float) x; });
+        
+    int chunk_size = scene->getBlockSize();
+    chunk_size *= chunk_size;
+
+    const int& n_iters = m_config.m_nJacobiIters;
+    for (int iter = 0; iter < n_iters; iter++) {
+        int src = iter % 2;
+        int dst = 1 - src;
+        
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+        for (int i = 0; i < w * h; i++) {
+            int x = i % w;
+            int y = i / w;
+            if (x >= w || y >= h) continue;
+            Vector3f color(0.f);
+            float weight = 0.f;
+            const Vector3f& prim = ((Vector3f*) reconstructionVector[src].data())[y * w + x];
+            color += prim;
+            weight += 1;
+            if (x > 0) {
+                color += ((Vector3f*) dxVector.data())[y * w + x - 1];
+                color += ((Vector3f*) reconstructionVector[src].data())[y * w + x - 1];
+                weight += 1.f;
+            }
+            if (x + 1 < w) {
+                color -= ((Vector3f*) dxVector.data())[y * w + x];
+                color += ((Vector3f*) reconstructionVector[src].data())[y * w + x + 1];
+                weight += 1.f;
+            }
+            if (y > 0) {
+                color += ((Vector3f*) dyVector.data())[(y - 1) * w + x];
+                color += ((Vector3f*) reconstructionVector[src].data())[(y - 1) * w + x];
+                weight += 1.f;
+            }
+            if (y + 1 < h) {
+                color -= ((Vector3f*) dyVector.data())[y * w + x];
+                color += ((Vector3f*) reconstructionVector[src].data())[(y + 1) * w + x];
+                weight += 1.f;
+            }
+            ((Vector3f*) reconstructionVector[dst].data())[y * w + x] = color / weight;
+
+        }
+    }
+
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+    for (int i = 0; i < w * h; i++) {
+        int x = i % w;
+        int y = i / w;
+        if (x >= w || y >= h) continue;
+        const Vector3f& color = ((Vector3f*) reconstructionVector[n_iters % 2].data())[y * w + x];
+        const Vector3f& direct = ((Vector3f*) directVector.data())[y * w + x];
+        Float specColor[] = {color.x, color.y, color.z};
+        Float specDirect[] = {direct.x, direct.y, direct.z};
+        reconstructionBitmap->setPixel(Point2i(x, y), Spectrum(specColor) + Spectrum(specDirect));
+    }
+    film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL);
+    queue->signalRefresh(job);
+#endif
+
     return success;
 }
 
@@ -1169,8 +1359,9 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
                 if (shifted.activeDepth > 2) continue;
 
                 Float importance = shifted.getImportance();
+                if (shifted.alive)
+                    splitNum[i] = std::floor(importance * importance * 8);
 
-                splitNum[i] = std::floor(importance * importance * 16);
                 shifted.neighbor->sampleCount = 1 + splitNum[i];
             }
 
@@ -2334,7 +2525,7 @@ AdaptiveGradientPathIntegrator::AdaptiveGradientPathIntegrator(const Properties 
     m_config.m_minDepth = (int) props.getInteger("minDepth", 1);
     m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
     m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
-    m_config.m_nJacobiIters = (int) props.getInteger("nJacobiIters", 200);
+    m_config.m_nJacobiIters = (int) props.getInteger("nJacobiIters", 50);
     m_config.m_minMergeDepth = (int) props.getInteger("minMergeDepth", 0);
     m_config.m_maxMergeDepth = (int) props.getInteger("maxMergeDepth", 0);
     m_config.m_usePixelNeighbors = (Float) props.getBoolean("usePixelNeighbors", true);
