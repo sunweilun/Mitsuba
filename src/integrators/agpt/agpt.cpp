@@ -169,8 +169,7 @@ void AdaptiveGradientPathIntegrator::tracePrecursor(const Scene *scene, const Se
     }
 }
 
-bool similar(const Spectrum& c1, const Spectrum& c2) {
-    const float thres = 2;
+bool similar(const Spectrum& c1, const Spectrum& c2, Float thres) {
     Float r1, g1, b1;
     c1.toLinearRGB(r1, g1, b1);
     Float r2, g2, b2;
@@ -197,6 +196,9 @@ bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, i
         //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
         //if (vertexType == VERTEX_TYPE_GLOSSY) return false;
 
+        const Float color_thres = 2;
+        const Float weight_thres = 4;
+        
         Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
         Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
 
@@ -204,8 +206,12 @@ bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, i
         Spectrum n_spec = neighbor->its.getBSDF()->getSpecularReflectance(neighbor->its);
 
         // color filter
-        if (!similar(diff, n_diff)) return false;
-        if (!similar(spec, n_spec)) return false;
+        if (!similar(diff, n_diff, color_thres)) return false;
+        if (!similar(spec, n_spec, color_thres)) return false;
+        
+        // weight filter
+        if(!similar(current_weight, neighbor->current_weight, weight_thres)) return false; 
+        // this filter must be applied to make sure unbiasedness because radiance values of nodes with 0 weight may bias the gradient due to Russian Roullete
     }
 
     Float dist = distance(neighbor->its.p, its.p);
@@ -328,7 +334,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                 }
                 case NEIGHBOR_KNN:
                 {
-                    int nn = 3;
+                    int nn = 4; // number of neighbors
 #if defined(USE_RECON_RAYS)
                     if (m_currentMode == RECON_MODE) nn = 1;
 #endif
@@ -764,6 +770,7 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
 
 
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
+            //if(i == 1) break; // for debug
 #if defined(USE_RECON_RAYS)
             if (j == 1 && i == 1 && m_currentMode == RECON_MODE) break;
 #endif
@@ -890,6 +897,9 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                 }
                 
                 switch (buffID) {
+                    case BUFFER_FINAL:
+                        color += pci.very_direct_lighting;
+                        break;
                     case BUFFER_DX:
                         color = -dx;
                         break;
@@ -1232,10 +1242,15 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
         if (main.pci->nodes.size() > m_config.m_maxMergeDepth) break;
 
         Point2 sample = main.rRec.nextSample2D();
-        main.pci->nodes.back().bsdfSample = sample; // cache bsdf sample
+        Point3 full_sample;
+        full_sample.x = sample.x;
+        full_sample.y = sample.y;
+        full_sample.z = main.rRec.nextSample1D();
+        main.pci->nodes.back().bsdfSample = full_sample; // cache bsdf sample
         // Sample a new direction from BSDF * cos(theta).
 
-        BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
+        
+        BSDFSampleResult mainBsdfResult = sampleBSDF(main, full_sample);
 
 
         if (mainBsdfResult.pdf <= (Float) 0.0) {
@@ -1244,6 +1259,8 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
         }
 
         const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
+        
+        main.pci->nodes.back().mainWo = mainWo; // for debug
 
         // Prevent light leaks due to the use of shading normals.
         Float mainWoDotGeoN = dot(main.rRec.its.geoFrame.n, mainWo);
@@ -1254,13 +1271,14 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
 
 
         main.ray = Ray(main.rRec.its.p, mainWo, main.ray.time);
+        Ray prevRay = main.ray;
 
         scene->rayIntersect(main.ray, main.rRec.its);
         // ignore specular nodes
         //if(main.pci->nodes.back().vertexType == VERTEX_TYPE_DIFFUSE)
         main.pci->nodes.push_back(PathNode());
         main.pci->nodes.back().its = main.rRec.its; // add cache info
-        main.pci->nodes.back().lastRay = main.ray;
+        main.pci->nodes.back().lastRay = prevRay;
         main.pci->nodes.back().weight_multiplier = mainBsdfResult.weight;
         if (!main.rRec.its.isValid()) break;
 
@@ -1284,7 +1302,7 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
 
             main.pci->nodes.back().rrSample = main.rRec.nextSample1D();
             if (main.pci->nodes.back().rrSample >= q) {
-                main.pci->nodes.back().bsdfSample = Point2(-1.f, -1.f);
+                main.pci->nodes.back().bsdfSample = Point3(-1.f, -1.f, -1.f);
                 break;
             }
 
@@ -1609,19 +1627,19 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
         /* ==================================================================== */
 
         // Sample a new direction from BSDF * cos(theta).
+        Point3 full_sample;
 
-        Point2 sample;
-
-
-
-        if (main.rRec.depth - 1 < main.pci->nodes.size() && !branchArguments) {
-            sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
-            if (sample.x < -Float(0.5)) sample = main.rRec.nextSample2D();
+        if (main.rRec.depth - 1 < main.pci->nodes.size() && !branchArguments && main.pci->nodes[main.rRec.depth - 1].bsdfSample.x > -Float(0.5)) {
+            full_sample = main.pci->nodes[main.rRec.depth - 1].bsdfSample;
         } else {
-            sample = main.rRec.nextSample2D();
+            Point2 sample = main.rRec.nextSample2D();
+            full_sample.x = sample.x;
+            full_sample.y = sample.y;
+            full_sample.z = main.rRec.nextSample1D();
         }
+        
 
-        BSDFSampleResult mainBsdfResult = sampleBSDF(main, sample);
+        BSDFSampleResult mainBsdfResult = sampleBSDF(main, full_sample);
 #if defined(FACTOR_MATERIAL)
         if (main.rRec.depth == 1) // for test
         {
@@ -1832,7 +1850,8 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
                                 // Failed to construct the offset path.
                                 shifted.alive = false;
 #if defined(BACK_PROP_GRAD)
-                                shifted.neighbor->merged = false; // failed to merge
+                                if(main.rRec.depth == 1)
+                                    shifted.neighbor->merged = false; // failed to merge
 #endif
                                 goto shift_failed;
                             }

@@ -615,6 +615,201 @@ public:
 		pdf = temporaryPdf;
 		return weight;
 	}
+        
+        Spectrum sample(BSDFSamplingRecord &bRec, const Point3 &_sample) const {
+		Point2 sample(_sample.x, _sample.y);
+
+		bool hasReflection = ((bRec.component == -1 || bRec.component == 0)
+							  && (bRec.typeMask & EGlossyReflection)),
+		     hasTransmission = ((bRec.component == -1 || bRec.component == 1)
+							  && (bRec.typeMask & EGlossyTransmission)),
+		     sampleReflection = hasReflection;
+
+		if (!hasReflection && !hasTransmission)
+			return Spectrum(0.0f);
+
+		/* Construct the microfacet distribution matching the
+		   roughness values at the current surface position. */
+		MicrofacetDistribution distr(
+			m_type,
+			m_alphaU->eval(bRec.its).average(),
+			m_alphaV->eval(bRec.its).average(),
+			m_sampleVisible
+		);
+
+		/* Trick by Walter et al.: slightly scale the roughness values to
+		   reduce importance sampling weights. Not needed for the
+		   Heitz and D'Eon sampling technique. */
+		MicrofacetDistribution sampleDistr(distr);
+		if (!m_sampleVisible)
+			sampleDistr.scaleAlpha(1.2f - 0.2f * std::sqrt(
+				std::abs(Frame::cosTheta(bRec.wi))));
+
+		/* Sample M, the microfacet normal */
+		Float microfacetPDF;
+		const Normal m = sampleDistr.sample(math::signum(Frame::cosTheta(bRec.wi)) * bRec.wi, sample, microfacetPDF);
+		if (microfacetPDF == 0)
+			return Spectrum(0.0f);
+
+		Float cosThetaT;
+		Float F = fresnelDielectricExt(dot(bRec.wi, m), cosThetaT, m_eta);
+		Spectrum weight(1.0f);
+
+		if (hasReflection && hasTransmission) {
+			if (_sample.z > F)
+				sampleReflection = false;
+		} else {
+			weight = Spectrum(hasReflection ? F : (1-F));
+		}
+
+		if (sampleReflection) {
+			/* Perfect specular reflection based on the microfacet normal */
+			bRec.wo = reflect(bRec.wi, m);
+			bRec.eta = 1.0f;
+			bRec.sampledComponent = 0;
+			bRec.sampledType = EGlossyReflection;
+
+			/* Side check */
+			if (Frame::cosTheta(bRec.wi) * Frame::cosTheta(bRec.wo) <= 0)
+				return Spectrum(0.0f);
+
+			weight *= m_specularReflectance->eval(bRec.its);
+		} else {
+			if (cosThetaT == 0)
+				return Spectrum(0.0f);
+
+			/* Perfect specular transmission based on the microfacet normal */
+			bRec.wo = refract(bRec.wi, m, m_eta, cosThetaT);
+			bRec.eta = cosThetaT < 0 ? m_eta : m_invEta;
+			bRec.sampledComponent = 1;
+			bRec.sampledType = EGlossyTransmission;
+
+			/* Side check */
+			if (Frame::cosTheta(bRec.wi) * Frame::cosTheta(bRec.wo) >= 0)
+				return Spectrum(0.0f);
+
+			/* Radiance must be scaled to account for the solid angle compression
+			   that occurs when crossing the interface. */
+			Float factor = (bRec.mode == ERadiance)
+				? (cosThetaT < 0 ? m_invEta : m_eta) : 1.0f;
+
+			weight *= m_specularTransmittance->eval(bRec.its) * (factor * factor);
+		}
+
+		if (m_sampleVisible)
+			weight *= distr.smithG1(bRec.wo, m);
+		else
+			weight *= std::abs(distr.eval(m) * distr.G(bRec.wi, bRec.wo, m)
+				* dot(bRec.wi, m) / (microfacetPDF * Frame::cosTheta(bRec.wi)));
+
+		return weight;
+	}
+
+	Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point3 &_sample) const {
+		Point2 sample(_sample.x, _sample.y);
+
+		bool hasReflection = ((bRec.component == -1 || bRec.component == 0)
+							  && (bRec.typeMask & EGlossyReflection)),
+		     hasTransmission = ((bRec.component == -1 || bRec.component == 1)
+							  && (bRec.typeMask & EGlossyTransmission)),
+		     sampleReflection = hasReflection;
+
+		if (!hasReflection && !hasTransmission)
+			return Spectrum(0.0f);
+
+		/* Construct the microfacet distribution matching the
+		   roughness values at the current surface position. */
+		MicrofacetDistribution distr(
+			m_type,
+			m_alphaU->eval(bRec.its).average(),
+			m_alphaV->eval(bRec.its).average(),
+			m_sampleVisible
+		);
+
+		/* Trick by Walter et al.: slightly scale the roughness values to
+		   reduce importance sampling weights. Not needed for the
+		   Heitz and D'Eon sampling technique. */
+		MicrofacetDistribution sampleDistr(distr);
+		if (!m_sampleVisible)
+			sampleDistr.scaleAlpha(1.2f - 0.2f * std::sqrt(
+				std::abs(Frame::cosTheta(bRec.wi))));
+
+		/* Sample M, the microfacet normal */
+		Float microfacetPDF;
+		const Normal m = sampleDistr.sample(math::signum(Frame::cosTheta(bRec.wi)) * bRec.wi, sample, microfacetPDF);
+		if (microfacetPDF == 0)
+			return Spectrum(0.0f);
+		
+		float temporaryPdf = microfacetPDF;
+
+		Float cosThetaT;
+		Float F = fresnelDielectricExt(dot(bRec.wi, m), cosThetaT, m_eta);
+		Spectrum weight(1.0f);
+
+		if (hasReflection && hasTransmission) {
+			if (_sample.z > F) {
+				sampleReflection = false;
+				temporaryPdf *= 1-F;
+			} else {
+				temporaryPdf *= F;
+			}
+		} else {
+			weight *= hasReflection ? F : (1-F);
+		}
+
+		Float dwh_dwo;
+		if (sampleReflection) {
+			/* Perfect specular reflection based on the microfacet normal */
+			bRec.wo = reflect(bRec.wi, m);
+			bRec.eta = 1.0f;
+			bRec.sampledComponent = 0;
+			bRec.sampledType = EGlossyReflection;
+
+			/* Side check */
+			if (Frame::cosTheta(bRec.wi) * Frame::cosTheta(bRec.wo) <= 0)
+				return Spectrum(0.0f);
+
+			weight *= m_specularReflectance->eval(bRec.its);
+
+			/* Jacobian of the half-direction mapping */
+			dwh_dwo = 1.0f / (4.0f * dot(bRec.wo, m));
+		} else {
+			if (cosThetaT == 0)
+				return Spectrum(0.0f);
+
+			/* Perfect specular transmission based on the microfacet normal */
+			bRec.wo = refract(bRec.wi, m, m_eta, cosThetaT);
+			bRec.eta = cosThetaT < 0 ? m_eta : m_invEta;
+			bRec.sampledComponent = 1;
+			bRec.sampledType = EGlossyTransmission;
+
+			/* Side check */
+			if (Frame::cosTheta(bRec.wi) * Frame::cosTheta(bRec.wo) >= 0)
+				return Spectrum(0.0f);
+
+			/* Radiance must be scaled to account for the solid angle compression
+			   that occurs when crossing the interface. */
+			Float factor = (bRec.mode == ERadiance)
+				? (cosThetaT < 0 ? m_invEta : m_eta) : 1.0f;
+
+			weight *= m_specularTransmittance->eval(bRec.its) * (factor * factor);
+
+			/* Jacobian of the half-direction mapping */
+			Float sqrtDenom = dot(bRec.wi, m) + bRec.eta * dot(bRec.wo, m);
+			dwh_dwo = (bRec.eta*bRec.eta * dot(bRec.wo, m)) / (sqrtDenom*sqrtDenom);
+		}
+
+		if (m_sampleVisible)
+			weight *= distr.smithG1(bRec.wo, m);
+		else
+			weight *= std::abs(distr.eval(m) * distr.G(bRec.wi, bRec.wo, m)
+				* dot(bRec.wi, m) / (microfacetPDF * Frame::cosTheta(bRec.wi)));
+
+		temporaryPdf *= std::abs(dwh_dwo);
+
+		pdf = temporaryPdf;
+		return weight;
+	}
 
 	void addChild(const std::string &name, ConfigurableObject *child) {
 		if (child->getClass()->derivesFrom(MTS_CLASS(Texture))) {

@@ -32,16 +32,20 @@
 
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
-//#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
+#define CACHE_FRIENDLY_ITERATOR
+#define GDPT_STYLE_1ST_BOUNCE // use accumulated GDPT gradient
 #define USE_FILTERS // use filters for neighbor connection
 #define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
-//#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
+#define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
+
+//#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
 //#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
 //#define FACTOR_MATERIAL // use material factorization
-#define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
-#define CACHE_FRIENDLY_ITERATOR
+
+
 //#define GRAD_IMPORTANCE_SAMPLING
-#define GDPT_STYLE_1ST_BOUNCE // use accumulated GDPT gradient
+
+//#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
 
 MTS_NAMESPACE_BEGIN
 
@@ -148,7 +152,7 @@ protected:
         RayDifferential lastRay; // ray before intersection
         Intersection its; // intersection info
         VertexType vertexType; // bsdf type of the vertex
-        Point2 bsdfSample; // 2d bsdf sample for generating the next ray
+        Point3 bsdfSample; // 3d full bsdf sample for generating the next ray
         Float rrSample; // Rassian roulette sample
         Spectrum weight_multiplier; // weight multiplier that happened in between current node and previous node
         Spectrum current_weight; // multiplied weight before arriving at this node
@@ -161,6 +165,8 @@ protected:
         int sampleCount; // number of samples for branching
         int graph_index; // index of the corresponding vertex in boost graph
         int maxBlendingNum; // maximum number of nodes that can be used for blending
+        
+        Vector mainWo; // for dbg
         
         int getSamplingRate() const {
 #if defined(ADAPTIVE_GRAPH_SAMPLING)
@@ -217,7 +223,7 @@ protected:
             estRad = Spectrum(Float(0));
             weight_multiplier = current_weight = Spectrum(Float(1));
             sampleCount = 1;
-            bsdfSample = Point2(-1.f, -1.f);
+            bsdfSample = Point3(-1.f, -1.f, -1.f);
             maxBlendingNum = 1;
 #if defined(MTS_OPENMP)
             omp_init_lock(&writelock);
@@ -293,7 +299,7 @@ protected:
             Float m = main_throughput.max();
             Float s = throughput.max();
             Float denominator = std::max(m, s);
-            return numerator / denominator;
+            return numerator / (denominator+D_EPSILON);
         }
 
         RayDifferential ray; ///< Current ray.
@@ -401,6 +407,38 @@ protected:
     ReconnectionShiftResult reconnectShift(const Scene* scene, Point3 mainSourceVertex, Point3 targetVertex, Point3 shiftSourceVertex, Vector3 targetNormal, Float time);
 
     inline BSDFSampleResult sampleBSDF(MainRayState& rayState, const Point2& sample) {
+        Intersection& its = rayState.rRec.its;
+        RadianceQueryRecord& rRec = rayState.rRec;
+        RayDifferential& ray = rayState.ray;
+
+        // Note: If the base path's BSDF evaluation uses random numbers, it would be beneficial to use the same random numbers for the offset path's BSDF.
+        //       This is not done currently.
+
+        const BSDF* bsdf = its.getBSDF(ray);
+
+        // Sample BSDF * cos(theta).
+        BSDFSampleResult result = {
+            BSDFSamplingRecord(its, rRec.sampler, ERadiance),
+            Spectrum(),
+            (Float) 0
+        };
+
+        result.weight = bsdf->sample(result.bRec, result.pdf, sample);
+
+        // Variable result.pdf will be 0 if the BSDF sampler failed to produce a valid direction.
+
+        if (!(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01)) {
+            printf("%f %f\n", sample.x, sample.y);
+            printf("%f\n", result.bRec.wo.length());
+            result.pdf = 0;
+            return result;
+        }
+
+        SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
+        return result;
+    }
+    
+    inline BSDFSampleResult sampleBSDF(MainRayState& rayState, const Point3& sample) {
         Intersection& its = rayState.rRec.its;
         RadianceQueryRecord& rRec = rayState.rRec;
         RayDifferential& ray = rayState.ray;
