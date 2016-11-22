@@ -368,6 +368,14 @@ public:
 	 *
 	 */
 	virtual Spectrum sample(BSDFSamplingRecord &bRec, const Point2 &sample) const = 0;
+        
+        virtual Spectrum sample(BSDFSamplingRecord &bRec, const Point3 &sample) const 
+        {
+            Point2 s;
+            s.x = sample.x;
+            s.y = sample.y;
+            return this->sample(bRec, s); 
+        }
 
 	/**
 	 * \brief Sample the BSDF and return the probability density \a and the
@@ -395,8 +403,18 @@ public:
 	 * \remark From Python, this function is is called using the syntax
 	 *         <tt>value, pdf = bsdf.sample(bRec, sample)</tt>
 	 */
+        
 	virtual Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf,
 		const Point2 &sample) const = 0;
+        
+        virtual Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf,
+		const Point3 &sample) const
+        {
+            Point2 s;
+            s.x = sample.x;
+            s.y = sample.y;
+            return this->sample(bRec, pdf, s); 
+        }
 
 	/**
 	 * \brief Evaluate the BSDF f(wi, wo) or its adjoint version f^{*}(wi, wo)
@@ -415,6 +433,8 @@ public:
 	 *     different measures. (E.g. a diffuse material with an
 	 *     ideally smooth dielectric coating).
 	 */
+        
+        
 	virtual Spectrum eval(const BSDFSamplingRecord &bRec,
 		EMeasure measure = ESolidAngle) const = 0;
 
