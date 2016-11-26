@@ -32,20 +32,22 @@
 
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
-#define CACHE_FRIENDLY_ITERATOR
+#define CACHE_FRIENDLY_ITERATOR // use cache friendly iterator
 #define GDPT_STYLE_1ST_BOUNCE // use accumulated GDPT gradient
 #define USE_FILTERS // use filters for neighbor connection
 #define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
 #define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
+#define SKIP_OVER_SPECULAR_NODES // skip over specular nodes
+#define RECORD_VARIANCE
 
 //#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
 //#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
 //#define FACTOR_MATERIAL // use material factorization
-
-
 //#define GRAD_IMPORTANCE_SAMPLING
-
 //#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
+
+#define N_NEIGHBORS_TO_LOOKUP 4
+#define N_MAX_NEIGHBORS 8
 
 MTS_NAMESPACE_BEGIN
 
@@ -128,7 +130,7 @@ protected:
 
     void iterateJacobi(const Scene *scene, const Sensor *sensor);
 
-    void setOutputBuffer(const Scene *scene, Sensor *sensor, int batchSize);
+    void setOutputBuffer(const Scene *scene, Sensor *sensor, int batchSize, int iter);
 
     enum NeighborMethod {
         NEIGHBOR_RADIUS, NEIGHBOR_KNN
@@ -165,8 +167,6 @@ protected:
         int sampleCount; // number of samples for branching
         int graph_index; // index of the corresponding vertex in boost graph
         int maxBlendingNum; // maximum number of nodes that can be used for blending
-        
-        Vector mainWo; // for dbg
         
         int getSamplingRate() const {
 #if defined(ADAPTIVE_GRAPH_SAMPLING)
@@ -550,6 +550,15 @@ protected:
     nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
     PointCloud, 3 /* dim */ > kd_tree_t;
     enum PrecursorTask{PRECURSOR_GET_FACTOR, PRECURSOR_LOOP} m_precursorTask;
+    
+#if defined(RECORD_VARIANCE)
+    std::vector<Spectrum> buffer_throughput;
+    std::vector<Spectrum> buffer_dx;
+    std::vector<Spectrum> buffer_dy;
+    std::vector<Spectrum> buffer_var_throughput;
+    std::vector<Spectrum> buffer_var_dx;
+    std::vector<Spectrum> buffer_var_dy;
+#endif
 
 #if defined(USE_RECON_RAYS)
 

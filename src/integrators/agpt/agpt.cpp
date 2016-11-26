@@ -65,6 +65,11 @@ static const size_t BUFFER_DX = 2; ///< Buffer index for the X gradients.
 static const size_t BUFFER_DY = 3; ///< Buffer index for the Y gradients.
 static const size_t BUFFER_VERY_DIRECT = 4; ///< Buffer index for very direct light.
 
+#if defined(RECORD_VARIANCE)
+static const size_t BUFFER_VAR_THROUGHPUT = 5; ///< Buffer index for very direct light.
+static const size_t BUFFER_VAR_DX = 6; ///< Buffer index for very direct light.
+static const size_t BUFFER_VAR_DY = 7; ///< Buffer index for very direct light.
+#endif
 
 #if defined(PRINT_TIMING)
 #include <sys/time.h>
@@ -190,7 +195,7 @@ bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, i
         if (fabs(dot(its.geoFrame.n, diff_vec)) > 0.3f * len) return false;
 
         // filter # of neighbors
-        if (neighbors.size() >= 4) return false;
+        if (neighbors.size() >= N_MAX_NEIGHBORS) return false;
 
         // filter glossy vertices
         //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
@@ -198,7 +203,7 @@ bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, i
 
         const Float color_thres = 2;
         const Float weight_thres = 4;
-        
+
         Spectrum diff = its.getBSDF()->getDiffuseReflectance(its);
         Spectrum spec = its.getBSDF()->getSpecularReflectance(its);
 
@@ -208,9 +213,9 @@ bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, i
         // color filter
         if (!similar(diff, n_diff, color_thres)) return false;
         if (!similar(spec, n_spec, color_thres)) return false;
-        
+
         // weight filter
-        if(!similar(current_weight, neighbor->current_weight, weight_thres)) return false; 
+        if (!similar(current_weight, neighbor->current_weight, weight_thres)) return false;
         // this filter must be applied to make sure unbiasedness because radiance values of nodes with 0 weight may bias the gradient due to Russian Roullete
     }
 
@@ -334,7 +339,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                 }
                 case NEIGHBOR_KNN:
                 {
-                    int nn = 4; // number of neighbors
+                    int nn = N_NEIGHBORS_TO_LOOKUP; // number of neighbors
 #if defined(USE_RECON_RAYS)
                     if (m_currentMode == RECON_MODE) nn = 1;
 #endif
@@ -452,7 +457,7 @@ void AdaptiveGradientPathIntegrator::getMaxBlendingNum(const Scene *scene) {
             start_indices[cid + 1] += pn.neighbors.size();
         }
     }
-    
+
     for (int cid = 1; cid <= nChunks; cid++) {
         start_indices[cid] += start_indices[cid - 1];
     }
@@ -682,7 +687,7 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
 #if defined(BACK_PROP_GRAD)
         communicateBidirectionalDiff(scene, i);
 #endif
-        
+
 #if defined(GDPT_STYLE_1ST_BOUNCE)
         if (i == 0) continue;
 #endif
@@ -770,7 +775,6 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
 
 
         for (int j = 0; j < m_config.m_nJacobiIters; j++) {
-            //if(i == 1) break; // for debug
 #if defined(USE_RECON_RAYS)
             if (j == 1 && i == 1 && m_currentMode == RECON_MODE) break;
 #endif
@@ -828,7 +832,7 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
     }
 }
 
-void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor, int batchSize) {
+void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor, int batchSize, int iter) {
     if (m_cancelled) return;
     const int& cx = sensor->getFilm()->getCropSize().x;
     const int& cy = sensor->getFilm()->getCropSize().y;
@@ -847,6 +851,8 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                 film->getReconstructionFilter());
         blocks[i]->setAllowNegativeValues(true);
     }
+
+
 #pragma omp parallel for
 #else
     ref<ImageBlock> block = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(bSize, bSize),
@@ -858,6 +864,24 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
 #endif
 #if defined(GDPT_STYLE_1ST_BOUNCE)
         for (int buffID = 0; buffID < 5; buffID++) {
+#if defined(RECORD_VARIANCE)
+            std::vector<Spectrum> *color_buffer;
+            std::vector<Spectrum> *var_buffer;
+            switch (buffID) {
+                case BUFFER_DX:
+                    color_buffer = &buffer_dx;
+                    var_buffer = &buffer_var_dx;
+                    break;
+                case BUFFER_DY:
+                    color_buffer = &buffer_dy;
+                    var_buffer = &buffer_var_dy;
+                    break;
+                default:
+                    color_buffer = &buffer_throughput;
+                    var_buffer = &buffer_var_throughput;
+                    break;
+            }
+#endif
             block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
             block->clear();
             for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
@@ -865,6 +889,8 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                 int x = block->getOffset().x + pointIndex % bSize;
                 int y = block->getOffset().y + pointIndex / bSize;
                 if (x >= cx || y >= cy) continue;
+
+                int index = y * cx + x;
 
                 PrecursorCacheInfo &pci = (*m_preCacheInfoList)[y * cx + x];
                 Spectrum color(0.f);
@@ -880,22 +906,21 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                         if (n.index == 3)
                             dy = n.grad;
                     }
-                }
-                else {
-                    int x_next = x+1;
-                    int y_next = y+1;
-                    if(x_next < cx) {
+                } else {
+                    int x_next = x + 1;
+                    int y_next = y + 1;
+                    if (x_next < cx) {
                         auto& nodes = (*m_preCacheInfoList)[y * cx + x_next].nodes;
-                        if(nodes.size())
+                        if (nodes.size())
                             dx = -nodes.front().estRad * nodes.front().weight_multiplier;
                     }
-                    if(y_next < cy) {
+                    if (y_next < cy) {
                         auto& nodes = (*m_preCacheInfoList)[y_next * cx + x].nodes;
-                        if(nodes.size())
+                        if (nodes.size())
                             dy = -nodes.front().estRad * nodes.front().weight_multiplier;
                     }
                 }
-                
+
                 switch (buffID) {
                     case BUFFER_FINAL:
                         color += pci.very_direct_lighting;
@@ -910,8 +935,15 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                         color = pci.very_direct_lighting;
                         break;
                 }
-                
                 block->put(pci.samplePos, color / Float(batchSize) * pci.factor, 1.f);
+
+#if defined(RECORD_VARIANCE)
+                if (buffID == BUFFER_DX || buffID == BUFFER_DY || buffID == BUFFER_THROUGHPUT) {
+                    Spectrum delta = color - (*color_buffer)[index];
+                    (*color_buffer)[index] += delta / Float(1 + iter);
+                    (*var_buffer)[index] += delta * (color - (*color_buffer)[index]);
+                }
+#endif
             }
             film->putMulti(block, buffID);
         }
@@ -967,6 +999,13 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     outNames.push_back("-dx");
     outNames.push_back("-dy");
     outNames.push_back("-direct");
+
+#if defined(RECORD_VARIANCE)
+    outNames.push_back("-var-throughput");
+    outNames.push_back("-var-dx");
+    outNames.push_back("-var-dy");
+#endif
+
     if (!film->setBuffers(outNames)) {
         Log(EError, "Cannot render image! G-PT has been called without MultiFilm.");
         return false;
@@ -1010,6 +1049,15 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
 
 #if defined(USE_RECON_RAYS)
         m_currentMode = i % n_swap_iters == 0 ? SAMPLE_MODE : RECON_MODE;
+#endif
+
+#if defined(RECORD_VARIANCE)
+        buffer_throughput.resize(cx*cy, Spectrum(0.f));
+        buffer_dx.resize(cx*cy, Spectrum(0.f));
+        buffer_dy.resize(cx*cy, Spectrum(0.f));
+        buffer_var_throughput.resize(cx*cy, Spectrum(0.f));
+        buffer_var_dx.resize(cx*cy, Spectrum(0.f));
+        buffer_var_dy.resize(cx*cy, Spectrum(0.f));
 #endif
 
         // trace precursor
@@ -1077,7 +1125,7 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
         printf("%-20s %5.0lf ms\n", "Jacobi-iteration", timer.toc()*1e3);
 #endif
         // output
-        setOutputBuffer(scene, sensor, batchSize);
+        setOutputBuffer(scene, sensor, batchSize, i);
 
 #if defined(PRINT_TIMING)
         printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
@@ -1132,15 +1180,17 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
         return (float) x; });
     std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
         return (float) x; });
-        
+
     int chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
 
-    const int& n_iters = m_config.m_nJacobiIters;
+    int n_iters = m_config.m_nJacobiIters;
+    if (m_config.m_minMergeDepth > 0)
+        n_iters = 0;
     for (int iter = 0; iter < n_iters; iter++) {
         int src = iter % 2;
         int dst = 1 - src;
-        
+
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
@@ -1179,6 +1229,8 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     }
 
 
+
+
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
@@ -1191,9 +1243,22 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
         Float specColor[] = {color.x, color.y, color.z};
         Float specDirect[] = {direct.x, direct.y, direct.z};
         reconstructionBitmap->setPixel(Point2i(x, y), Spectrum(specColor) + Spectrum(specDirect));
+
+#if defined(RECORD_VARIANCE)
+        int spp = sampler->getSampleCount();
+        dxBitmap->setPixel(Point2i(x, y), buffer_var_dx[y * w + x] / (spp + 1));
+        dyBitmap->setPixel(Point2i(x, y), buffer_var_dy[y * w + x] / (spp + 1));
+        throughputBitmap->setPixel(Point2i(x, y), buffer_var_throughput[y * w + x] / (spp + 1));
+#endif
     }
     film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL);
     queue->signalRefresh(job);
+#endif
+
+#if defined(RECORD_VARIANCE)
+    film->setBitmapMulti(throughputBitmap, 1, BUFFER_VAR_THROUGHPUT);
+    film->setBitmapMulti(dxBitmap, 1, BUFFER_VAR_DX);
+    film->setBitmapMulti(dyBitmap, 1, BUFFER_VAR_DY);
 #endif
 
     return success;
@@ -1249,7 +1314,7 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
         main.pci->nodes.back().bsdfSample = full_sample; // cache bsdf sample
         // Sample a new direction from BSDF * cos(theta).
 
-        
+
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, full_sample);
 
 
@@ -1259,8 +1324,6 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
         }
 
         const Vector mainWo = main.rRec.its.toWorld(mainBsdfResult.bRec.wo);
-        
-        main.pci->nodes.back().mainWo = mainWo; // for debug
 
         // Prevent light leaks due to the use of shading normals.
         Float mainWoDotGeoN = dot(main.rRec.its.geoFrame.n, mainWo);
@@ -1275,7 +1338,7 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
 
         scene->rayIntersect(main.ray, main.rRec.its);
         // ignore specular nodes
-        //if(main.pci->nodes.back().vertexType == VERTEX_TYPE_DIFFUSE)
+        //if(mainBsdfResult.bRec.sampledType == BSDF::EDiffuseReflection)
         main.pci->nodes.push_back(PathNode());
         main.pci->nodes.back().its = main.rRec.its; // add cache info
         main.pci->nodes.back().lastRay = prevRay;
@@ -1637,7 +1700,7 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
             full_sample.y = sample.y;
             full_sample.z = main.rRec.nextSample1D();
         }
-        
+
 
         BSDFSampleResult mainBsdfResult = sampleBSDF(main, full_sample);
 #if defined(FACTOR_MATERIAL)
@@ -1850,7 +1913,7 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
                                 // Failed to construct the offset path.
                                 shifted.alive = false;
 #if defined(BACK_PROP_GRAD)
-                                if(main.rRec.depth == 1)
+                                if (main.rRec.depth == 1)
                                     shifted.neighbor->merged = false; // failed to merge
 #endif
                                 goto shift_failed;
