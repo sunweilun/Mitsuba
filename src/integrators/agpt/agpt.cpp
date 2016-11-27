@@ -186,7 +186,10 @@ bool similar(const Spectrum& c1, const Spectrum& c2, Float thres) {
 }
 
 bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, int neighbor_index, bool filter) {
-    if (filter) {
+    
+    if (filter) {    
+        if (neighbor >= this) return false; // only connect neighbors in one direction to avoid dead lock
+        
         // filter normal
         if (dot(neighbor->its.geoFrame.n, its.geoFrame.n) < 0.5f) return false;
         TVector3<Float> diff_vec = neighbor->its.p - its.p;
@@ -196,6 +199,7 @@ bool AdaptiveGradientPathIntegrator::PathNode::addNeighbor(PathNode* neighbor, i
 
         // filter # of neighbors
         if (neighbors.size() >= N_MAX_NEIGHBORS) return false;
+        if (neighbor->neighbors.size() >= N_MAX_NEIGHBORS) return false;
 
         // filter glossy vertices
         //if (neighbor->vertexType == VERTEX_TYPE_GLOSSY) return false;
@@ -271,7 +275,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
             continue;
         }
 
-
+        
 
         // build connection using spatial neighbors
         {
@@ -369,22 +373,24 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
                             bool unfiltered = (*m_pc).nodes[i]->addNeighbor((*m_pc).nodes[neighbor_idx]);
 #endif
 
-#if defined(MTS_OPENMP)
-                            omp_unset_lock(&(*m_pc).nodes[i]->writelock);
-#endif                                
-                            if (!unfiltered) continue;
+
+                            if (unfiltered) {
 #if defined(MTS_OPENMP)                           
-                            omp_set_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
+                                omp_set_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock); // deadlock wouldn't occur even if we demand another lock while holding one because we only connect neighbors in one direction
 #endif
-                            // make sure the graph is bidirectional, this may produce duplicated neighbors.
+                                // make sure the graph is bidirectional, this may produce duplicated neighbors.
 #if defined(USE_RECON_RAYS)
-                            (*m_pcBuffer).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]); // the neighbors are the old ones in the buffer
+                                (*m_pcBuffer).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]); // the neighbors are the old ones in the buffer
 #else
-                            (*m_pc).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]);
+                                (*m_pc).nodes[neighbor_idx]->neighbors.push_back((*m_pc).nodes[i]);
 #endif
 
 #if defined(MTS_OPENMP)
-                            omp_unset_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
+                                omp_unset_lock(&(*m_pcBuffer).nodes[neighbor_idx]->writelock);
+#endif
+                            }
+#if defined(MTS_OPENMP)
+                            omp_unset_lock(&(*m_pc).nodes[i]->writelock);
 #endif
                         }
                     }
@@ -394,16 +400,15 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 #endif
                     for (size_t i = 0; i < (*m_pc).nodes.size(); i++) {
                         auto& neighbors = (*m_pc).nodes[i]->neighbors;
-                        std::sort(neighbors.begin(), neighbors.end());
-                        auto it = std::unique(neighbors.begin(), neighbors.end());
-                        neighbors.resize(it - neighbors.begin());
+                        std::sort(&neighbors[0], &neighbors[0]+neighbors.size());
+                        auto it = std::unique(&neighbors[0], &neighbors[0]+neighbors.size());
+                        neighbors.resize(it - &neighbors[0]);
                     }
                     break;
                 }
             }
         }
     }
-
 #if defined(DUMP_GRAPH)
     FILE* file = fopen("graph.txt", "w");
     for (auto& pci : *m_preCacheInfoList) {
@@ -421,7 +426,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 
 #if defined(ADAPTIVE_GRAPH_SAMPLING)
 
-void AdaptiveGradientPathIntegrator::getMaxBlendingNum(const Scene *scene) {
+void AdaptiveGradientPathIntegrator::getMaxBlendingNum(const Scene * scene) {
 
 
 
@@ -595,7 +600,8 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
         auto& pci = (*m_preCacheInfoList)[i];
         if (depth >= pci.nodes.size()) continue;
         auto& node = pci.nodes[depth];
-        for (auto& neighbor : node.neighbors) {
+        for (int k=0; k < node.neighbors.size(); k++) {
+            auto& neighbor = node.neighbors[k];
             avg_dist += distance(node.its.p, neighbor.node->its.p);
             n_pairs++;
         }
@@ -610,7 +616,8 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
         auto& pci = (*m_preCacheInfoList)[i];
         if (depth >= pci.nodes.size()) continue;
         auto& node = pci.nodes[depth];
-        for (auto& neighbor : node.neighbors) {
+        for (int k=0; k < node.neighbors.size(); k++) {
+            auto& neighbor = node.neighbors[k];
             if (depth + 1 < pci.nodes.size()) {
                 if (!neighbor.merged) {
                     neighbor.grad = neighbor.grad_before_conn + node.estRad - node.direct_lighting;
@@ -627,7 +634,8 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
         auto& pci = (*m_preCacheInfoList)[i];
         if (depth >= pci.nodes.size()) continue;
         auto& node = pci.nodes[depth];
-        for (auto& neighbor : node.neighbors) {
+        for (int k=0; k < node.neighbors.size(); k++) {
+            auto& neighbor = node.neighbors[k];
             neighbor.weight = Spectrum(Float(1));
 #if defined(USE_ADAPTIVE_WEIGHT)
             Float dist = distance(node.its.p, neighbor.node->its.p);
@@ -636,7 +644,7 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
             if (neighbor.node > &node) // unidirectional update to avoid conflict
             {
                 auto& nn = neighbor.node->neighbors;
-                auto it = std::find_if(nn.begin(), nn.end(),
+                auto it = std::find_if(&nn[0], &nn[0]+nn.size(),
                         [&node] (const PathNode::Neighbor & n) {
                             return n.node == &node;
                         });
@@ -674,7 +682,7 @@ void AdaptiveGradientPathIntegrator::communicateBidirectionalDiff(const Scene * 
     }
 }
 
-void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Sensor *sensor) {
+void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Sensor * sensor) {
     if (m_cancelled) return;
     size_t chunk_size = scene->getBlockSize();
     chunk_size *= chunk_size;
@@ -715,8 +723,10 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                     int index = y * cx + x;
                     PrecursorCacheInfo& pci = pciList[index];
                     color[0][index] = pci.nodes[0].estRad;
-                    for (auto& n : pci.nodes[0].neighbors)
+                    for (int k=0; k < pci.nodes[0].neighbors.size(); k++) {
+                        auto& n = pci.nodes[0].neighbors[k];
                         grad[n.index][index] = n.grad;
+                    }
                 }
             }
 
@@ -796,7 +806,8 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                     Spectrum color(Float(0));
                     color += node.estRadBuffer[src];
                     Float w = 1;
-                    for (auto& n : node.neighbors) {
+                    for (int k=0; k< node.neighbors.size(); k++) {
+                        auto& n = node.neighbors[k];
                         color += n.node->estRadBuffer[src] * n.weight;
                         color += n.grad * n.weight;
                         w += 1;
@@ -900,7 +911,8 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                     color = pci.nodes[0].estRad * pci.nodes[0].weight_multiplier;
                     dx = color;
                     dy = color;
-                    for (auto& n : pci.nodes[0].neighbors) {
+                    for (int k=0; k < pci.nodes[0].neighbors.size(); k++) {
+                        auto& n = pci.nodes[0].neighbors[k];
                         if (n.index == 1)
                             dx = n.grad;
                         if (n.index == 3)
@@ -1377,7 +1389,7 @@ void AdaptiveGradientPathIntegrator::evaluatePrecursor(MainRayState & main) {
     }
 }
 
-void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArguments* branchArguments) { // evaluate difference to neighbors
+void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArguments * branchArguments) { // evaluate difference to neighbors
     const Scene *scene = main.rRec.scene;
 
     std::vector<ShiftedRayState> shiftedRays;
@@ -2238,7 +2250,9 @@ bool testEnvironmentVisibility(const Scene* scene, const Ray & ray) {
 void AdaptiveGradientPathIntegrator::MainRayState::spawnShiftedRay(std::vector<ShiftedRayState>& shiftedRays) {
     int activeDpeth = rRec.depth - 1;
     if (activeDpeth >= pci->nodes.size()) return;
-    for (auto& neighbor : pci->nodes[activeDpeth].neighbors) {
+    auto& current_neighbors = pci->nodes[activeDpeth].neighbors;
+    for(int k=0; k<current_neighbors.size(); k++) {
+        auto& neighbor = current_neighbors[k];
         neighbor.sampleCount = 1;
         shiftedRays.push_back(ShiftedRayState());
         auto &shifted = shiftedRays.back();

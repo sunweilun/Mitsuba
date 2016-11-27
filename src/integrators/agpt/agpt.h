@@ -29,6 +29,7 @@
 #endif
 #include "nanoflann.hpp"
 
+#include <array>
 
 //#define DUMP_GRAPH // dump graph structure as graph.txt if defined
 #define PRINT_TIMING // print out timing info if defined
@@ -46,8 +47,9 @@
 //#define GRAD_IMPORTANCE_SAMPLING
 //#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
 
-#define N_NEIGHBORS_TO_LOOKUP 4
+#define N_NEIGHBORS_TO_LOOKUP 5
 #define N_MAX_NEIGHBORS 8
+#define MAX_MERGE_DEPTH 2
 
 MTS_NAMESPACE_BEGIN
 
@@ -59,6 +61,7 @@ const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 
 /// Configuration for the gradient path tracer.
+
 struct AdaptiveGradientPathTracerConfig {
     int m_maxDepth;
     int m_minDepth;
@@ -71,6 +74,43 @@ struct AdaptiveGradientPathTracerConfig {
     int m_maxMergeDepth;
     int m_batchSize;
     bool m_usePixelNeighbors;
+};
+
+template<typename T, int N> class ArrayVector {
+    size_t m_size;
+    T m_array[N];
+public:
+    ArrayVector() {
+        m_size = 0;
+    }
+
+    size_t size() const {
+        return m_size;
+    }
+
+    void push_back(const T& t) {
+        m_array[m_size++] = t;
+    }
+    
+    T& operator[](size_t n) {
+        return m_array[n];
+    }
+    
+    void resize(size_t n) {
+        m_size = n;
+    }
+    
+    T& back() {
+        return m_array[m_size-1];
+    }
+    
+    T& front() {
+        return m_array[0];
+    }
+
+    void clear() {
+        m_size = 0;
+    }
 };
 
 /* ==================================================================== */
@@ -115,17 +155,16 @@ protected:
     void decideNeighbors(const Scene *scene, const Sensor *sensor);
 
     void traceDiff(const Scene *scene, const Sensor *sensor, Sampler *sampler);
-    
+
 #if defined(ADAPTIVE_GRAPH_SAMPLING)
     void getMaxBlendingNum(const Scene *scene);
 #endif
-    
-    void communicateBidirectionalDiff(const Scene *scene) 
-    {
-        for(int i=m_config.m_minMergeDepth; i<=m_config.m_maxMergeDepth; i++)
+
+    void communicateBidirectionalDiff(const Scene *scene) {
+        for (int i = m_config.m_minMergeDepth; i <= m_config.m_maxMergeDepth; i++)
             communicateBidirectionalDiff(scene, i);
     }
-    
+
     void communicateBidirectionalDiff(const Scene *scene, int depth);
 
     void iterateJacobi(const Scene *scene, const Sensor *sensor);
@@ -167,7 +206,7 @@ protected:
         int sampleCount; // number of samples for branching
         int graph_index; // index of the corresponding vertex in boost graph
         int maxBlendingNum; // maximum number of nodes that can be used for blending
-        
+
         int getSamplingRate() const {
 #if defined(ADAPTIVE_GRAPH_SAMPLING)
             const int filter_size = 25;
@@ -187,16 +226,16 @@ protected:
 #if defined(BACK_PROP_GRAD)
             Spectrum grad_before_conn; // gradient accumulated before connection happens
             bool merged; // indicates whether this neighbor gets merged successfully
-            
-            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), 
+
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))),
             weight(Spectrum(Float(0))), sampleCount(1), merged(true), grad_before_conn(Spectrum(Float(0))) {
             }
 #else
-            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))), 
+
+            Neighbor(PathNode* node) : node(node), grad(Spectrum(Float(0))),
             weight(Spectrum(Float(0))), sampleCount(1) {
             }
 #endif
-            
 
             Neighbor() {
             }
@@ -209,7 +248,8 @@ protected:
                 return node == n.node;
             }
         };
-        std::vector<Neighbor> neighbors; // neighbors of this node
+        
+        ArrayVector<Neighbor, N_MAX_NEIGHBORS> neighbors; // neighbors of this node
         bool addNeighbor(PathNode* neighbor, int neighbor_index = 0, bool filter = true);
         BSDFSampleResult getBSDFSampleResult() const;
 
@@ -218,7 +258,6 @@ protected:
 #endif
 
         PathNode() {
-            neighbors.reserve(5);
             estRadBuffer[0] = estRadBuffer[1] = direct_lighting = Spectrum(Float(0));
             estRad = Spectrum(Float(0));
             weight_multiplier = current_weight = Spectrum(Float(1));
@@ -245,10 +284,9 @@ protected:
         Spectrum very_direct_lighting;
         Spectrum factor;
         int maxBlendingNum;
-        std::vector<PathNode> nodes;
+        ArrayVector<PathNode, MAX_MERGE_DEPTH> nodes;
 
         PrecursorCacheInfo() {
-            nodes.reserve(5);
             factor = Spectrum(Float(1));
         }
 
@@ -284,8 +322,8 @@ protected:
             Spectrum color = (mainContrib - shiftContrib) * weight;
             neighbor->grad += color / Spectrum(Float(neighbor->node->getSamplingRate())) / Float(neighbor->sampleCount);
 #if defined(BACK_PROP_GRAD)
-            if(hitEmitter) return;
-            if(connection_status == RAY_NOT_CONNECTED && alive)
+            if (hitEmitter) return;
+            if (connection_status == RAY_NOT_CONNECTED && alive)
                 neighbor->grad_before_conn += color / Spectrum(Float(neighbor->node->getSamplingRate())) / Float(neighbor->sampleCount);
 #endif
         }
@@ -293,13 +331,13 @@ protected:
         inline Spectrum getCurrentWeight() const {
             return neighbor->node->current_weight;
         }
-        
+
         inline Float getImportance() const {
             Float numerator = (main_throughput - throughput).abs().max();
             Float m = main_throughput.max();
             Float s = throughput.max();
             Float denominator = std::max(m, s);
-            return numerator / (denominator+D_EPSILON);
+            return numerator / (denominator + D_EPSILON);
         }
 
         RayDifferential ray; ///< Current ray.
@@ -352,7 +390,7 @@ protected:
         }
 
         inline void addRadiance(const Spectrum& estimated_radiance) {
-            if(!accumulateRadiance) return;
+            if (!accumulateRadiance) return;
             if (rRec.depth < pci->nodes.size()) {
                 pci->nodes[rRec.depth - 1].direct_lighting += estimated_radiance / Float(pci->nodes.front().getSamplingRate());
             } else {
@@ -378,9 +416,7 @@ protected:
 
     };
 
-
-    struct BranchArguments
-    {
+    struct BranchArguments {
         std::vector<ShiftedRayState> shiftedRays;
     };
     void evaluateDiff(MainRayState& main, BranchArguments* branchArguments = NULL);
@@ -437,7 +473,7 @@ protected:
         SAssert(result.pdf <= (Float) 0 || fabs(result.bRec.wo.length() - 1.0) < 0.01);
         return result;
     }
-    
+
     inline BSDFSampleResult sampleBSDF(MainRayState& rayState, const Point3& sample) {
         Intersection& its = rayState.rRec.its;
         RadianceQueryRecord& rRec = rayState.rRec;
@@ -549,8 +585,11 @@ protected:
     typedef nanoflann::KDTreeSingleIndexAdaptor<
     nanoflann::L2_Simple_Adaptor<Float, PointCloud>,
     PointCloud, 3 /* dim */ > kd_tree_t;
-    enum PrecursorTask{PRECURSOR_GET_FACTOR, PRECURSOR_LOOP} m_precursorTask;
-    
+
+    enum PrecursorTask {
+        PRECURSOR_GET_FACTOR, PRECURSOR_LOOP
+    } m_precursorTask;
+
 #if defined(RECORD_VARIANCE)
     std::vector<Spectrum> buffer_throughput;
     std::vector<Spectrum> buffer_dx;
