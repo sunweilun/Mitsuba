@@ -39,7 +39,7 @@
 #define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
 #define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
 #define SKIP_OVER_SPECULAR_NODES // skip over specular nodes
-#define RECORD_VARIANCE
+//#define RECORD_VARIANCE
 
 //#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
 //#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
@@ -47,13 +47,13 @@
 //#define GRAD_IMPORTANCE_SAMPLING
 //#define ADAPTIVE_GRAPH_SAMPLING // allocate samples based on graph connectivity
 
-#define N_NEIGHBORS_TO_LOOKUP 5
+#define N_NEIGHBORS_TO_LOOKUP 4
 #define N_MAX_NEIGHBORS 8
 #define MAX_MERGE_DEPTH 2
 
 MTS_NAMESPACE_BEGIN
 
-const Float D_EPSILON = std::numeric_limits<Float>::min();
+        const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 /* ==================================================================== */
 /*                         Configuration storage                        */
@@ -80,6 +80,7 @@ template<typename T, int N> class ArrayVector {
     size_t m_size;
     T m_array[N];
 public:
+
     ArrayVector() {
         m_size = 0;
     }
@@ -91,19 +92,19 @@ public:
     void push_back(const T& t) {
         m_array[m_size++] = t;
     }
-    
+
     T& operator[](size_t n) {
         return m_array[n];
     }
-    
+
     void resize(size_t n) {
         m_size = n;
     }
-    
+
     T& back() {
-        return m_array[m_size-1];
+        return m_array[m_size - 1];
     }
-    
+
     T& front() {
         return m_array[0];
     }
@@ -194,7 +195,7 @@ protected:
         Intersection its; // intersection info
         VertexType vertexType; // bsdf type of the vertex
         Point3 bsdfSample; // 3d full bsdf sample for generating the next ray
-        Float rrSample; // Rassian roulette sample
+        Float rrSample; // Russian roulette sample
         Spectrum weight_multiplier; // weight multiplier that happened in between current node and previous node
         Spectrum current_weight; // multiplied weight before arriving at this node
         Spectrum direct_lighting; // estimated direct lighting for the node
@@ -205,6 +206,7 @@ protected:
         // We need 2 spectrum vectors to perform Jacobi iterations.
         int sampleCount; // number of samples for branching
         int graph_index; // index of the corresponding vertex in boost graph
+        int index;
         int maxBlendingNum; // maximum number of nodes that can be used for blending
 
         int getSamplingRate() const {
@@ -248,8 +250,9 @@ protected:
                 return node == n.node;
             }
         };
-        
+
         ArrayVector<Neighbor, N_MAX_NEIGHBORS> neighbors; // neighbors of this node
+        inline bool validNeighbor(PathNode* neighbor) const;
         bool addNeighbor(PathNode* neighbor, int neighbor_index = 0, bool filter = true);
         BSDFSampleResult getBSDFSampleResult() const;
 
@@ -264,9 +267,7 @@ protected:
             sampleCount = 1;
             bsdfSample = Point3(-1.f, -1.f, -1.f);
             maxBlendingNum = 1;
-#if defined(MTS_OPENMP)
-            omp_init_lock(&writelock);
-#endif
+
         }
 #if defined(MTS_OPENMP)
 
@@ -547,16 +548,22 @@ protected:
     }
 
     struct PointCloud {
-        std::vector<PathNode*> nodes;
+
+        struct Point {
+            PathNode* node;
+            Point3 pos;
+        };
+
+        std::vector<Point> points;
 
         inline size_t kdtree_get_point_count() const {
-            return nodes.size();
+            return points.size();
         }
 
         inline Float kdtree_distance(const Float* p1, const size_t idx_p2, size_t) const {
-            const Float d0 = p1[0] - nodes[idx_p2]->its.p.x;
-            const Float d1 = p1[1] - nodes[idx_p2]->its.p.y;
-            const Float d2 = p1[2] - nodes[idx_p2]->its.p.z;
+            const Float d0 = p1[0] - points[idx_p2].pos[0];
+            const Float d1 = p1[1] - points[idx_p2].pos[1];
+            const Float d2 = p1[2] - points[idx_p2].pos[2];
             Float sqr_dist = d0 * d0 + d1 * d1 + d2 * d2;
 #if defined(USE_NORMAL_NN)
             const Float n0 = p1[3] - nodes[idx_p2]->its.geoFrame.n.x;
@@ -568,9 +575,11 @@ protected:
         }
 
         inline Float kdtree_get_pt(const size_t idx, int dim) const {
-            if (dim < 3)
-                return nodes[idx]->its.p[dim];
-            return nodes[idx]->its.geoFrame.n[dim - 3];
+            return points[idx].pos[dim];
+        }
+
+        inline Point& kdtree_get_data(const size_t idx) {
+            return points[idx];
         }
 
         template <class BBOX>
@@ -589,6 +598,23 @@ protected:
     enum PrecursorTask {
         PRECURSOR_GET_FACTOR, PRECURSOR_LOOP
     } m_precursorTask;
+
+    struct CompactNode {
+        PathNode* node;
+        Spectrum radiance[2];
+
+        struct Grad {
+            int index;
+            Spectrum grad;
+        };
+        ArrayVector<Grad, N_MAX_NEIGHBORS> neighbors;
+        
+        CompactNode() {
+            neighbors.clear();
+        }
+    };
+    
+    std::vector<CompactNode> compactNodes;
 
 #if defined(RECORD_VARIANCE)
     std::vector<Spectrum> buffer_throughput;
