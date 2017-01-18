@@ -189,7 +189,7 @@ public:
 	WavefrontOBJ(const Properties &props) : Shape(props) {
 		ref<FileResolver> fileResolver = Thread::getThread()->getFileResolver()->clone();
 		fs::path path = fileResolver->resolve(props.getString("filename"));
-
+                
 		m_name = path.stem().string();
 
 		/* By default, any existing normals will be used for
@@ -325,6 +325,7 @@ public:
 				/* Ignore */
 			}
 		}
+                
 		if (geomNames.find(name) != geomNames.end())
 			/// make sure that we have unique names
 			name = formatString("%s_%i", m_name.c_str(), geomIndex);

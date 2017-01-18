@@ -65,10 +65,10 @@ static const size_t BUFFER_DX = 2; ///< Buffer index for the X gradients.
 static const size_t BUFFER_DY = 3; ///< Buffer index for the Y gradients.
 static const size_t BUFFER_VERY_DIRECT = 4; ///< Buffer index for very direct light.
 
-#if defined(RECORD_VARIANCE)
-static const size_t BUFFER_VAR_THROUGHPUT = 5;
-static const size_t BUFFER_VAR_DX = 6;
-static const size_t BUFFER_VAR_DY = 7;
+#if defined(CVPT_RECONSTRUCTION)
+static const size_t BUFFER_THROUGHPUT_VAR = 5;
+static const size_t BUFFER_DX_VAR = 6;
+static const size_t BUFFER_DY_VAR = 7;
 #endif
 
 #if defined(PRINT_TIMING)
@@ -330,7 +330,7 @@ void AdaptiveGradientPathIntegrator::decideNeighbors(const Scene *scene, const S
 #else
             // collect nodes for mergeDepth
             index.reset(new kd_tree_t(3, *m_pc, nanoflann::KDTreeSingleIndexAdaptorParams()));
-            
+
             index->buildIndex();
             std::shared_ptr<PointCloud> m_pcBuffer = m_pc;
 #endif
@@ -717,10 +717,6 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
         communicateBidirectionalDiff(scene, i);
 #endif
 
-#if defined(GDPT_STYLE_1ST_BOUNCE)
-        if (i == 0) continue;
-#endif
-
 #if defined(CACHE_FRIENDLY_ITERATOR)
         if (i == 0) {
             const int& cx = sensor->getFilm()->getCropSize().x;
@@ -751,8 +747,13 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                 }
             }
 
+            int nIters = m_config.m_nJacobiIters;
+#if defined(GDPT_STYLE_1ST_BOUNCE)
+            nIters = 1; // iterate once to use neighbors' gradients
+#endif
+
             // iterate
-            for (int j = 0; j < m_config.m_nJacobiIters; j++) {
+            for (int j = 0; j < nIters; j++) {
                 int src = j % 2;
                 int dst = 1 - src;
 #if defined(MTS_OPENMP)
@@ -794,8 +795,8 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                 for (int x = 0; x < cx; x++) {
                     int index = y * cx + x;
                     PrecursorCacheInfo& pci = pciList[index];
-                    pci.nodes[0].estRad = color[m_config.m_nJacobiIters % 2][index];
-                    pci.nodes[0].estRadBuffer[m_config.m_nJacobiIters % 2] = color[m_config.m_nJacobiIters % 2][index];
+                    pci.nodes[0].estRad = color[nIters % 2][index];
+                    pci.nodes[0].estRadBuffer[nIters % 2] = color[nIters % 2][index];
                 }
             }
         } else {
@@ -826,7 +827,7 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                     compactNodes[k].neighbors.push_back(g);
                 }
             }
-            
+
             const int n_2b_iters = 20;
 
             for (int j = 0; j < 20; j++) {
@@ -848,8 +849,8 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
                     compactNodes[k].radiance[dst] = color / w;
                 }
             }
-            
-            #if defined(MTS_OPENMP)
+
+#if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
             for (int k = 0; k < compactNodes.size(); k++) {
@@ -917,15 +918,20 @@ void AdaptiveGradientPathIntegrator::iterateJacobi(const Scene * scene, const Se
     }
 }
 
+void do_stats(Spectrum& color, Spectrum& var, int n_iters, const Spectrum& new_color) {
+    Spectrum delta = new_color - color;
+    color += delta / Float(1 + n_iters);
+    var += delta * (new_color - color);
+}
+
 void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor * sensor, int batchSize, int iter) {
     if (m_cancelled) return;
-    const int& cx = sensor->getFilm()->getCropSize().x;
-    const int& cy = sensor->getFilm()->getCropSize().y;
+    ref<Film> film = sensor->getFilm();
+    const int& cx = film->getCropSize().x;
+    const int& cy = film->getCropSize().y;
     const int& bSize = scene->getBlockSize();
     const int& bx = ceil(cx, bSize);
     const int& by = ceil(cy, bSize);
-
-    ref<Film> film = sensor->getFilm();
 
 #if defined(MTS_OPENMP)
     ref<Scheduler> sched = Scheduler::getInstance();
@@ -937,37 +943,73 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
         blocks[i]->setAllowNegativeValues(true);
     }
 
-
 #pragma omp parallel for
 #else
     ref<ImageBlock> block = new ImageBlock(Bitmap::ESpectrumAlphaWeight, Vector2i(bSize, bSize),
             film->getReconstructionFilter());
-#endif   
+#endif
 
+#if defined(CVPT_RECONSTRUCTION)
+    for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
+#if defined(MTS_OPENMP)
+        ref<ImageBlock> block = blocks[omp_get_thread_num()];
+#endif
+        block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
+        block->clear();
+
+
+        for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
+            int x = block->getOffset().x + pointIndex % bSize;
+            int y = block->getOffset().y + pointIndex / bSize;
+            if (x >= cx || y >= cy) continue;
+
+            int index = y * cx + x;
+            PrecursorCacheInfo &pci = (*m_preCacheInfoList)[index];
+            Spectrum color(0.f);
+            Spectrum dx(0.f);
+            Spectrum dy(0.f);
+            if (pci.nodes[0].its.isValid()) {
+                color = pci.nodes[0].estRad * pci.nodes[0].weight_multiplier;
+                dx = color;
+                dy = color;
+                for (int k = 0; k < pci.nodes[0].neighbors.size(); k++) {
+                    auto& n = pci.nodes[0].neighbors[k];
+                    if (n.index == 1)
+                        dx = n.grad;
+                    if (n.index == 3)
+                        dy = n.grad;
+                }
+            } else {
+                int x_next = x + 1;
+                int y_next = y + 1;
+                if (x_next < cx) {
+                    auto& nodes = (*m_preCacheInfoList)[y * cx + x_next].nodes;
+                    if (nodes.size())
+                        dx = -nodes.front().estRad * nodes.front().weight_multiplier;
+                }
+                if (y_next < cy) {
+                    auto& nodes = (*m_preCacheInfoList)[y_next * cx + x].nodes;
+                    if (nodes.size())
+                        dy = -nodes.front().estRad * nodes.front().weight_multiplier;
+                }
+            }
+
+            buffer_direct[index] = pci.very_direct_lighting;
+            do_stats(buffer_dx[index], buffer_dx_var[index], iter, dx);
+            do_stats(buffer_dy[index], buffer_dy_var[index], iter, dy);
+            do_stats(buffer_throughput[index], buffer_throughput_var[index], iter, color);
+            block->put(pci.samplePos, (color + pci.very_direct_lighting) * pci.factor, 1.f);
+        }
+        film->putMulti(block, BUFFER_FINAL);
+    }
+#else
     for (int blockIndex = 0; blockIndex < bx * by; blockIndex++) {
 #if defined(MTS_OPENMP)
         ref<ImageBlock> block = blocks[omp_get_thread_num()];
 #endif
 #if defined(GDPT_STYLE_1ST_BOUNCE)
         for (int buffID = 0; buffID < 5; buffID++) {
-#if defined(RECORD_VARIANCE)
-            std::vector<Spectrum> *color_buffer;
-            std::vector<Spectrum> *var_buffer;
-            switch (buffID) {
-                case BUFFER_DX:
-                    color_buffer = &buffer_dx;
-                    var_buffer = &buffer_var_dx;
-                    break;
-                case BUFFER_DY:
-                    color_buffer = &buffer_dy;
-                    var_buffer = &buffer_var_dy;
-                    break;
-                default:
-                    color_buffer = &buffer_throughput;
-                    var_buffer = &buffer_var_throughput;
-                    break;
-            }
-#endif
+
             block->setOffset(Point2i((blockIndex % bx) * bSize, (blockIndex / bx) * bSize));
             block->clear();
             for (int pointIndex = 0; pointIndex < bSize * bSize; pointIndex++) {
@@ -1008,15 +1050,16 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                     }
                 }
 
+
                 switch (buffID) {
                     case BUFFER_FINAL:
                         color += pci.very_direct_lighting;
                         break;
                     case BUFFER_DX:
-                        color = -dx;
+                        color = dx;
                         break;
                     case BUFFER_DY:
-                        color = -dy;
+                        color = dy;
                         break;
                     case BUFFER_VERY_DIRECT:
                         color = pci.very_direct_lighting;
@@ -1024,13 +1067,7 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
                 }
                 block->put(pci.samplePos, color / Float(batchSize) * pci.factor, 1.f);
 
-#if defined(RECORD_VARIANCE)
-                if (buffID == BUFFER_DX || buffID == BUFFER_DY || buffID == BUFFER_THROUGHPUT) {
-                    Spectrum delta = color - (*color_buffer)[index];
-                    (*color_buffer)[index] += delta / Float(1 + iter);
-                    (*var_buffer)[index] += delta * (color - (*color_buffer)[index]);
-                }
-#endif
+
             }
             film->putMulti(block, buffID);
         }
@@ -1053,8 +1090,10 @@ void AdaptiveGradientPathIntegrator::setOutputBuffer(const Scene *scene, Sensor 
             }
         }
         film->put(block);
-#endif
     }
+#endif
+
+#endif
 }
 
 bool AdaptiveGradientPathIntegrator::render(Scene *scene,
@@ -1079,6 +1118,11 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     /* Set up MultiFilm. */
     ref<Film> film = sensor->getFilm();
 
+    int chunk_size = scene->getBlockSize();
+    chunk_size *= chunk_size;
+    int w = film->getCropSize().x;
+    int h = film->getCropSize().y;
+
 #if defined(GDPT_STYLE_1ST_BOUNCE)
     std::vector<std::string> outNames;
     outNames.push_back("-final");
@@ -1087,10 +1131,10 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     outNames.push_back("-dy");
     outNames.push_back("-direct");
 
-#if defined(RECORD_VARIANCE)
-    outNames.push_back("-var-throughput");
-    outNames.push_back("-var-dx");
-    outNames.push_back("-var-dy");
+#if defined(CVPT_RECONSTRUCTION)
+    outNames.push_back("-throughput-var");
+    outNames.push_back("-dx-var");
+    outNames.push_back("-dy-var");
 #endif
 
     if (!film->setBuffers(outNames)) {
@@ -1132,21 +1176,35 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     Thread::initializeOpenMP(nCores);
 #endif
 
+#if defined(CVPT_RECONSTRUCTION)
+    buffer_throughput.resize(cx * cy);
+    buffer_dx.resize(cx * cy);
+    buffer_dy.resize(cx * cy);
+    buffer_throughput_var.resize(cx * cy);
+    buffer_dx_var.resize(cx * cy);
+    buffer_dy_var.resize(cx * cy);
+    buffer_direct.resize(cx * cy);
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+    for (int i = 0; i < w * h; i++) {
+        buffer_throughput[i] = Spectrum(0.f);
+        buffer_dx[i] = Spectrum(0.f);
+        buffer_dy[i] = Spectrum(0.f);
+        buffer_throughput_var[i] = Spectrum(0.f);
+        buffer_dx_var[i] = Spectrum(0.f);
+        buffer_dy_var[i] = Spectrum(0.f);
+        buffer_direct[i] = Spectrum(0.f);
+    }
+#endif
+
     m_precursorTask = PRECURSOR_LOOP;
 
     for (int i = 0; i < sampler->getSampleCount(); i += m_config.m_batchSize) {
 
 #if defined(USE_RECON_RAYS)
         m_currentMode = i % n_swap_iters == 0 ? SAMPLE_MODE : RECON_MODE;
-#endif
-
-#if defined(RECORD_VARIANCE)
-        buffer_throughput.resize(cx*cy, Spectrum(0.f));
-        buffer_dx.resize(cx*cy, Spectrum(0.f));
-        buffer_dy.resize(cx*cy, Spectrum(0.f));
-        buffer_var_throughput.resize(cx*cy, Spectrum(0.f));
-        buffer_var_dx.resize(cx*cy, Spectrum(0.f));
-        buffer_var_dy.resize(cx*cy, Spectrum(0.f));
 #endif
 
         // trace precursor
@@ -1236,11 +1294,176 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     }
 
 #if defined(GDPT_STYLE_1ST_BOUNCE)
-    ref<Bitmap> throughputBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+
+
+
+    int n_iters = m_config.m_nJacobiIters;
+
+    size_t subPixelCount = 3 * w * h;
+
+#if defined(CVPT_RECONSTRUCTION)
+    ref<Bitmap> map(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+
+    std::vector<Spectrum> buffer_rec[2];
+    buffer_rec[0].resize(buffer_throughput.size());
+    buffer_rec[1].resize(buffer_throughput.size());
+    buffer_rec[0].assign(buffer_throughput.begin(), buffer_throughput.end());
+
+    // apply median filter to variance values
+    std::vector<Float> var_throughtput_median(buffer_throughput.size());
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+    for (int i = 0; i < w * h; i++) {
+        buffer_throughput_var[i] /= sampler->getSampleCount();
+        buffer_dx_var[i] /= sampler->getSampleCount();
+        buffer_dy_var[i] /= sampler->getSampleCount();
+    }
+
+    Float min_var(1e-30);
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+    for (int i = 0; i < w * h; i++) {
+        int x = i % w;
+        int y = i / w;
+        ArrayVector<Float, 5> values;
+        values.clear();
+
+        values.push_back(buffer_throughput_var[y * w + x].max());
+        if (x > 0) values.push_back(buffer_throughput_var[y * w + x - 1].max());
+        if (x + 1 < w) values.push_back(buffer_throughput_var[y * w + x + 1].max());
+        if (y > 0) values.push_back(buffer_throughput_var[(y - 1) * w + x].max());
+        if (y + 1 < h) values.push_back(buffer_throughput_var[(y + 1) * w + x].max());
+
+        std::sort(&values[0], &values[0] + values.size());
+
+        if (values.size() % 2 == 1)
+            var_throughtput_median[y * w + x] = values[values.size() / 2];
+        else
+            var_throughtput_median[y * w + x] = 0.5f * (values[values.size() / 2] + values[values.size() / 2 - 1]);
+        var_throughtput_median[y * w + x] = std::max(var_throughtput_median[y * w + x],
+                buffer_throughput_var[y * w + x].max());
+        var_throughtput_median[y * w + x] = std::max(var_throughtput_median[y * w + x], min_var);
+    }
+
+    Float p = 1;
+
+    Float eps(1e-2);
+
+    for (int iter = 0; iter < n_iters; iter++) {
+        int src = iter % 2;
+        int dst = 1 - src;
+
+        Float factor = 1.f / (eps + 1.f + 4 * p);
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+        for (int i = 0; i < w * h; i++) {
+            int x = i % w;
+            int y = i / w;
+            Spectrum color(0.f);
+            Float weight(0.f);
+            const Spectrum& prim = buffer_rec[src][y * w + x];
+            Float w_inc;
+            Float var_center = var_throughtput_median[y * w + x];
+
+            w_inc = Float(1) / var_center;
+            color += prim * w_inc;
+            weight += w_inc;
+            if (x > 0) {
+                Float var_diff = buffer_dx_var[y * w + x - 1].max();
+                w_inc = Float(1) / (var_diff + var_center);
+                color -= w_inc * buffer_dx[y * w + x - 1];
+                color += w_inc * buffer_rec[src][y * w + x - 1];
+                weight += w_inc;
+            }
+            if (x + 1 < w) {
+                Float var_diff = buffer_dx_var[y * w + x].max();
+                w_inc = Float(1) / (var_diff + var_center);
+                color += w_inc * buffer_dx[y * w + x];
+                color += w_inc * buffer_rec[src][y * w + x + 1];
+                weight += w_inc;
+            }
+            if (y > 0) {
+                Float var_diff = buffer_dy_var[(y - 1) * w + x].max();
+                w_inc = Float(1) / (var_diff + var_center);
+                color -= w_inc * buffer_dy[(y - 1) * w + x];
+                color += w_inc * buffer_rec[src][(y - 1) * w + x];
+                weight += w_inc;
+            }
+            if (y + 1 < h) {
+                Float var_diff = buffer_dy_var[y * w + x].max();
+                w_inc = Float(1) / (var_diff + var_center);
+                color += w_inc * buffer_dy[y * w + x];
+                color += w_inc * buffer_rec[src][(y + 1) * w + x];
+                weight += w_inc;
+            }
+            buffer_rec[dst][y * w + x] = color / weight;
+            var_throughtput_median[y * w + x] *= factor;
+        }
+        p *= 0.5;
+    }
+
+    for (int buffID = 1; buffID < 8; buffID++) {
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+        for (int i = 0; i < w * h; i++) {
+            int x = i % w;
+            int y = i / w;
+
+            Spectrum color(0.f);
+            switch (buffID) {
+                case BUFFER_DX:
+                    color = buffer_dx[i];
+                    break;
+                case BUFFER_DY:
+                    color = buffer_dy[i];
+                    break;
+                case BUFFER_THROUGHPUT:
+                    color = buffer_throughput[i];
+                    break;
+                case BUFFER_VERY_DIRECT:
+                    color = buffer_direct[i];
+                    break;
+                case BUFFER_DX_VAR:
+                    color = buffer_dx_var[i];
+                    break;
+                case BUFFER_DY_VAR:
+                    color = buffer_dy_var[i];
+                    break;
+                case BUFFER_THROUGHPUT_VAR:
+                    color = buffer_throughput_var[i];
+                    break;
+            }
+            map->setPixel(Point2i(x, y), color);
+        }
+        film->setBitmapMulti(map, 1, buffID);
+    }
+
+#if defined(MTS_OPENMP)
+#pragma omp parallel for schedule(dynamic, chunk_size)
+#endif
+    for (int i = 0; i < w * h; i++) {
+        int x = i % w;
+        int y = i / w;
+        const Spectrum& color = buffer_rec[n_iters % 2][i];
+        const Spectrum& direct = buffer_direct[i];
+        map->setPixel(Point2i(x, y), color + direct);
+    }
+    film->setBitmapMulti(map, 1, BUFFER_FINAL);
+
+#else
+    ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
     ref<Bitmap> directBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+    ref<Bitmap> throughputBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
     ref<Bitmap> dxBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
     ref<Bitmap> dyBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
-    ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+
 
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), throughputBitmap, BUFFER_THROUGHPUT);
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dxBitmap, BUFFER_DX);
@@ -1248,17 +1471,19 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
     film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), directBitmap, BUFFER_VERY_DIRECT);
 
     /* Transform the data for the solver. */
-    int w = film->getCropSize().x;
-    int h = film->getCropSize().y;
-    size_t subPixelCount = 3 * w * h;
+    std::vector<float> directVector(subPixelCount);
     std::vector<float> throughputVector(subPixelCount);
     std::vector<float> dxVector(subPixelCount);
     std::vector<float> dyVector(subPixelCount);
-    std::vector<float> directVector(subPixelCount);
     std::vector<float> reconstructionVector[2];
     reconstructionVector[0].resize(subPixelCount);
     reconstructionVector[1].resize(subPixelCount);
 
+
+
+
+    std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
+        return (float) x; });
     std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, throughputVector.begin(), [](Float x) {
         return (float) x; });
     std::transform(throughputBitmap->getFloatData(), throughputBitmap->getFloatData() + subPixelCount, reconstructionVector[0].begin(), [](Float x) {
@@ -1267,13 +1492,9 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
         return (float) x; });
     std::transform(dyBitmap->getFloatData(), dyBitmap->getFloatData() + subPixelCount, dyVector.begin(), [](Float x) {
         return (float) x; });
-    std::transform(directBitmap->getFloatData(), directBitmap->getFloatData() + subPixelCount, directVector.begin(), [](Float x) {
-        return (float) x; });
 
-    int chunk_size = scene->getBlockSize();
-    chunk_size *= chunk_size;
 
-    int n_iters = m_config.m_nJacobiIters;
+
     if (m_config.m_minMergeDepth > 0)
         n_iters = 0;
     for (int iter = 0; iter < n_iters; iter++) {
@@ -1291,7 +1512,7 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
             float weight = 0.f;
             const Vector3f& prim = ((Vector3f*) reconstructionVector[src].data())[y * w + x];
             color += prim;
-            weight += 1;
+            weight += 1.f;
             if (x > 0) {
                 color += ((Vector3f*) dxVector.data())[y * w + x - 1];
                 color += ((Vector3f*) reconstructionVector[src].data())[y * w + x - 1];
@@ -1332,22 +1553,12 @@ bool AdaptiveGradientPathIntegrator::render(Scene *scene,
         Float specColor[] = {color.x, color.y, color.z};
         Float specDirect[] = {direct.x, direct.y, direct.z};
         reconstructionBitmap->setPixel(Point2i(x, y), Spectrum(specColor) + Spectrum(specDirect));
-
-#if defined(RECORD_VARIANCE)
-        int spp = sampler->getSampleCount();
-        dxBitmap->setPixel(Point2i(x, y), buffer_var_dx[y * w + x] / (spp + 1));
-        dyBitmap->setPixel(Point2i(x, y), buffer_var_dy[y * w + x] / (spp + 1));
-        throughputBitmap->setPixel(Point2i(x, y), buffer_var_throughput[y * w + x] / (spp + 1));
-#endif
     }
     film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL);
     queue->signalRefresh(job);
 #endif
 
-#if defined(RECORD_VARIANCE)
-    film->setBitmapMulti(throughputBitmap, 1, BUFFER_VAR_THROUGHPUT);
-    film->setBitmapMulti(dxBitmap, 1, BUFFER_VAR_DX);
-    film->setBitmapMulti(dyBitmap, 1, BUFFER_VAR_DY);
+
 #endif
 
     return success;
@@ -1514,14 +1725,12 @@ void AdaptiveGradientPathIntegrator::evaluateDiff(MainRayState& main, BranchArgu
         shiftedRays = branchArguments->shiftedRays;
     }
 
-
-
     while (main.rRec.depth < m_config.m_maxDepth || m_config.m_maxDepth < 0) {
         if (!branchArguments) {
             main.spawnShiftedRay(shiftedRays); // spawn shifted rays for current depth
         }
 #if defined(ADAPTIVE_DIFF_SAMPLING)
-        if (main.rRec.depth == 2 && !branchArguments) {
+        if (main.rRec.depth == 2 && !branchArguments && m_config.m_maxMergeDepth >= 1) {
 
             std::vector<int> splitNum(shiftedRays.size(), 0);
             for (int i = 0; i < shiftedRays.size(); i++) {

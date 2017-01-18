@@ -238,6 +238,7 @@ protected:
 		SizeType shapeIndex;
 		SizeType primIndex;
 		Float u, v;
+                Float t;
 	};
 
 	/**
@@ -287,6 +288,7 @@ protected:
 				cache->primIndex = ta.primIndex;
 				cache->u = tempU;
 				cache->v = tempV;
+                                cache->t = t;
 				return true;
 			}
 		} else {
@@ -296,6 +298,7 @@ protected:
 					reinterpret_cast<uint8_t*>(temp) + 2*sizeof(IndexType))) {
 				cache->shapeIndex = shapeIndex;
 				cache->primIndex = KNoTriangleFlag;
+                                cache->t = t;
 				return true;
 			}
 		}
@@ -358,6 +361,8 @@ protected:
 			const Point &p0 = vertexPositions[idx0];
 			const Point &p1 = vertexPositions[idx1];
 			const Point &p2 = vertexPositions[idx2];
+                        
+                        // its.t = cache->t; // for_debug
 
 			if (BarycentricPos)
 				its.p = p0 * b.x + p1 * b.y + p2 * b.z;

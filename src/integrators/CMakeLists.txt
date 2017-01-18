@@ -23,9 +23,6 @@ add_integrator(ptracer  ptracer/ptracer.cpp
 add_integrator(gpt      gpt/gpt.cpp gpt/gpt.h gpt/gpt_proc.cpp 
                 gpt/gpt_proc.h  gpt/gpt_wr.cpp  gpt/gpt_wr.h)
 
-add_integrator(ugpt      ugpt/ugpt.cpp ugpt/ugpt.h
-                ugpt/nanoflann.hpp  )
-
 add_integrator(agpt      agpt/agpt.cpp agpt/agpt.h
                 agpt/nanoflann.hpp  )
 
@@ -46,6 +43,10 @@ add_integrator(field        misc/field.cpp)
 add_bidir(bdpt          bdpt/bdpt.h      bdpt/bdpt.cpp
                         bdpt/bdpt_proc.h bdpt/bdpt_proc.cpp
                         bdpt/bdpt_wr.h   bdpt/bdpt_wr.cpp)
+
+add_bidir(vcm          vcm/vcm.h      vcm/vcm.cpp
+                        vcm/vcm_proc.h vcm/vcm_proc.cpp
+                        vcm/vcm_wr.h   vcm/vcm_wr.cpp)
 
 add_bidir(pssmlt        pssmlt/pssmlt.h         pssmlt/pssmlt.cpp
                         pssmlt/pssmlt_proc.h    pssmlt/pssmlt_proc.cpp

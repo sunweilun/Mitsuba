@@ -369,6 +369,7 @@ public:
 	 * finished by the time \ref wait() is invoked.
 	 */
 	bool wait(const ParallelProcess *process);
+        
 
 	/**
 	 * \brief Cancel the execution of a parallelizable process.

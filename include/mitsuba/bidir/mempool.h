@@ -28,7 +28,7 @@ MTS_NAMESPACE_BEGIN
 
 class MemoryPool {
 public:
-	/// Create a new memory pool with aninitial set of 128 entries
+	/// Create a new memory pool with an initial set of 128 entries
 	MemoryPool(size_t nEntries = 128)
 		: m_vertexPool(nEntries), m_edgePool(nEntries) { }
 

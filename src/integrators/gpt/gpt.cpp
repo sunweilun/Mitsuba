@@ -66,7 +66,7 @@ MTS_NAMESPACE_BEGIN
         const Float D_EPSILON = std::numeric_limits<Float>::min();
 
 /// If defined, uses only the central sample for the throughput estimate. Otherwise uses offset paths for estimating throughput too.
-#define CENTRAL_RADIANCE
+// #define CENTRAL_RADIANCE
 
 /// If defined, applies reconstruction after rendering.
 #define RECONSTRUCT

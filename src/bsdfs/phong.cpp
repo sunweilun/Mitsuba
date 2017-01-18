@@ -145,7 +145,7 @@ public:
 
 		if (hasDiffuse)
 			result += m_diffuseReflectance->eval(bRec.its) * INV_PI;
-
+                
 		success = true;
 		return result * Frame::cosTheta(bRec.wo);
 	}

@@ -39,7 +39,7 @@
 #define ADAPTIVE_DIFF_SAMPLING // use branching for diff samples
 #define BACK_PROP_GRAD // back propagate second bounce gradient to first bounce.
 #define SKIP_OVER_SPECULAR_NODES // skip over specular nodes
-//#define RECORD_VARIANCE
+#define CVPT_RECONSTRUCTION
 
 //#define USE_ADAPTIVE_WEIGHT // adaptive weights for neighbors based on feature similarity
 //#define USE_RECON_RAYS // use lazy update for indirect light path radiance cache
@@ -616,13 +616,14 @@ protected:
     
     std::vector<CompactNode> compactNodes;
 
-#if defined(RECORD_VARIANCE)
+#if defined(CVPT_RECONSTRUCTION)
     std::vector<Spectrum> buffer_throughput;
     std::vector<Spectrum> buffer_dx;
     std::vector<Spectrum> buffer_dy;
-    std::vector<Spectrum> buffer_var_throughput;
-    std::vector<Spectrum> buffer_var_dx;
-    std::vector<Spectrum> buffer_var_dy;
+    std::vector<Spectrum> buffer_throughput_var;
+    std::vector<Spectrum> buffer_dx_var;
+    std::vector<Spectrum> buffer_dy_var;
+    std::vector<Spectrum> buffer_direct;
 #endif
 
 #if defined(USE_RECON_RAYS)

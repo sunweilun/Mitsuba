@@ -571,6 +571,54 @@ public:
 	std::vector<PathEdgePtr>   m_edges;
 };
 
+struct MTS_EXPORT_BIDIR CompactBlockPathPool {
+    struct PathItem
+    {
+        size_t nVertices;
+        size_t nEdges;
+        PathItem(size_t nv, size_t ne) {
+            nVertices = nv;
+            nEdges = ne;
+        }
+    };
+    size_t index, nv, ne;
+    std::vector<PathVertex> vertices;
+    std::vector<PathEdge> edges;
+    std::vector<PathItem> pathItems;
+    
+    void clear() {
+        vertices.clear();
+        edges.clear();
+        pathItems.clear();
+    }
+    
+    void addPathItem(const Path& path) 
+    {
+        pathItems.push_back(PathItem(path.m_vertices.size(), path.m_edges.size()));
+        for(size_t i=0; i<path.m_vertices.size(); i++) {
+            vertices.push_back(*path.m_vertices[i]);
+        }
+        for(size_t i=0; i<path.m_edges.size(); i++) {
+            edges.push_back(*path.m_edges[i]);
+        }
+    }
+    
+    void resetIndex() { index = nv = ne = 0; }
+    
+    void extractPathItem(Path& path) {
+        PathItem &item = pathItems[index++];
+        path.m_vertices.clear();
+        for(size_t i=0; i<item.nVertices; i++)
+            path.m_vertices.push_back(&vertices[nv+i]);
+        path.m_edges.clear();
+        for(size_t i=0; i<item.nEdges; i++)
+            path.m_edges.push_back(&edges[ne+i]);
+        nv += item.nVertices;
+        ne += item.nEdges;
+    }
+    
+};
+
 MTS_NAMESPACE_END
 
 #endif /* __MITSUBA_BIDIR_PATH_H_ */
