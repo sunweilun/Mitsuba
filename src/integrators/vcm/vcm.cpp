@@ -16,6 +16,7 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <mitsuba/core/plugin.h>
 #include <mitsuba/bidir/vertex.h>
 #include <mitsuba/bidir/edge.h>
 #include "vcm_proc.h"
@@ -222,11 +223,24 @@ public:
         bidir_scene->initializeBidirectional();
 
         int bidirSceneResID = scheduler->registerResource(bidir_scene);
-
+        ref<Sampler> indepSampler = static_cast<Sampler *> (PluginManager::getInstance()->
+                createObject(MTS_CLASS(Sampler), Properties("independent")));
+        /* Create a sampler instance for every core */
+        std::vector<SerializableObject *> samplers(scheduler->getCoreCount());
+        for (size_t i = 0; i < scheduler->getCoreCount(); ++i) {
+            ref<Sampler> clonedSampler = indepSampler->clone();
+            clonedSampler->incRef();
+            samplers[i] = clonedSampler.get();
+        }
+        int indepSamplerResID = scheduler->registerMultiResource(samplers);
+        for (size_t i = 0; i < scheduler->getCoreCount(); ++i)
+            samplers[i]->decRef();
+        
         ref<VCMProcess> process = new VCMProcess(job, queue, m_config);
         m_process = process;
         process->bindResource("scene", bidirSceneResID);
         process->bindResource("sampler", samplerResID);
+        process->bindResource("indSampler", indepSamplerResID);
         
 #if defined(MTS_OPENMP)
         Thread::initializeOpenMP(nCores);
@@ -237,7 +251,7 @@ public:
             // connection phase
             // we also collect photons in this phase
             process->bindResource("sensor", sensorResID);
-            process->phase = VCMProcess::CONNECT;
+            process->phase = VCMProcess::SAMPLE;
             scheduler->schedule(process);
             scheduler->wait(process);
 
@@ -246,10 +260,12 @@ public:
             
             // merging phase
             process->bindResource("sensor", sensorResID);
-            process->phase = VCMProcess::MERGE;
+            process->phase = VCMProcess::EVAL;
             scheduler->schedule(process);
             scheduler->wait(process);
         }
+        scheduler->unregisterResource(bidirSceneResID);
+        scheduler->unregisterResource(indepSamplerResID);
 
         m_process = NULL;
         process->develop();

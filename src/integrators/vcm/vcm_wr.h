@@ -101,8 +101,8 @@ public:
     }
 #endif
 
-    inline void putSample(const Point2 &sample, const Spectrum &spec) {
-        m_block->put(sample, spec, 1.0f);
+    inline void putSample(const Point2 &sample, const Spectrum &spec, Float weight = 1.f) {
+        m_block->put(sample, spec, weight);
     }
 
     inline void putLightSample(const Point2 &sample, const Spectrum &spec) {

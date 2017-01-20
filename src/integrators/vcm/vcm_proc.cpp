@@ -61,6 +61,7 @@ public:
 
         m_scene = scene;
         m_sampler = static_cast<Sampler *> (getResource("sampler"));
+        m_indSampler = static_cast<Sampler *> (getResource("indSampler"));
         m_sensor = static_cast<Sensor *> (getResource("sensor"));
         m_rfilter = m_sensor->getFilm()->getReconstructionFilter();
         /*
@@ -111,28 +112,30 @@ public:
 
         CompactBlockPathPool& sensorPathPool = m_process->m_sensorPathPool[blockID];
         CompactBlockPathPool& emitterPathPool = m_process->m_emitterPathPool[blockID];
-        if (m_process->phase == VCMProcess::CONNECT) {
+        if (m_process->phase == VCMProcess::SAMPLE) {
             sensorPathPool.clear();
             emitterPathPool.clear();
+            result->clearPhotons();
         }
-
+        
         for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i) {
             Point2i offset = Point2i(m_hilbertCurve[i]) + Vector2i(rect->getOffset());
             m_sampler->generate(offset);
-
+            
+            
             if (stop)
                 break;
 
             if (needsTimeSample)
                 time = m_sensor->sampleTime(m_sampler->next1D());
 
-            if (m_process->phase == VCMProcess::CONNECT) {
+            if (m_process->phase == VCMProcess::SAMPLE) {
                 /* Start new emitter and sensor subpaths */
                 emitterSubpath.initialize(m_scene, time, EImportance, m_pool);
                 sensorSubpath.initialize(m_scene, time, ERadiance, m_pool);
 
                 /* Perform a random walk using alternating steps on each path */
-                Path::alternatingRandomWalkFromPixel(m_scene, m_sampler,
+                Path::alternatingRandomWalkFromPixel(m_scene, m_indSampler,
                         emitterSubpath, emitterDepth, sensorSubpath,
                         sensorDepth, offset, m_config.rrDepth, m_pool);
 
@@ -152,20 +155,24 @@ public:
                     photon.vertexID = k;
                     result->putPhoton(photon);
                 }
-                //evaluateConnection(result, emitterSubpath, sensorSubpath);
                 emitterSubpath.release(m_pool);
                 sensorSubpath.release(m_pool);
 
             } else {
                 sensorPathPool.extractPathItem(sensorSubpath, i);
                 emitterPathPool.extractPathItem(emitterSubpath, i);
-                evaluateMerging(result, sensorSubpath);
+                
+                Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
+                Spectrum color(Float(0.f));
+                color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+                color += evaluateMerging(result, sensorSubpath);
+                result->putSample(initialSamplePos, color, 1.f);
             }
 
             m_sampler->advance();
         }
 
-        if (m_process->phase == VCMProcess::CONNECT) {
+        if (m_process->phase == VCMProcess::SAMPLE) {
             sensorPathPool.buildIndex();
             emitterPathPool.buildIndex();
         }
@@ -180,7 +187,7 @@ public:
 
     /// Evaluate the contributions of the given eye and light paths
 
-    void evaluateConnection(VCMWorkResult *wr,
+    Spectrum evaluateConnection(VCMWorkResult *wr,
             Path &emitterSubpath, Path &sensorSubpath) {
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
@@ -329,9 +336,12 @@ public:
                         emitterSubpath.swapEndpoints(vsPred, vsEdge, vs);
                 }
 
+                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
+                size_t nEmitterPaths = image_size.x * image_size.y;
                 /* Compute the multiple importance sampling weight */
-                Float miWeight = Path::miWeight(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage);
+                Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
+                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage,
+                        m_process->m_mergeRadius, nEmitterPaths, false);
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -361,10 +371,10 @@ public:
                     wr->putLightSample(samplePos, value * miWeight);
             }
         }
-        wr->putSample(initialSamplePos, sampleValue);
+        return sampleValue;
     }
 
-    void evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath) {
+    Spectrum evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath) {
         Path emitterSubpath;
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
@@ -382,26 +392,22 @@ public:
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
             float radius = m_process->m_mergeRadius;
             
-            if(t != 2) continue; // for debug
-            
-            
+            //if(t != 2) continue; // for debug
             
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
             
-            //printf("%d\n", photons.size());
-            
             for (const VCMPhoton& photon : photons) { // inspect every photon in range
+                
                 int s = photon.vertexID-1; // pretend that a connection can be formed from the previous vertex.
+                if(s + t > m_config.maxDepth) continue;
                 m_process->extractPath(photon, emitterSubpath); // extract the path that this photon bounded to.
                 //printf("%f\n", emitterSubpath.vertex(s)->pdf[EImportance]);
                 Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance]*M_PI*radius*radius;
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
-                
-                if(s!=1) continue; // for debug
-                
-                
+                size_t nEmitterPaths = image_size.x * image_size.y;
+                //if(s!=1) continue; // for debug
                 
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
@@ -539,10 +545,8 @@ public:
                 }
 
                 /* Compute the multiple importance sampling weight */
-                Float miWeight = Path::miMergeWeight(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, radius);
-
-                miWeight = 1.0 / Float(photons.size());
+                Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
+                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, radius, nEmitterPaths, true);
                 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -566,14 +570,10 @@ public:
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
                 /**/
-                if (t >= 2)
-                    sampleValue += value * miWeight;
-                else
-                    wr->putLightSample(samplePos, value * miWeight);
+                sampleValue += value * miWeight / (p_acc*nEmitterPaths);
             }
         }
-        if(sampleValue[0] > 0.f)
-        wr->putSample(initialSamplePos, sampleValue);
+        return sampleValue;
     }
 
     ref<WorkProcessor> clone() const {
@@ -585,6 +585,7 @@ private:
     ref<Scene> m_scene;
     ref<Sensor> m_sensor;
     ref<Sampler> m_sampler;
+    ref<Sampler> m_indSampler;
     ref<ReconstructionFilter> m_rfilter;
     MemoryPool m_pool;
     VCMConfiguration m_config;
@@ -627,8 +628,12 @@ void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
     const VCMWorkResult *result = static_cast<const VCMWorkResult *> (wr);
     ImageBlock *block = const_cast<ImageBlock *> (result->getImageBlock());
     LockGuard lock(m_resultMutex);
-    const std::vector<VCMPhoton>& photons = result->getPhotons();
-    m_photonMap.photons.insert(m_photonMap.photons.end(), photons.begin(), photons.end());
+    if(phase == SAMPLE) {
+        const std::vector<VCMPhoton>& photons = result->getPhotons();
+        m_photonMap.photons.insert(m_photonMap.photons.end(), photons.begin(), photons.end());
+        m_queue->signalWorkEnd(m_parent, result->getImageBlock(), false);
+        return;
+    }
     m_progress->update(++m_resultCount);
     if (m_config.lightImage) {
         const ImageBlock *lightImage = m_result->getLightImage();

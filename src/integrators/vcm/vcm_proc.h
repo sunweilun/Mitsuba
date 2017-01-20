@@ -82,7 +82,7 @@ public:
         m_photonKDTree->buildIndex(true);
     }
     
-    enum Phase{CONNECT, MERGE} phase;
+    enum Phase{SAMPLE, EVAL} phase;
 
     MTS_DECLARE_CLASS()
 protected:

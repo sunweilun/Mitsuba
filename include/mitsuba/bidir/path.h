@@ -466,18 +466,13 @@ public:
 			const PathEdge *connectionEdge,
 			const Path &sensorSubpath, int s, int t,
 			bool direct, bool lightImage);
-
-        static Float miConnectWeight(const Scene *scene,
-			const Path &emitterSubpath,
-			const PathEdge *connectionEdge,
-			const Path &sensorSubpath, int s, int t,
-			bool direct, bool lightImage, float radius);
         
-        static Float miMergeWeight(const Scene *scene,
+        static Float miWeightVCM(const Scene *scene,
 			const Path &emitterSubpath,
 			const PathEdge *connectionEdge,
 			const Path &sensorSubpath, int s, int t,
-			bool direct, bool lightImage, float radius);
+			bool direct, bool lightImage, 
+                        float radius, size_t nEmitterPaths, bool merge);
         
 	/**
 	 * \brief Collapse a path into an entire edge that summarizes the aggregate
