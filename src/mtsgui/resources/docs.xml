@@ -566,6 +566,9 @@
 			Specifies the minimum path depth, after which the implementation will start to use the
 			"russian roulette" path termination criterion (set to <tt>-1</tt> to disable).
 		</param>
+                <param name="initialRadius" readableName="Initial Merging Radius" type="float" default="0.0">
+			Specifies initial merging radius of VCM.
+		</param>
 	</plugin>
 
 	<plugin type="integrator" name="gbdpt" readableName="Gradient-Domain Bidirectional Path Tracer" show="true"

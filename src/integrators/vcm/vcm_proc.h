@@ -64,7 +64,7 @@ public:
 
     void updateRadius(int n) 
     {
-        m_mergeRadius = 0.1 / pow(n, 1.0 / 3.0);
+        m_mergeRadius = m_config.initialRadius / pow(n, 1.0 / 3.0);
     }
     
     void clearPhotons() 
@@ -101,7 +101,7 @@ private:
     
     VCMPhotonMap m_photonMap;
     kd_tree_t* m_photonKDTree;
-    float m_mergeRadius;
+    Float m_mergeRadius;
     
     std::vector<VCMPhoton> lookupPhotons(const PathVertex* vertex, float radius) {
         std::vector<VCMPhoton> photons;

@@ -472,7 +472,7 @@ public:
 			const PathEdge *connectionEdge,
 			const Path &sensorSubpath, int s, int t,
 			bool direct, bool lightImage, 
-                        float radius, size_t nEmitterPaths, bool merge);
+                        Float radius, size_t nEmitterPaths, bool merge);
         
 	/**
 	 * \brief Collapse a path into an entire edge that summarizes the aggregate

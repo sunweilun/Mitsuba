@@ -146,6 +146,7 @@ public:
         m_config.lightImage = props.getBoolean("lightImage", true);
         m_config.sampleDirect = props.getBoolean("sampleDirect", true);
         m_config.showWeighted = props.getBoolean("showWeighted", false);
+        m_config.initialRadius = props.getFloat("initialRadius", 0.f);
 
 #if VCM_DEBUG == 1
         if (m_config.maxDepth == -1 || m_config.maxDepth > 6) {
@@ -186,7 +187,15 @@ public:
         if (scene->getSubsurfaceIntegrators().size() > 0)
             Log(EError, "Subsurface integrators are not supported "
                 "by the bidirectional path tracer!");
+        if (m_config.initialRadius == 0) {
+            /* Guess an initial radius if not provided
+              (scene width / horizontal or vertical pixel count) * 5 */
+            Float rad = scene->getBSphere().radius;
+            Vector2i filmSize = scene->getSensor()->getFilm()->getSize();
 
+            m_config.initialRadius = std::min(rad / filmSize.x, rad / filmSize.y) * 5;
+        }
+        
         return true;
     }
 

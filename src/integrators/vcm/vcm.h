@@ -47,6 +47,7 @@ struct VCMConfiguration {
 	size_t sampleCount;
 	Vector2i cropSize;
 	int rrDepth;
+        Float initialRadius;
         
 
 	inline VCMConfiguration() { }
@@ -60,6 +61,7 @@ struct VCMConfiguration {
 		sampleCount = stream->readSize();
 		cropSize = Vector2i(stream);
 		rrDepth = stream->readInt();
+                initialRadius = stream->readFloat();
 	}
 
 	inline void serialize(Stream *stream) const {
@@ -71,6 +73,7 @@ struct VCMConfiguration {
 		stream->writeSize(sampleCount);
 		cropSize.serialize(stream);
 		stream->writeInt(rrDepth);
+                stream->writeFloat(initialRadius);
 	}
 
 	void dump() const {

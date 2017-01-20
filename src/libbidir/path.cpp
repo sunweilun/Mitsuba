@@ -1042,9 +1042,9 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage,
-        float radius, size_t nEmitterPaths, bool merge)
+        Float radius, size_t nEmitterPaths, bool merge)
 {
-    float mergeArea = M_PI * radius * radius;
+    Float mergeArea = M_PI * radius * radius;
 
     int k = s + t + 1, n = k + 1;
 
@@ -1237,6 +1237,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         i = end;
     }
     
+    /* Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
     for(int i=0; i<n; i++) {
         accProb[i] =  Float(0.f);
         bool mergable = connectable[i] && i >= 2 && i <= n-3;
@@ -1311,7 +1312,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     pdf = initial;
     for (int i = s - 1; i >= 0; --i)
     {
-        double mergeRatio = sqrt((1.0 + accProb[i]*accProb[i]) / (1.0 + accProb[i+1]*accProb[i+1]));
+        double mergeRatio = sqrt((1.0 + accProb[i+1]*accProb[i+1]) / (1.0 + accProb[i+2]*accProb[i+2]));
         double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1] * mergeRatio,
                 value = next;
 

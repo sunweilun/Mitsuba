@@ -1351,15 +1351,15 @@ namespace nanoflann {
             if (phase == NANOFLANN_LARGE_NODE && count > small_node_threshold_size) {
                 ind_buffer.resize(count);
                 splitTasks.resize(nTasks);
-                int countPerTask = 1 + (count - 1) / nTasks;
+                IndexType countPerTask = 1 + (count - 1) / nTasks;
                 // stats on numbers for each task
 
 #pragma omp parallel for
                 for (int t = 0; t < nTasks; t++) {
                     SplitTask& mt = splitTasks[t];
                     mt = SplitTask();
-                    for (int c = 0; c < countPerTask; c++) {
-                        int i = t * countPerTask + c;
+                    for (IndexType c = 0; c < countPerTask; c++) {
+                        IndexType i = t * countPerTask + c;
                         if (i >= count) continue;
                         if (dataset_get(ind[i], cutfeat) < cutval)
                             mt.left++;
@@ -1383,10 +1383,10 @@ namespace nanoflann {
 
                 // write to buffer
 #pragma omp parallel for
-                for (int t = 0; t < nTasks; t++) {
+                for (IndexType t = 0; t < nTasks; t++) {
                     SplitTask& mt = splitTasks[t];
-                    for (int c = 0; c < countPerTask; c++) {
-                        int i = t * countPerTask + c;
+                    for (IndexType c = 0; c < countPerTask; c++) {
+                        IndexType i = t * countPerTask + c;
                         if (i >= count) continue;
                         if (dataset_get(ind[i], cutfeat) < cutval)
                             ind_buffer[--mt.left] = ind[i];
@@ -1399,9 +1399,9 @@ namespace nanoflann {
 
                 // copy back
 #pragma omp parallel for
-                for (int t = 0; t < nTasks; t++) {
-                    for (int c = 0; c < countPerTask; c++) {
-                        int i = t * countPerTask + c;
+                for (IndexType t = 0; t < nTasks; t++) {
+                    for (IndexType c = 0; c < countPerTask; c++) {
+                        IndexType i = t * countPerTask + c;
                         if (i >= count) continue;
                         ind[i] = ind_buffer[i];
                     }

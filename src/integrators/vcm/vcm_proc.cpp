@@ -164,7 +164,7 @@ public:
                 
                 Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
                 Spectrum color(Float(0.f));
-                //color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+                color += evaluateConnection(result, emitterSubpath, sensorSubpath);
                 color += evaluateMerging(result, sensorSubpath);
                 result->putSample(initialSamplePos, color, 1.f);
             }
@@ -365,10 +365,9 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-
                 if (t >= 2)
                     sampleValue += value * miWeight;
-                else
+                else 
                     wr->putLightSample(samplePos, value * miWeight);
             }
         }
@@ -391,7 +390,7 @@ public:
         for (int t = maxT; t >= minT; --t) {
             
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
-            float radius = m_process->m_mergeRadius;
+            Float radius = m_process->m_mergeRadius;
             
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
@@ -399,20 +398,18 @@ public:
             for (const VCMPhoton& photon : photons) { // inspect every photon in range
                 
                 int s = photon.vertexID-1; // pretend that a connection can be formed from the previous vertex.
-                if(s + t > m_config.maxDepth) continue;
+                if(m_config.maxDepth > -1 && s + t > m_config.maxDepth) continue;
                 m_process->extractPath(photon, emitterSubpath); // extract the path that this photon bounded to.
-                //printf("%f\n", emitterSubpath.vertex(s)->pdf[EImportance]);
                 Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance]*M_PI*radius*radius;
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
                 
-                if(!(s==1 && t==2)) continue; // for debug
-                
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
                 Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
                 importanceWeights[0] = radianceWeights[0] = Spectrum(1.0f);
+                
                 for (size_t i = 1; i < emitterSubpath.vertexCount(); ++i)
                     importanceWeights[i] = importanceWeights[i - 1] *
                         emitterSubpath.vertex(i - 1)->weight[EImportance] *
@@ -448,7 +445,7 @@ public:
 
                 /* Will receive the path weight of the (s, t)-connection */
                 Spectrum value;
-
+                
                 /* Account for the terms of the measurement contribution
                    function that are coupled to the connection endpoints */
                 if (vs->isEmitterSupernode()) {
@@ -518,7 +515,7 @@ public:
                        handle BSDFs with diffuse + specular components */
                     vs->measure = vt->measure = EArea;
                 }
-
+                
                 /* Attempt to connect the two endpoints, which could result in
                    the creation of additional vertices (index-matched boundaries etc.) */
                 int interactions = remaining; // backup
@@ -570,8 +567,7 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-                /**/
-                //printf("%f\n", p_acc*nEmitterPaths);
+                
                 //miWeight = 1.0; // for debug
                 sampleValue += value * miWeight / (p_acc*nEmitterPaths);
             }
