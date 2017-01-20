@@ -1238,7 +1238,10 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     }
     
     for(int i=0; i<n; i++) {
-        accProb[i] = connectable[i] ? std::min(Float(1.f), pdfImp[i] * mergeArea)*nEmitterPaths : Float(0.f);
+        accProb[i] =  Float(0.f);
+        bool mergable = connectable[i] && i >= 2 && i <= n-3;
+        if(mergable)
+            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea)*nEmitterPaths;
     }
 
     double initial = 1.0f;
@@ -1327,8 +1330,9 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         pdf = next;
     }
     
-    Float w_merge = accProb[s+1]*accProb[s+1] / (1.0 + accProb[s+1]*accProb[s+1]);
     Float total_weight = 1.0 / weight;
+    Float w_merge = accProb[s+1]*accProb[s+1] / (1.0 + accProb[s+1]*accProb[s+1]);
+    
     if(merge) return total_weight * w_merge;
     return total_weight * (1.0 - w_merge);
 }

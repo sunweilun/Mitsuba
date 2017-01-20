@@ -164,7 +164,7 @@ public:
                 
                 Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
                 Spectrum color(Float(0.f));
-                color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+                //color += evaluateConnection(result, emitterSubpath, sensorSubpath);
                 color += evaluateMerging(result, sensorSubpath);
                 result->putSample(initialSamplePos, color, 1.f);
             }
@@ -220,6 +220,7 @@ public:
             if (m_config.maxDepth != -1)
                 maxT = std::min(maxT, m_config.maxDepth + 1 - s);
             for (int t = maxT; t >= minT; --t) {
+                
                 PathVertex
                         *vsPred = emitterSubpath.vertexOrNull(s - 1),
                         *vtPred = sensorSubpath.vertexOrNull(t - 1),
@@ -354,7 +355,7 @@ public:
                 /* Determine the pixel sample position when necessary */
                 if (vt->isSensorSample() && !vt->getSamplePosition(vs, samplePos))
                     continue;
-
+                
 #if VCM_DEBUG == 1
                 /* When the debug mode is on, collect samples
                    separately for each sampling strategy. Note: the
@@ -392,8 +393,6 @@ public:
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
             float radius = m_process->m_mergeRadius;
             
-            //if(t != 2) continue; // for debug
-            
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
             
@@ -407,7 +406,8 @@ public:
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
-                //if(s!=1) continue; // for debug
+                
+                if(!(s==1 && t==2)) continue; // for debug
                 
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
@@ -546,7 +546,8 @@ public:
 
                 /* Compute the multiple importance sampling weight */
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, radius, nEmitterPaths, true);
+                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, 
+                        radius, nEmitterPaths, true);
                 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -570,6 +571,8 @@ public:
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
                 /**/
+                //printf("%f\n", p_acc*nEmitterPaths);
+                //miWeight = 1.0; // for debug
                 sampleValue += value * miWeight / (p_acc*nEmitterPaths);
             }
         }

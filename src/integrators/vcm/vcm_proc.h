@@ -64,7 +64,7 @@ public:
 
     void updateRadius(int n) 
     {
-        m_mergeRadius = 0.2 / pow(n, 1.0 / 3.0);
+        m_mergeRadius = 0.1 / pow(n, 1.0 / 3.0);
     }
     
     void clearPhotons() 
