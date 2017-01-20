@@ -20,6 +20,11 @@
 #include <mitsuba/bidir/edge.h>
 #include "vcm_proc.h"
 
+#if defined(MTS_OPENMP)
+#include <omp.h>
+#endif
+
+
 MTS_NAMESPACE_BEGIN
 
 /*!\plugin{bdpt}{Bidirectional path tracer}
@@ -212,33 +217,40 @@ public:
         m_config.cropSize = film->getCropSize();
         m_config.sampleCount = sampleCount;
         m_config.dump();
-        
+
         ref<Scene> bidir_scene = new Scene(scene);
         bidir_scene->initializeBidirectional();
-        
+
         int bidirSceneResID = scheduler->registerResource(bidir_scene);
-        
+
         ref<VCMProcess> process = new VCMProcess(job, queue, m_config);
         m_process = process;
         process->bindResource("scene", bidirSceneResID);
         process->bindResource("sampler", samplerResID);
         
-        for (size_t i = 0; i<sampleCount; i++) {
-            // sample phase
-            m_config.phase = VCMConfiguration::SAMPLING;
-            process->updateConfig(m_config);
+#if defined(MTS_OPENMP)
+        Thread::initializeOpenMP(nCores);
+#endif
+        for (size_t i = 0; i < sampleCount; i++) {
+            process->updateRadius(i+1);
+            process->clearPhotons();
+            // connection phase
+            // we also collect photons in this phase
             process->bindResource("sensor", sensorResID);
+            process->phase = VCMProcess::CONNECT;
             scheduler->schedule(process);
             scheduler->wait(process);
+
+            // build photon look up structure
+            process->buildPhotonLookupStructure();
             
-            // gather phase
-            m_config.phase = VCMConfiguration::GATHERING;
-            process->updateConfig(m_config);
+            // merging phase
             process->bindResource("sensor", sensorResID);
+            process->phase = VCMProcess::MERGE;
             scheduler->schedule(process);
             scheduler->wait(process);
         }
-            
+
         m_process = NULL;
         process->develop();
 
@@ -247,7 +259,6 @@ public:
         if (m_config.lightImage)
             process->getResult()->dump(m_config, path.parent_path(), path.stem());
 #endif
-
         return process->getReturnStatus() == ParallelProcess::ESuccess;
     }
 

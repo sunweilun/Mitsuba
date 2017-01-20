@@ -27,7 +27,7 @@
 #if defined(MTS_OPENMP)
 #define NANOFLANN_USE_OMP
 #endif
-#include "nanoflann.hpp"
+#include <nanoflann/nanoflann.hpp>
 
 #include <array>
 

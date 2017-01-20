@@ -48,9 +48,6 @@ struct VCMConfiguration {
 	Vector2i cropSize;
 	int rrDepth;
         
-        // for vcm
-        enum Phase{SAMPLING, GATHERING} phase;
-        
 
 	inline VCMConfiguration() { }
 

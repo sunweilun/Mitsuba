@@ -1262,10 +1262,10 @@ namespace nanoflann {
                 ElementType mine = ind ? dataset_get(ind[0], element) : dataset_get(0, element);
                 ElementType maxe = ind ? dataset_get(ind[0], element) : dataset_get(0, element);
 
-                int chunk = 1 + (count - 1) / nTasks;
+                IndexType chunk = 1 + (count - 1) / nTasks;
 #pragma omp parallel for reduction(min : mine)
-                for (size_t i = 1; i < count; i += chunk) {
-                    for (size_t k = 0; k < chunk; k++) {
+                for (IndexType i = 1; i < count; i += chunk) {
+                    for (IndexType k = 0; k < chunk; k++) {
                         if (i * chunk + k >= count) continue;
                         ElementType val = ind ? dataset_get(ind[i * chunk + k], element) :
                                 dataset_get(i * chunk + k, element);
@@ -1274,8 +1274,8 @@ namespace nanoflann {
                 }
 
 #pragma omp parallel for reduction(max : maxe)
-                for (size_t i = 1; i < count; i += chunk) {
-                    for (size_t k = 0; k < chunk; k++) {
+                for (IndexType i = 1; i < count; i += chunk) {
+                    for (IndexType k = 0; k < chunk; k++) {
                         if (i * chunk + k >= count) continue;
                         ElementType val = ind ? dataset_get(ind[i * chunk + k], element) :
                                 dataset_get(i * chunk + k, element);

@@ -962,6 +962,538 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 	return (Float) (1.0 / weight);
 }
 
+Float Path::miConnectWeight(const Scene *scene, const Path &emitterSubpath,
+		const PathEdge *connectionEdge, const Path &sensorSubpath,
+		int s, int t, bool sampleDirect, bool lightImage, float radius) {
+	int k = s+t+1, n = k+1;
+
+	const PathVertex
+			*vsPred = emitterSubpath.vertexOrNull(s-1),
+			*vtPred = sensorSubpath.vertexOrNull(t-1),
+			*vs = emitterSubpath.vertex(s),
+			*vt = sensorSubpath.vertex(t);
+
+	/* pdfImp[i] and pdfRad[i] store the area/volume density of vertex
+	   'i' when sampled from the adjacent vertex in the emitter
+	   and sensor direction, respectively. */
+
+	Float ratioEmitterDirect = 0.0f, ratioSensorDirect = 0.0f;
+	Float *pdfImp      = (Float *) alloca(n * sizeof(Float)),
+		  *pdfRad      = (Float *) alloca(n * sizeof(Float));
+	bool  *connectable = (bool *)  alloca(n * sizeof(bool)),
+		  *isNull      = (bool *)  alloca(n * sizeof(bool));
+
+	/* Keep track of which vertices are connectable / null interactions */
+	int pos = 0;
+	for (int i=0; i<=s; ++i) {
+		const PathVertex *v = emitterSubpath.vertex(i);
+		connectable[pos] = v->isConnectable();
+		isNull[pos] = v->isNullInteraction() && !connectable[pos];
+		pos++;
+	}
+
+	for (int i=t; i>=0; --i) {
+		const PathVertex *v = sensorSubpath.vertex(i);
+		connectable[pos] = v->isConnectable();
+		isNull[pos] = v->isNullInteraction() && !connectable[pos];
+		pos++;
+	}
+
+	if (k <= 3)
+		sampleDirect = false;
+
+	EMeasure vsMeasure = EArea, vtMeasure = EArea;
+	if (sampleDirect) {
+		/* When direct sampling is enabled, we may be able to create certain
+		   connections that otherwise would have failed (e.g. to an
+		   orthographic camera or a directional light source) */
+		const AbstractEmitter *emitter = (s > 0 ? emitterSubpath.vertex(1) : vt)->getAbstractEmitter();
+		const AbstractEmitter *sensor = (t > 0 ? sensorSubpath.vertex(1) : vs)->getAbstractEmitter();
+
+		EMeasure emitterDirectMeasure = emitter->getDirectMeasure();
+		EMeasure sensorDirectMeasure  = sensor->getDirectMeasure();
+
+		connectable[0]   = emitterDirectMeasure != EDiscrete && emitterDirectMeasure != EInvalidMeasure;
+		connectable[1]   = emitterDirectMeasure != EInvalidMeasure;
+		connectable[k-1] = sensorDirectMeasure != EInvalidMeasure;
+		connectable[k]   = sensorDirectMeasure != EDiscrete && sensorDirectMeasure != EInvalidMeasure;
+
+		/* The following is needed to handle orthographic cameras &
+		   directional light sources together with direct sampling */
+		if (t == 1)
+			vtMeasure = sensor->needsDirectionSample() ? EArea : EDiscrete;
+		else if (s == 1)
+			vsMeasure = emitter->needsDirectionSample() ? EArea : EDiscrete;
+	}
+
+	/* Collect importance transfer area/volume densities from vertices */
+	pos = 0;
+	pdfImp[pos++] = 1.0;
+
+	for (int i=0; i<s; ++i)
+		pdfImp[pos++] = emitterSubpath.vertex(i)->pdf[EImportance]
+			* emitterSubpath.edge(i)->pdf[EImportance];
+
+	pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
+		* connectionEdge->pdf[EImportance];
+
+	if (t > 0) {
+		pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure)
+			* sensorSubpath.edge(t-1)->pdf[EImportance];
+
+		for (int i=t-1; i>0; --i)
+			pdfImp[pos++] = sensorSubpath.vertex(i)->pdf[EImportance]
+				* sensorSubpath.edge(i-1)->pdf[EImportance];
+	}
+
+	/* Collect radiance transfer area/volume densities from vertices */
+	pos = 0;
+	if (s > 0) {
+		for (int i=0; i<s-1; ++i)
+			pdfRad[pos++] = emitterSubpath.vertex(i+1)->pdf[ERadiance]
+				* emitterSubpath.edge(i)->pdf[ERadiance];
+
+		pdfRad[pos++] = vs->evalPdf(scene, vt, vsPred, ERadiance, vsMeasure)
+			* emitterSubpath.edge(s-1)->pdf[ERadiance];
+	}
+
+	pdfRad[pos++] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure)
+		* connectionEdge->pdf[ERadiance];
+
+	for (int i=t; i>0; --i)
+		pdfRad[pos++] = sensorSubpath.vertex(i-1)->pdf[ERadiance]
+			* sensorSubpath.edge(i-1)->pdf[ERadiance];
+
+	pdfRad[pos++] = 1.0;
+
+
+	/* When the path contains specular surface interactions, it is possible
+	   to compute the correct MI weights even without going through all the
+	   trouble of computing the proper generalized geometric terms (described
+	   in the SIGGRAPH 2012 specular manifolds paper). The reason is that these
+	   all cancel out. But to make sure that that's actually true, we need to
+	   convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
+	   into the projected solid angle measure */
+	for (int i=1; i <= k-3; ++i) {
+		if (i == s || !(connectable[i] && !connectable[i+1]))
+			continue;
+
+		const PathVertex *cur = i <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k-i);
+		const PathVertex *succ = i+1 <= s ? emitterSubpath.vertex(i+1) : sensorSubpath.vertex(k-i-1);
+		const PathEdge *edge = i < s ? emitterSubpath.edge(i) : sensorSubpath.edge(k-i-1);
+
+		pdfImp[i+1] *= edge->length * edge->length / std::abs(
+			(succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
+			(cur->isOnSurface()  ? dot(edge->d, cur->getGeometricNormal())  : 1));
+	}
+
+	for (int i=k-1; i >= 3; --i) {
+		if (i-1 == s || !(connectable[i] && !connectable[i-1]))
+			continue;
+
+		const PathVertex *cur = i <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k-i);
+		const PathVertex *succ = i-1 <= s ? emitterSubpath.vertex(i-1) : sensorSubpath.vertex(k-i+1);
+		const PathEdge *edge = i <= s ? emitterSubpath.edge(i-1) : sensorSubpath.edge(k-i);
+
+		pdfRad[i-1] *= edge->length * edge->length / std::abs(
+			(succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
+			(cur->isOnSurface()  ? dot(edge->d, cur->getGeometricNormal())  : 1));
+	}
+
+	int emitterRefIndirection = 2, sensorRefIndirection = k-2;
+
+	/* One more array sweep before the actual useful work starts -- phew! :)
+	   "Collapse" edges/vertices that were caused by BSDF::ENull interactions.
+	   The BDPT implementation is smart enough to connect straight through those,
+	   so they shouldn't be treated as Dirac delta events in what follows */
+	for (int i=1; i <= k-3; ++i) {
+		if (!connectable[i] || !isNull[i+1])
+			continue;
+
+		int start = i+1, end = start;
+		while (isNull[end+1])
+			++end;
+
+		if (!connectable[end+1]) {
+			/// The chain contains a non-ENull interaction
+			isNull[start] = false;
+			continue;
+		}
+
+		const PathVertex *before = i     <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k-i);
+		const PathVertex *after  = end+1 <= s ? emitterSubpath.vertex(end+1) : sensorSubpath.vertex(k-end-1);
+
+		Vector d = before->getPosition() - after->getPosition();
+		Float lengthSquared = d.lengthSquared();
+		d /= std::sqrt(lengthSquared);
+
+		Float geoTerm = std::abs(
+			(before->isOnSurface() ? dot(before->getGeometricNormal(), d) : 1) *
+			(after->isOnSurface()  ? dot(after->getGeometricNormal(),  d) : 1)) / lengthSquared;
+
+		pdfRad[start-1] *= pdfRad[end] * geoTerm;
+		pdfRad[end] = 1;
+		pdfImp[start] *= pdfImp[end+1] * geoTerm;
+		pdfImp[end+1] = 1;
+
+		/* When an ENull chain starts right after the emitter / before the sensor,
+		   we must keep track of the reference vertex for direct sampling strategies. */
+		if (start == 2)
+			emitterRefIndirection = end + 1;
+		else if (end == k-2)
+			sensorRefIndirection = start - 1;
+
+		i = end;
+	}
+
+	double initial = 1.0f;
+
+	/* When direct sampling strategies are enabled, we must
+	   account for them here as well */
+	if (sampleDirect) {
+		/* Direct connection probability of the emitter */
+		const PathVertex *sample = s>0 ? emitterSubpath.vertex(1) : vt;
+		const PathVertex *ref = emitterRefIndirection <= s
+			? emitterSubpath.vertex(emitterRefIndirection) : sensorSubpath.vertex(k-emitterRefIndirection);
+		EMeasure measure = sample->getAbstractEmitter()->getDirectMeasure();
+
+		if (connectable[1] && connectable[emitterRefIndirection])
+			ratioEmitterDirect = ref->evalPdfDirect(scene, sample, EImportance,
+				measure == ESolidAngle ? EArea : measure) / pdfImp[1];
+
+		/* Direct connection probability of the sensor */
+		sample = t>0 ? sensorSubpath.vertex(1) : vs;
+		ref = sensorRefIndirection <= s ? emitterSubpath.vertex(sensorRefIndirection)
+			: sensorSubpath.vertex(k-sensorRefIndirection);
+		measure = sample->getAbstractEmitter()->getDirectMeasure();
+
+		if (connectable[k-1] && connectable[sensorRefIndirection])
+			ratioSensorDirect = ref->evalPdfDirect(scene, sample, ERadiance,
+				measure == ESolidAngle ? EArea : measure) / pdfRad[k-1];
+
+		if (s == 1)
+			initial /= ratioEmitterDirect;
+		else if (t == 1)
+			initial /= ratioSensorDirect;
+	}
+
+	double weight = 1, pdf = initial;
+
+	/* With all of the above information, the MI weight can now be computed.
+	   Since the goal is to evaluate the power heuristic, the absolute area
+	   product density of each strategy is interestingly not required. Instead,
+	   an incremental scheme can be used that only finds the densities relative
+	   to the (s,t) strategy, which can be done using a linear sweep. For
+	   details, refer to the Veach thesis, p.306. */
+	for (int i=s+1; i<k; ++i) {
+		double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
+		       value = next;
+
+		if (sampleDirect) {
+			if (i == 1)
+				value *= ratioEmitterDirect;
+			else if (i == sensorRefIndirection)
+				value *= ratioSensorDirect;
+		}
+
+
+		int tPrime = k-i-1;
+		if (connectable[i] && (connectable[i+1] || isNull[i+1]) && (lightImage || tPrime > 1))
+			weight += value*value;
+
+		pdf = next;
+	}
+
+	/* As above, but now compute pdf[i] with i<s (this is done by
+	   evaluating the inverse of the previous expressions). */
+	pdf = initial;
+	for (int i=s-1; i>=0; --i) {
+		double next = pdf * (double) pdfRad[i+1] / (double) pdfImp[i+1],
+		       value = next;
+
+		if (sampleDirect) {
+			if (i == 1)
+				value *= ratioEmitterDirect;
+			else if (i == sensorRefIndirection)
+				value *= ratioSensorDirect;
+		}
+
+		int tPrime = k-i-1;
+		if (connectable[i] && (connectable[i+1] || isNull[i+1]) && (lightImage || tPrime > 1))
+			weight += value*value;
+
+		pdf = next;
+	}
+
+	return (Float) (1.0 / weight);
+}
+
+Float Path::miMergeWeight(const Scene *scene, const Path &emitterSubpath,
+		const PathEdge *connectionEdge, const Path &sensorSubpath,
+		int s, int t, bool sampleDirect, bool lightImage, float radius) {
+	int k = s+t+1, n = k+1;
+
+	const PathVertex
+			*vsPred = emitterSubpath.vertexOrNull(s-1),
+			*vtPred = sensorSubpath.vertexOrNull(t-1),
+			*vs = emitterSubpath.vertex(s),
+			*vt = sensorSubpath.vertex(t);
+
+	/* pdfImp[i] and pdfRad[i] store the area/volume density of vertex
+	   'i' when sampled from the adjacent vertex in the emitter
+	   and sensor direction, respectively. */
+
+	Float ratioEmitterDirect = 0.0f, ratioSensorDirect = 0.0f;
+	Float *pdfImp      = (Float *) alloca(n * sizeof(Float)),
+		  *pdfRad      = (Float *) alloca(n * sizeof(Float));
+	bool  *connectable = (bool *)  alloca(n * sizeof(bool)),
+		  *isNull      = (bool *)  alloca(n * sizeof(bool));
+
+	/* Keep track of which vertices are connectable / null interactions */
+	int pos = 0;
+	for (int i=0; i<=s; ++i) {
+		const PathVertex *v = emitterSubpath.vertex(i);
+		connectable[pos] = v->isConnectable();
+		isNull[pos] = v->isNullInteraction() && !connectable[pos];
+		pos++;
+	}
+
+	for (int i=t; i>=0; --i) {
+		const PathVertex *v = sensorSubpath.vertex(i);
+		connectable[pos] = v->isConnectable();
+		isNull[pos] = v->isNullInteraction() && !connectable[pos];
+		pos++;
+	}
+
+	if (k <= 3)
+		sampleDirect = false;
+
+	EMeasure vsMeasure = EArea, vtMeasure = EArea;
+	if (sampleDirect) {
+		/* When direct sampling is enabled, we may be able to create certain
+		   connections that otherwise would have failed (e.g. to an
+		   orthographic camera or a directional light source) */
+		const AbstractEmitter *emitter = (s > 0 ? emitterSubpath.vertex(1) : vt)->getAbstractEmitter();
+		const AbstractEmitter *sensor = (t > 0 ? sensorSubpath.vertex(1) : vs)->getAbstractEmitter();
+
+		EMeasure emitterDirectMeasure = emitter->getDirectMeasure();
+		EMeasure sensorDirectMeasure  = sensor->getDirectMeasure();
+
+		connectable[0]   = emitterDirectMeasure != EDiscrete && emitterDirectMeasure != EInvalidMeasure;
+		connectable[1]   = emitterDirectMeasure != EInvalidMeasure;
+		connectable[k-1] = sensorDirectMeasure != EInvalidMeasure;
+		connectable[k]   = sensorDirectMeasure != EDiscrete && sensorDirectMeasure != EInvalidMeasure;
+
+		/* The following is needed to handle orthographic cameras &
+		   directional light sources together with direct sampling */
+		if (t == 1)
+			vtMeasure = sensor->needsDirectionSample() ? EArea : EDiscrete;
+		else if (s == 1)
+			vsMeasure = emitter->needsDirectionSample() ? EArea : EDiscrete;
+	}
+
+	/* Collect importance transfer area/volume densities from vertices */
+	pos = 0;
+	pdfImp[pos++] = 1.0;
+
+	for (int i=0; i<s; ++i)
+		pdfImp[pos++] = emitterSubpath.vertex(i)->pdf[EImportance]
+			* emitterSubpath.edge(i)->pdf[EImportance];
+
+	pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
+		* connectionEdge->pdf[EImportance];
+
+	if (t > 0) {
+		pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure)
+			* sensorSubpath.edge(t-1)->pdf[EImportance];
+
+		for (int i=t-1; i>0; --i)
+			pdfImp[pos++] = sensorSubpath.vertex(i)->pdf[EImportance]
+				* sensorSubpath.edge(i-1)->pdf[EImportance];
+	}
+
+	/* Collect radiance transfer area/volume densities from vertices */
+	pos = 0;
+	if (s > 0) {
+		for (int i=0; i<s-1; ++i)
+			pdfRad[pos++] = emitterSubpath.vertex(i+1)->pdf[ERadiance]
+				* emitterSubpath.edge(i)->pdf[ERadiance];
+
+		pdfRad[pos++] = vs->evalPdf(scene, vt, vsPred, ERadiance, vsMeasure)
+			* emitterSubpath.edge(s-1)->pdf[ERadiance];
+	}
+
+	pdfRad[pos++] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure)
+		* connectionEdge->pdf[ERadiance];
+
+	for (int i=t; i>0; --i)
+		pdfRad[pos++] = sensorSubpath.vertex(i-1)->pdf[ERadiance]
+			* sensorSubpath.edge(i-1)->pdf[ERadiance];
+
+	pdfRad[pos++] = 1.0;
+
+
+	/* When the path contains specular surface interactions, it is possible
+	   to compute the correct MI weights even without going through all the
+	   trouble of computing the proper generalized geometric terms (described
+	   in the SIGGRAPH 2012 specular manifolds paper). The reason is that these
+	   all cancel out. But to make sure that that's actually true, we need to
+	   convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
+	   into the projected solid angle measure */
+	for (int i=1; i <= k-3; ++i) {
+		if (i == s || !(connectable[i] && !connectable[i+1]))
+			continue;
+
+		const PathVertex *cur = i <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k-i);
+		const PathVertex *succ = i+1 <= s ? emitterSubpath.vertex(i+1) : sensorSubpath.vertex(k-i-1);
+		const PathEdge *edge = i < s ? emitterSubpath.edge(i) : sensorSubpath.edge(k-i-1);
+
+		pdfImp[i+1] *= edge->length * edge->length / std::abs(
+			(succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
+			(cur->isOnSurface()  ? dot(edge->d, cur->getGeometricNormal())  : 1));
+	}
+
+	for (int i=k-1; i >= 3; --i) {
+		if (i-1 == s || !(connectable[i] && !connectable[i-1]))
+			continue;
+
+		const PathVertex *cur = i <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k-i);
+		const PathVertex *succ = i-1 <= s ? emitterSubpath.vertex(i-1) : sensorSubpath.vertex(k-i+1);
+		const PathEdge *edge = i <= s ? emitterSubpath.edge(i-1) : sensorSubpath.edge(k-i);
+
+		pdfRad[i-1] *= edge->length * edge->length / std::abs(
+			(succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
+			(cur->isOnSurface()  ? dot(edge->d, cur->getGeometricNormal())  : 1));
+	}
+
+	int emitterRefIndirection = 2, sensorRefIndirection = k-2;
+
+	/* One more array sweep before the actual useful work starts -- phew! :)
+	   "Collapse" edges/vertices that were caused by BSDF::ENull interactions.
+	   The BDPT implementation is smart enough to connect straight through those,
+	   so they shouldn't be treated as Dirac delta events in what follows */
+	for (int i=1; i <= k-3; ++i) {
+		if (!connectable[i] || !isNull[i+1])
+			continue;
+
+		int start = i+1, end = start;
+		while (isNull[end+1])
+			++end;
+
+		if (!connectable[end+1]) {
+			/// The chain contains a non-ENull interaction
+			isNull[start] = false;
+			continue;
+		}
+
+		const PathVertex *before = i     <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k-i);
+		const PathVertex *after  = end+1 <= s ? emitterSubpath.vertex(end+1) : sensorSubpath.vertex(k-end-1);
+
+		Vector d = before->getPosition() - after->getPosition();
+		Float lengthSquared = d.lengthSquared();
+		d /= std::sqrt(lengthSquared);
+
+		Float geoTerm = std::abs(
+			(before->isOnSurface() ? dot(before->getGeometricNormal(), d) : 1) *
+			(after->isOnSurface()  ? dot(after->getGeometricNormal(),  d) : 1)) / lengthSquared;
+
+		pdfRad[start-1] *= pdfRad[end] * geoTerm;
+		pdfRad[end] = 1;
+		pdfImp[start] *= pdfImp[end+1] * geoTerm;
+		pdfImp[end+1] = 1;
+
+		/* When an ENull chain starts right after the emitter / before the sensor,
+		   we must keep track of the reference vertex for direct sampling strategies. */
+		if (start == 2)
+			emitterRefIndirection = end + 1;
+		else if (end == k-2)
+			sensorRefIndirection = start - 1;
+
+		i = end;
+	}
+
+	double initial = 1.0f;
+
+	/* When direct sampling strategies are enabled, we must
+	   account for them here as well */
+	if (sampleDirect) {
+		/* Direct connection probability of the emitter */
+		const PathVertex *sample = s>0 ? emitterSubpath.vertex(1) : vt;
+		const PathVertex *ref = emitterRefIndirection <= s
+			? emitterSubpath.vertex(emitterRefIndirection) : sensorSubpath.vertex(k-emitterRefIndirection);
+		EMeasure measure = sample->getAbstractEmitter()->getDirectMeasure();
+
+		if (connectable[1] && connectable[emitterRefIndirection])
+			ratioEmitterDirect = ref->evalPdfDirect(scene, sample, EImportance,
+				measure == ESolidAngle ? EArea : measure) / pdfImp[1];
+
+		/* Direct connection probability of the sensor */
+		sample = t>0 ? sensorSubpath.vertex(1) : vs;
+		ref = sensorRefIndirection <= s ? emitterSubpath.vertex(sensorRefIndirection)
+			: sensorSubpath.vertex(k-sensorRefIndirection);
+		measure = sample->getAbstractEmitter()->getDirectMeasure();
+
+		if (connectable[k-1] && connectable[sensorRefIndirection])
+			ratioSensorDirect = ref->evalPdfDirect(scene, sample, ERadiance,
+				measure == ESolidAngle ? EArea : measure) / pdfRad[k-1];
+
+		if (s == 1)
+			initial /= ratioEmitterDirect;
+		else if (t == 1)
+			initial /= ratioSensorDirect;
+	}
+
+	double weight = 1, pdf = initial;
+
+	/* With all of the above information, the MI weight can now be computed.
+	   Since the goal is to evaluate the power heuristic, the absolute area
+	   product density of each strategy is interestingly not required. Instead,
+	   an incremental scheme can be used that only finds the densities relative
+	   to the (s,t) strategy, which can be done using a linear sweep. For
+	   details, refer to the Veach thesis, p.306. */
+	for (int i=s+1; i<k; ++i) {
+		double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
+		       value = next;
+
+		if (sampleDirect) {
+			if (i == 1)
+				value *= ratioEmitterDirect;
+			else if (i == sensorRefIndirection)
+				value *= ratioSensorDirect;
+		}
+
+
+		int tPrime = k-i-1;
+		if (connectable[i] && (connectable[i+1] || isNull[i+1]) && (lightImage || tPrime > 1))
+			weight += value*value;
+
+		pdf = next;
+	}
+
+	/* As above, but now compute pdf[i] with i<s (this is done by
+	   evaluating the inverse of the previous expressions). */
+	pdf = initial;
+	for (int i=s-1; i>=0; --i) {
+		double next = pdf * (double) pdfRad[i+1] / (double) pdfImp[i+1],
+		       value = next;
+
+		if (sampleDirect) {
+			if (i == 1)
+				value *= ratioEmitterDirect;
+			else if (i == sensorRefIndirection)
+				value *= ratioSensorDirect;
+		}
+
+		int tPrime = k-i-1;
+		if (connectable[i] && (connectable[i+1] || isNull[i+1]) && (lightImage || tPrime > 1))
+			weight += value*value;
+
+		pdf = next;
+	}
+
+	return (Float) (1.0 / weight);
+}
+
 void Path::collapseTo(PathEdge &target) const {
 	BDAssert(m_edges.size() > 0);
 

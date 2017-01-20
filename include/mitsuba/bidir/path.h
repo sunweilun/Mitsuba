@@ -467,6 +467,18 @@ public:
 			const Path &sensorSubpath, int s, int t,
 			bool direct, bool lightImage);
 
+        static Float miConnectWeight(const Scene *scene,
+			const Path &emitterSubpath,
+			const PathEdge *connectionEdge,
+			const Path &sensorSubpath, int s, int t,
+			bool direct, bool lightImage, float radius);
+        
+        static Float miMergeWeight(const Scene *scene,
+			const Path &emitterSubpath,
+			const PathEdge *connectionEdge,
+			const Path &sensorSubpath, int s, int t,
+			bool direct, bool lightImage, float radius);
+        
 	/**
 	 * \brief Collapse a path into an entire edge that summarizes the aggregate
 	 * transport and sampling densities
@@ -574,14 +586,17 @@ public:
 struct MTS_EXPORT_BIDIR CompactBlockPathPool {
     struct PathItem
     {
+        size_t vStartIndex;
+        size_t eStartIndex;
         size_t nVertices;
         size_t nEdges;
         PathItem(size_t nv, size_t ne) {
+            vStartIndex = eStartIndex = 0;
             nVertices = nv;
             nEdges = ne;
         }
     };
-    size_t index, nv, ne;
+    
     std::vector<PathVertex> vertices;
     std::vector<PathEdge> edges;
     std::vector<PathItem> pathItems;
@@ -603,18 +618,21 @@ struct MTS_EXPORT_BIDIR CompactBlockPathPool {
         }
     }
     
-    void resetIndex() { index = nv = ne = 0; }
+    void buildIndex() {
+        for(size_t i=1; i<pathItems.size(); i++) {
+            pathItems[i].vStartIndex = pathItems[i-1].vStartIndex+pathItems[i-1].nVertices;
+            pathItems[i].eStartIndex = pathItems[i-1].eStartIndex+pathItems[i-1].nEdges;
+        }
+    }
     
-    void extractPathItem(Path& path) {
-        PathItem &item = pathItems[index++];
+    void extractPathItem(Path& path, size_t index) {
+        PathItem &item = pathItems[index];
         path.m_vertices.clear();
         for(size_t i=0; i<item.nVertices; i++)
-            path.m_vertices.push_back(&vertices[nv+i]);
+            path.m_vertices.push_back(&vertices[item.vStartIndex+i]);
         path.m_edges.clear();
         for(size_t i=0; i<item.nEdges; i++)
-            path.m_edges.push_back(&edges[ne+i]);
-        nv += item.nVertices;
-        ne += item.nEdges;
+            path.m_edges.push_back(&edges[item.eStartIndex+i]);
     }
     
 };
