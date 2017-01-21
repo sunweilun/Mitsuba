@@ -23,6 +23,7 @@
 #include <mitsuba/core/fresolver.h>
 #include <mitsuba/bidir/util.h>
 #include "vcm.h"
+#include "vcm_basics.h"
 
 MTS_NAMESPACE_BEGIN
 
@@ -36,43 +37,7 @@ MTS_NAMESPACE_BEGIN
    image' block and potentially a full-resolution 'light image'.
  */
 
-struct VCMPhoton {
-    size_t blockID;
-    size_t pointID;
-    size_t vertexID;
-    Point3 pos;
-};
-
-struct VCMPhotonMap {
-    std::vector<VCMPhoton> photons;
-
-    inline size_t kdtree_get_point_count() const {
-        return photons.size();
-    }
-
-    inline Float kdtree_distance(const Float* p1, const size_t idx_p2, size_t) const {
-        const Float d0 = p1[0] - photons[idx_p2].pos[0];
-        const Float d1 = p1[1] - photons[idx_p2].pos[1];
-        const Float d2 = p1[2] - photons[idx_p2].pos[2];
-        Float sqr_dist = d0 * d0 + d1 * d1 + d2 * d2;
-        return sqr_dist;
-    }
-
-    inline Float kdtree_get_pt(const size_t idx, int dim) const {
-        return photons[idx].pos[dim];
-    }
-
-    inline VCMPhoton& kdtree_get_data(const size_t idx) {
-        return photons[idx];
-    }
-
-    template <class BBOX>
-    bool kdtree_get_bbox(BBOX& /* bb */) const {
-        return false;
-    }
-};
-
-class VCMWorkResult : public WorkResult {
+class VCMWorkResult : public VCMWorkResultBase {
 public:
     VCMWorkResult(const VCMConfiguration &conf, const ReconstructionFilter *filter,
             Vector2i blockSize = Vector2i(-1, -1));
@@ -125,13 +90,7 @@ public:
         m_block->setOffset(offset);
     }
     
-    inline void clearPhotons() { m_photonMap.clear(); }
     
-    inline void putPhoton(const VCMPhoton& photon) {
-        m_photonMap.push_back(photon);
-    }
-    
-    inline const std::vector<VCMPhoton>& getPhotons() const { return m_photonMap; }
 
     /// Return a string representation
     std::string toString() const;
@@ -150,7 +109,7 @@ protected:
     ref_vector<ImageBlock> m_debugBlocks;
 #endif
     ref<ImageBlock> m_block, m_lightImage;
-    std::vector<VCMPhoton> m_photonMap;
+    
 };
 
 MTS_NAMESPACE_END

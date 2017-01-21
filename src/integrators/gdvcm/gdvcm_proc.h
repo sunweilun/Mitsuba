@@ -14,22 +14,15 @@
 
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.
- */
+*/
 
-#if !defined(__VCM_PROC_H)
-#define __VCM_PROC_H
+#if !defined(__GBVCM_PROC_H)
+#define __GDVCM_PROC_H
 
 #include <mitsuba/render/renderproc.h>
 #include <mitsuba/render/renderjob.h>
 #include <mitsuba/core/bitmap.h>
-#include "vcm_wr.h"
-
-
-
-#if defined(MTS_OPENMP)
-#define NANOFLANN_USE_OMP
-#endif
-#include <nanoflann/nanoflann.hpp>
+#include "gdvcm_wr.h"
 
 MTS_NAMESPACE_BEGIN
 
@@ -37,43 +30,37 @@ MTS_NAMESPACE_BEGIN
 /*                           Parallel process                           */
 /* ==================================================================== */
 
-class VCMProcess : public VCMProcessBase
-{
-    friend class VCMRenderer;
+
+/**
+ * \brief Renders work units (rectangular image regions) using
+ * bidirectional path tracing
+ */
+class GDVCMProcess : public BlockedRenderProcess {
 public:
-    VCMProcess(const RenderJob *parent, RenderQueue *queue,
-            const VCMConfiguration &config);
+	GDVCMProcess(const RenderJob *parent, RenderQueue *queue,
+		const GDVCMConfiguration &config);
 
-    inline const VCMWorkResult *getResult() const
-    {
-        return m_result.get();
-    }
+	inline const GDVCMWorkResult *getResult() const { return m_result.get(); }
 
-    /// Develop the image
-    void develop();
-    
-    void updateRadius(int n) {
-        m_mergeRadius = m_config.initialRadius / pow(n, 1.0/3.0);
-    }
+	/// Develop the image
+	void develop();
 
-    /* ParallelProcess impl. */
-    void processResult(const WorkResult *wr, bool cancelled);
-    ref<WorkProcessor> createWorkProcessor() const;
-    void bindResource(const std::string &name, int id);
+	/* ParallelProcess impl. */
+	void processResult(const WorkResult *wr, bool cancelled);
+	ref<WorkProcessor> createWorkProcessor() const;
+	void bindResource(const std::string &name, int id);
 
-    MTS_DECLARE_CLASS()
+	MTS_DECLARE_CLASS()
 protected:
-    /// Virtual destructor
-    virtual ~VCMProcess()
-    {
-    }
+	/// Virtual destructor
+	virtual ~GDVCMProcess() { }
 private:
-    ref<VCMWorkResult> m_result;
-    ref<Timer> m_refreshTimer;
-    VCMConfiguration m_config;
-    Float m_mergeRadius;
+	ref<GDVCMWorkResult> m_result;
+	ref<Timer> m_refreshTimer;
+	GDVCMConfiguration m_config;
+	//ref<ImageBlockContainer> m_imbc;
 };
 
 MTS_NAMESPACE_END
 
-#endif /* __VCM_PROC */
+#endif /* __GDVCM_PROC */

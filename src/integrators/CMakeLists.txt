@@ -45,7 +45,7 @@ add_bidir(bdpt          bdpt/bdpt.h      bdpt/bdpt.cpp
 
 add_bidir(vcm          vcm/vcm.h      vcm/vcm.cpp
                         vcm/vcm_proc.h vcm/vcm_proc.cpp
-                        vcm/vcm_wr.h   vcm/vcm_wr.cpp)
+                        vcm/vcm_wr.h   vcm/vcm_wr.cpp vcm/vcm_basics.h)
 
 add_bidir(pssmlt        pssmlt/pssmlt.h         pssmlt/pssmlt.cpp
                         pssmlt/pssmlt_proc.h    pssmlt/pssmlt_proc.cpp
@@ -60,3 +60,7 @@ add_bidir(erpt          erpt/erpt.h      erpt/erpt.cpp
 add_bidir(gbdpt    gbdpt/gbdpt.cpp   gbdpt/gbdpt.h 
                 gbdpt/gbdpt_proc.cpp    gbdpt/gbdpt_proc.h 
                 gbdpt/gbdpt_wr.cpp  gbdpt/gbdpt_wr.h)
+
+add_bidir(gdvcm    gdvcm/gdvcm.cpp   gdvcm/gdvcm.h 
+                gdvcm/gdvcm_proc.cpp    gdvcm/gdvcm_proc.h 
+                gdvcm/gdvcm_wr.cpp  gdvcm/gdvcm_wr.h vcm/vcm_basics.h)

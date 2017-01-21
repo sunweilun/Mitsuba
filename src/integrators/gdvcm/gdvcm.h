@@ -16,18 +16,11 @@
     along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
-#if !defined(__VCM_H)
-#define __VCM_H
+#if !defined(__GDVCM_H)
+#define __GDVCM_H
 
 #include <mitsuba/mitsuba.h>
-#include "vcm_basics.h"
-/**
- * When the following is set to "1", the Bidirectional Path Tracer
- * will generate a series of debugging images that split up the final
- * rendering into the weighted contributions of the individual sampling
- * strategies.
- */
-//#define VCM_DEBUG 1
+
 
 MTS_NAMESPACE_BEGIN
 
@@ -39,28 +32,42 @@ MTS_NAMESPACE_BEGIN
  * \brief Stores all configuration parameters of the
  * bidirectional path tracer
  */
-struct VCMConfiguration : public VCMConfigBase {
-	int blockSize, borderSize;
+struct GDVCMConfiguration {
+	int maxDepth, blockSize;
 	bool lightImage;
 	bool sampleDirect;
-	bool showWeighted;
 	size_t sampleCount;
 	Vector2i cropSize;
-        Float initialRadius;
-        
+	int rrDepth;
 
-	inline VCMConfiguration() { }
+	int extraBorder;
+	int nNeighbours;
 
-	inline VCMConfiguration(Stream *stream) {
+	float m_shiftThreshold;
+	bool m_reconstructL1;
+	bool m_reconstructL2;
+	float m_reconstructAlpha;
+        int m_nJacobiIters;
+
+	inline GDVCMConfiguration() { }
+
+	inline GDVCMConfiguration(Stream *stream) {
 		maxDepth = stream->readInt();
 		blockSize = stream->readInt();
 		lightImage = stream->readBool();
 		sampleDirect = stream->readBool();
-		showWeighted = stream->readBool();
 		sampleCount = stream->readSize();
 		cropSize = Vector2i(stream);
 		rrDepth = stream->readInt();
-                initialRadius = stream->readFloat();
+
+
+		extraBorder = stream->readInt();
+		nNeighbours = stream->readInt();
+
+		m_shiftThreshold = stream->readFloat();
+		m_reconstructL1 = stream->readBool();
+		m_reconstructL2 = stream->readBool();
+		m_reconstructAlpha = stream->readFloat();
 	}
 
 	inline void serialize(Stream *stream) const {
@@ -68,31 +75,37 @@ struct VCMConfiguration : public VCMConfigBase {
 		stream->writeInt(blockSize);
 		stream->writeBool(lightImage);
 		stream->writeBool(sampleDirect);
-		stream->writeBool(showWeighted);
 		stream->writeSize(sampleCount);
 		cropSize.serialize(stream);
-		stream->writeInt(rrDepth);
-                stream->writeFloat(initialRadius);
+		stream->writeInt(rrDepth);	//possible problem with network rendering?
+
+		stream->writeInt(extraBorder);
+		stream->writeInt(nNeighbours);
+
+		stream->writeFloat(m_shiftThreshold);
+		stream->writeBool(m_reconstructL1);
+		stream->writeBool(m_reconstructL2);
+		stream->writeFloat(m_reconstructAlpha);
+		
 	}
 
 	void dump() const {
-		SLog(EDebug, "Bidirectional path tracer configuration:");
+		SLog(EInfo, "Gradient-Domain Bidirectional Path Tracer configuration:");
 		SLog(EDebug, "   Maximum path depth          : %i", maxDepth);
 		SLog(EDebug, "   Image size                  : %ix%i",
 			cropSize.x, cropSize.y);
-		SLog(EDebug, "   Direct sampling strategies  : %s",
-			sampleDirect ? "yes" : "no");
 		SLog(EDebug, "   Generate light image        : %s",
 			lightImage ? "yes" : "no");
 		SLog(EDebug, "   Russian roulette depth      : %i", rrDepth);
 		SLog(EDebug, "   Block size                  : %i", blockSize);
 		SLog(EDebug, "   Number of samples           : " SIZE_T_FMT, sampleCount);
-		#if VCM_DEBUG == 1
-			SLog(EDebug, "   Show weighted contributions : %s", showWeighted ? "yes" : "no");
-		#endif
 	}
+
+	bool accumulateData(ref<Bitmap> buff, ref<Film> film, int bufferIdx, int target, int iter, const std::vector<Float> &weights);
+	void prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2 = NULL, int offset = 0);
+	void setBitmapFromArray(ref<Bitmap> &bitmap, float *img);
 };
 
 MTS_NAMESPACE_END
 
-#endif /* __VCM_H */
+#endif /* __GDVCM_H */

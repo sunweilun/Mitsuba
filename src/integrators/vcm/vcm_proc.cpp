@@ -27,41 +27,48 @@ MTS_NAMESPACE_BEGIN
 /*                         Worker implementation                        */
 /* ==================================================================== */
 
-class VCMRenderer : public WorkProcessor {
+class VCMRenderer : public VCMRendererBase
+{
 public:
 
-    VCMRenderer(const VCMConfiguration &config, VCMProcess* process) : m_config(config), m_process(process) {
-    }
+    VCMRenderer(const VCMConfiguration &config, VCMProcess* process) : m_config(config), m_process(process)
+    { }
 
-    VCMRenderer(const VCMConfiguration &config) : m_config(config) {
+    VCMRenderer(const VCMConfiguration &config) : m_config(config)
+    {
     }
 
     VCMRenderer(Stream *stream, InstanceManager *manager)
-    : WorkProcessor(stream, manager), m_config(stream) {
+    : VCMRendererBase(stream, manager), m_config(stream)
+    {
     }
 
-    virtual ~VCMRenderer() {
+    virtual ~VCMRenderer()
+    {
     }
 
-    void serialize(Stream *stream, InstanceManager *manager) const {
+    void serialize(Stream *stream, InstanceManager *manager) const
+    {
         m_config.serialize(stream);
     }
 
-    ref<WorkUnit> createWorkUnit() const {
+    ref<WorkUnit> createWorkUnit() const
+    {
         return new RectangularWorkUnit();
     }
 
-    ref<WorkResult> createWorkResult() const {
+    ref<WorkResult> createWorkResult() const
+    {
         return new VCMWorkResult(m_config, m_rfilter.get(),
                 Vector2i(m_config.blockSize));
     }
 
-    void prepare() {
+    void prepare()
+    {
         Scene *scene = static_cast<Scene *> (getResource("scene"));
 
         m_scene = scene;
         m_sampler = static_cast<Sampler *> (getResource("sampler"));
-        m_indSampler = static_cast<Sampler *> (getResource("indSampler"));
         m_sensor = static_cast<Sensor *> (getResource("sensor"));
         m_rfilter = m_sensor->getFilm()->getReconstructionFilter();
         /*
@@ -75,7 +82,14 @@ public:
          */
     }
 
-    void process(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop) {
+    void process(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop)
+    {
+        if (m_process->phase == VCMProcess::SAMPLE)
+        {
+            processSampling(workUnit, workResult, stop, m_process, &m_config);
+            return;
+        }
+
         const RectangularWorkUnit *rect = static_cast<const RectangularWorkUnit *> (workUnit);
         VCMWorkResult *result = static_cast<VCMWorkResult *> (workResult);
         bool needsTimeSample = m_sensor->needsTimeSample();
@@ -86,9 +100,7 @@ public:
         result->clear();
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
-        size_t nbx = m_process->nbx;
-        size_t blockID = (rect->getOffset().y / rect->getSize().y) * nbx +
-                rect->getOffset().x / rect->getSize().x;
+
 
 #if defined(MTS_DEBUG_FP)
         enableFPExceptions();
@@ -110,71 +122,27 @@ public:
         if (!m_scene->hasDegenerateEmitters() && sensorDepth != -1)
             ++sensorDepth;
 
-        CompactBlockPathPool& sensorPathPool = m_process->m_sensorPathPool[blockID];
-        CompactBlockPathPool& emitterPathPool = m_process->m_emitterPathPool[blockID];
-        if (m_process->phase == VCMProcess::SAMPLE) {
-            sensorPathPool.clear();
-            emitterPathPool.clear();
-            result->clearPhotons();
-        }
-        
-        for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i) {
+
+
+        for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i)
+        {
             Point2i offset = Point2i(m_hilbertCurve[i]) + Vector2i(rect->getOffset());
             m_sampler->generate(offset);
-            
-            
+
             if (stop)
                 break;
+
+            extractPathPair(m_process, emitterSubpath, sensorSubpath, rect, i); // extract cached paths from sampling phase
 
             if (needsTimeSample)
                 time = m_sensor->sampleTime(m_sampler->next1D());
 
-            if (m_process->phase == VCMProcess::SAMPLE) {
-                /* Start new emitter and sensor subpaths */
-                emitterSubpath.initialize(m_scene, time, EImportance, m_pool);
-                sensorSubpath.initialize(m_scene, time, ERadiance, m_pool);
-
-                /* Perform a random walk using alternating steps on each path */
-                Path::alternatingRandomWalkFromPixel(m_scene, m_indSampler,
-                        emitterSubpath, emitterDepth, sensorSubpath,
-                        sensorDepth, offset, m_config.rrDepth, m_pool);
-
-                sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
-                emitterPathPool.addPathItem(emitterSubpath); // cache path into emitter Path Pool
-
-                // add photons to local photon map
-                for (size_t k = 1; k < emitterSubpath.m_vertices.size(); k++) {
-                    PathVertex* vertex = emitterSubpath.m_vertices[k];
-                    if (!vertex->isSurfaceInteraction()) continue;
-                    if (!vertex->isConnectable()) continue;
-                    // add a new photon
-                    VCMPhoton photon;
-                    photon.pos = vertex->getPosition();
-                    photon.blockID = blockID;
-                    photon.pointID = i;
-                    photon.vertexID = k;
-                    result->putPhoton(photon);
-                }
-                emitterSubpath.release(m_pool);
-                sensorSubpath.release(m_pool);
-
-            } else {
-                sensorPathPool.extractPathItem(sensorSubpath, i);
-                emitterPathPool.extractPathItem(emitterSubpath, i);
-                
-                Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
-                Spectrum color(Float(0.f));
-                color += evaluateConnection(result, emitterSubpath, sensorSubpath);
-                color += evaluateMerging(result, sensorSubpath);
-                result->putSample(initialSamplePos, color, 1.f);
-            }
-
+            Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
+            Spectrum color(Float(0.f));
+            color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+            color += evaluateMerging(result, sensorSubpath);
+            result->putSample(initialSamplePos, color, 1.f);
             m_sampler->advance();
-        }
-
-        if (m_process->phase == VCMProcess::SAMPLE) {
-            sensorPathPool.buildIndex();
-            emitterPathPool.buildIndex();
         }
 
 #if defined(MTS_DEBUG_FP)
@@ -188,7 +156,8 @@ public:
     /// Evaluate the contributions of the given eye and light paths
 
     Spectrum evaluateConnection(VCMWorkResult *wr,
-            Path &emitterSubpath, Path &sensorSubpath) {
+            Path &emitterSubpath, Path &sensorSubpath)
+    {
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
         PathVertex tempEndpoint, tempSample;
@@ -212,15 +181,17 @@ public:
                 sensorSubpath.edge(i - 1)->weight[ERadiance];
 
         Spectrum sampleValue(0.0f);
-        for (int s = (int) emitterSubpath.vertexCount() - 1; s >= 0; --s) {
+        for (int s = (int) emitterSubpath.vertexCount() - 1; s >= 0; --s)
+        {
             /* Determine the range of sensor vertices to be traversed,
                while respecting the specified maximum path length */
             int minT = std::max(2 - s, m_config.lightImage ? 0 : 2),
                     maxT = (int) sensorSubpath.vertexCount() - 1;
             if (m_config.maxDepth != -1)
                 maxT = std::min(maxT, m_config.maxDepth + 1 - s);
-            for (int t = maxT; t >= minT; --t) {
-                
+            for (int t = maxT; t >= minT; --t)
+            {
+
                 PathVertex
                         *vsPred = emitterSubpath.vertexOrNull(s - 1),
                         *vtPred = sensorSubpath.vertexOrNull(t - 1),
@@ -247,7 +218,8 @@ public:
 
                 /* Account for the terms of the measurement contribution
                    function that are coupled to the connection endpoints */
-                if (vs->isEmitterSupernode()) {
+                if (vs->isEmitterSupernode())
+                {
                     /* If possible, convert 'vt' into an emitter sample */
                     if (!vt->cast(scene, PathVertex::EEmitterSample) || vt->isDegenerate())
                         continue;
@@ -255,7 +227,8 @@ public:
                     value = radianceWeights[t] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
-                } else if (vt->isSensorSupernode()) {
+                } else if (vt->isSensorSupernode())
+                {
                     /* If possible, convert 'vs' into an sensor sample */
                     if (!vs->cast(scene, PathVertex::ESensorSample) || vs->isDegenerate())
                         continue;
@@ -267,9 +240,11 @@ public:
                     value = importanceWeights[s] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
-                } else if (m_config.sampleDirect && ((t == 1 && s > 1) || (s == 1 && t > 1))) {
+                } else if (m_config.sampleDirect && ((t == 1 && s > 1) || (s == 1 && t > 1)))
+                {
                     /* s==1/t==1 path: use a direct sampling strategy if requested */
-                    if (s == 1) {
+                    if (s == 1)
+                    {
                         if (vt->isDegenerate())
                             continue;
                         /* Generate a position on an emitter using direct sampling */
@@ -282,7 +257,8 @@ public:
                         vsEdge = &tempEdge;
                         value *= vt->eval(scene, vtPred, vs, ERadiance);
                         vt->measure = EArea;
-                    } else {
+                    } else
+                    {
                         if (vs->isDegenerate())
                             continue;
                         /* Generate a position on the sensor using direct sampling */
@@ -298,7 +274,8 @@ public:
                     }
 
                     sampleDirect = true;
-                } else {
+                } else
+                {
                     /* Can't connect degenerate endpoints */
                     if (vs->isDegenerate() || vt->isDegenerate())
                         continue;
@@ -327,7 +304,8 @@ public:
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::ETransmittance |
                         (s == 1 ? PathEdge::ECosineRad : PathEdge::ECosineImp));
 
-                if (sampleDirect) {
+                if (sampleDirect)
+                {
                     /* A direct sampling strategy was used, which generated
                        two new vertices at one of the path ends. Temporarily
                        modify the path to reflect this change */
@@ -344,7 +322,8 @@ public:
                         sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage,
                         m_process->m_mergeRadius, nEmitterPaths, false);
 
-                if (sampleDirect) {
+                if (sampleDirect)
+                {
                     /* Now undo the previous change */
                     if (t == 1)
                         sensorSubpath.swapEndpoints(vtPred, vtEdge, vt);
@@ -355,7 +334,7 @@ public:
                 /* Determine the pixel sample position when necessary */
                 if (vt->isSensorSample() && !vt->getSamplePosition(vs, samplePos))
                     continue;
-                
+
 #if VCM_DEBUG == 1
                 /* When the debug mode is on, collect samples
                    separately for each sampling strategy. Note: the
@@ -367,49 +346,52 @@ public:
 #endif
                 if (t >= 2)
                     sampleValue += value * miWeight;
-                else 
+                else
                     wr->putLightSample(samplePos, value * miWeight);
             }
         }
         return sampleValue;
     }
 
-    Spectrum evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath) {
+    Spectrum evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath)
+    {
         Path emitterSubpath;
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
         PathVertex tempEndpoint, tempSample;
         PathEdge tempEdge, connectionEdge;
-        
+
         Spectrum sampleValue(0.0f);
 
         int minT = 2;
         int maxT = (int) sensorSubpath.vertexCount() - 1;
         if (m_config.maxDepth != -1)
             maxT = std::min(maxT, m_config.maxDepth + 1);
-        for (int t = maxT; t >= minT; --t) {
-            
+        for (int t = maxT; t >= minT; --t)
+        {
+
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
             Float radius = m_process->m_mergeRadius;
-            
+
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
-            
-            for (const VCMPhoton& photon : photons) { // inspect every photon in range
-                
-                int s = photon.vertexID-1; // pretend that a connection can be formed from the previous vertex.
-                if(m_config.maxDepth > -1 && s + t > m_config.maxDepth) continue;
-                m_process->extractPath(photon, emitterSubpath); // extract the path that this photon bounded to.
-                Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance]*M_PI*radius*radius;
-                p_acc = std::min(Float(1.f), p_acc); // acceptance probability
+
+            for (const VCMPhoton& photon : photons)
+            { // inspect every photon in range
+
+                int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
+                if (m_config.maxDepth > -1 && s + t > m_config.maxDepth) continue;
+                m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
+                Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius*radius;
+                //p_acc = std::min(Float(1.f), p_acc); // acceptance probability
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
-                
+
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
                 Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
                 importanceWeights[0] = radianceWeights[0] = Spectrum(1.0f);
-                
+
                 for (size_t i = 1; i < emitterSubpath.vertexCount(); ++i)
                     importanceWeights[i] = importanceWeights[i - 1] *
                         emitterSubpath.vertex(i - 1)->weight[EImportance] *
@@ -445,10 +427,11 @@ public:
 
                 /* Will receive the path weight of the (s, t)-connection */
                 Spectrum value;
-                
+
                 /* Account for the terms of the measurement contribution
                    function that are coupled to the connection endpoints */
-                if (vs->isEmitterSupernode()) {
+                if (vs->isEmitterSupernode())
+                {
                     /* If possible, convert 'vt' into an emitter sample */
                     if (!vt->cast(scene, PathVertex::EEmitterSample) || vt->isDegenerate())
                         continue;
@@ -456,7 +439,8 @@ public:
                     value = radianceWeights[t] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
-                } else if (vt->isSensorSupernode()) {
+                } else if (vt->isSensorSupernode())
+                {
                     /* If possible, convert 'vs' into an sensor sample */
                     if (!vs->cast(scene, PathVertex::ESensorSample) || vs->isDegenerate())
                         continue;
@@ -468,42 +452,43 @@ public:
                     value = importanceWeights[s] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
-                } 
-                // We never use direct sampling in merging stage.
-//                else if (m_config.sampleDirect && ((t == 1 && s > 1) || (s == 1 && t > 1))) {
-//                    /* s==1/t==1 path: use a direct sampling strategy if requested */
-//                    
-//                    if (s == 1) {
-//                        if (vt->isDegenerate())
-//                            continue;
-//                        /* Generate a position on an emitter using direct sampling */
-//                        value = radianceWeights[t] * vt->sampleDirect(scene, m_sampler,
-//                                &tempEndpoint, &tempEdge, &tempSample, EImportance);
-//                        if (value.isZero())
-//                            continue;
-//                        vs = &tempSample;
-//                        vsPred = &tempEndpoint;
-//                        vsEdge = &tempEdge;
-//                        value *= vt->eval(scene, vtPred, vs, ERadiance);
-//                        vt->measure = EArea;
-//                    } else {
-//                        if (vs->isDegenerate())
-//                            continue;
-//                        /* Generate a position on the sensor using direct sampling */
-//                        value = importanceWeights[s] * vs->sampleDirect(scene, m_sampler,
-//                                &tempEndpoint, &tempEdge, &tempSample, ERadiance);
-//                        if (value.isZero())
-//                            continue;
-//                        vt = &tempSample;
-//                        vtPred = &tempEndpoint;
-//                        vtEdge = &tempEdge;
-//                        value *= vs->eval(scene, vsPred, vt, EImportance);
-//                        vs->measure = EArea;
-//                    }
-//
-//                    sampleDirect = true;
-//                } 
-                else {
+                }
+                    // We never use direct sampling in merging stage.
+                    //                else if (m_config.sampleDirect && ((t == 1 && s > 1) || (s == 1 && t > 1))) {
+                    //                    /* s==1/t==1 path: use a direct sampling strategy if requested */
+                    //                    
+                    //                    if (s == 1) {
+                    //                        if (vt->isDegenerate())
+                    //                            continue;
+                    //                        /* Generate a position on an emitter using direct sampling */
+                    //                        value = radianceWeights[t] * vt->sampleDirect(scene, m_sampler,
+                    //                                &tempEndpoint, &tempEdge, &tempSample, EImportance);
+                    //                        if (value.isZero())
+                    //                            continue;
+                    //                        vs = &tempSample;
+                    //                        vsPred = &tempEndpoint;
+                    //                        vsEdge = &tempEdge;
+                    //                        value *= vt->eval(scene, vtPred, vs, ERadiance);
+                    //                        vt->measure = EArea;
+                    //                    } else {
+                    //                        if (vs->isDegenerate())
+                    //                            continue;
+                    //                        /* Generate a position on the sensor using direct sampling */
+                    //                        value = importanceWeights[s] * vs->sampleDirect(scene, m_sampler,
+                    //                                &tempEndpoint, &tempEdge, &tempSample, ERadiance);
+                    //                        if (value.isZero())
+                    //                            continue;
+                    //                        vt = &tempSample;
+                    //                        vtPred = &tempEndpoint;
+                    //                        vtEdge = &tempEdge;
+                    //                        value *= vs->eval(scene, vsPred, vt, EImportance);
+                    //                        vs->measure = EArea;
+                    //                    }
+                    //
+                    //                    sampleDirect = true;
+                    //                } 
+                else
+                {
                     /* Can't connect degenerate endpoints */
                     if (vs->isDegenerate() || vt->isDegenerate())
                         continue;
@@ -515,7 +500,7 @@ public:
                        handle BSDFs with diffuse + specular components */
                     vs->measure = vt->measure = EArea;
                 }
-                
+
                 /* Attempt to connect the two endpoints, which could result in
                    the creation of additional vertices (index-matched boundaries etc.) */
                 int interactions = remaining; // backup
@@ -531,7 +516,8 @@ public:
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::ETransmittance |
                         (s == 1 ? PathEdge::ECosineRad : PathEdge::ECosineImp));
 
-                if (sampleDirect) {
+                if (sampleDirect)
+                {
                     /* A direct sampling strategy was used, which generated
                        two new vertices at one of the path ends. Temporarily
                        modify the path to reflect this change */
@@ -543,10 +529,11 @@ public:
 
                 /* Compute the multiple importance sampling weight */
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, 
+                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage,
                         radius, nEmitterPaths, true);
-                
-                if (sampleDirect) {
+
+                if (sampleDirect)
+                {
                     /* Now undo the previous change */
                     if (t == 1)
                         sensorSubpath.swapEndpoints(vtPred, vtEdge, vt);
@@ -567,28 +554,26 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-                
+
                 //miWeight = 1.0; // for debug
-                sampleValue += value * miWeight / (p_acc*nEmitterPaths);
+                sampleValue += value * miWeight / (p_acc * nEmitterPaths);
             }
         }
         return sampleValue;
     }
 
-    ref<WorkProcessor> clone() const {
+    ref<WorkProcessor> clone() const
+    {
         return new VCMRenderer(m_config);
     }
 
     MTS_DECLARE_CLASS()
 private:
-    ref<Scene> m_scene;
-    ref<Sensor> m_sensor;
-    ref<Sampler> m_sampler;
-    ref<Sampler> m_indSampler;
+    
     ref<ReconstructionFilter> m_rfilter;
-    MemoryPool m_pool;
+    
     VCMConfiguration m_config;
-    HilbertCurve2D<uint8_t> m_hilbertCurve;
+    
     VCMProcess* m_process;
 };
 
@@ -600,17 +585,20 @@ private:
 
 VCMProcess::VCMProcess(const RenderJob *parent, RenderQueue *queue,
         const VCMConfiguration &config) :
-BlockedRenderProcess(parent, queue, config.blockSize), m_config(config) {
+VCMProcessBase(parent, queue, config.blockSize), m_config(config)
+{
     m_refreshTimer = new Timer();
     m_photonKDTree = NULL;
 }
 
-ref<WorkProcessor> VCMProcess::createWorkProcessor() const {
+ref<WorkProcessor> VCMProcess::createWorkProcessor() const
+{
     VCMProcess* proc = const_cast<VCMProcess*> (this);
     return new VCMRenderer(m_config, proc);
 }
 
-void VCMProcess::develop() {
+void VCMProcess::develop()
+{
     if (!m_config.lightImage)
         return;
     LockGuard lock(m_resultMutex);
@@ -621,23 +609,26 @@ void VCMProcess::develop() {
     m_queue->signalRefresh(m_parent);
 }
 
-void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
+void VCMProcess::processResult(const WorkResult *wr, bool cancelled)
+{
     if (cancelled)
         return;
     const VCMWorkResult *result = static_cast<const VCMWorkResult *> (wr);
     ImageBlock *block = const_cast<ImageBlock *> (result->getImageBlock());
     LockGuard lock(m_resultMutex);
-    if(phase == SAMPLE) {
-        const std::vector<VCMPhoton>& photons = result->getPhotons();
-        m_photonMap.photons.insert(m_photonMap.photons.end(), photons.begin(), photons.end());
+    if (phase == SAMPLE)
+    {
+        processResultSample(result);
         m_queue->signalWorkEnd(m_parent, result->getImageBlock(), false);
         return;
     }
     m_progress->update(++m_resultCount);
-    if (m_config.lightImage) {
+    if (m_config.lightImage)
+    {
         const ImageBlock *lightImage = m_result->getLightImage();
         m_result->put(result);
-        if (m_parent->isInteractive()) {
+        if (m_parent->isInteractive())
+        {
             /* Modify the finished image block so that it includes the light image contributions,
                which creates a more intuitive preview of the rendering process. This is
                not 100% correct but doesn't matter, as the shown image will be properly re-developed
@@ -650,13 +641,15 @@ void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
             Point2i offset = block->getOffset();
             Vector2i size = block->getSize();
 
-            for (int y = 0; y < size.y; ++y) {
+            for (int y = 0; y < size.y; ++y)
+            {
                 const Float *source = sourceBitmap->getFloatData()
                         + (offset.x + (y + offset.y) * sourceBitmap->getWidth()) * SPECTRUM_SAMPLES;
                 Float *dest = destBitmap->getFloatData()
                         + (borderSize + (y + borderSize) * destBitmap->getWidth()) * (SPECTRUM_SAMPLES + 2);
 
-                for (int x = 0; x < size.x; ++x) {
+                for (int x = 0; x < size.x; ++x)
+                {
                     Float weight = dest[SPECTRUM_SAMPLES + 1] * invSampleCount;
                     for (int k = 0; k < SPECTRUM_SAMPLES; ++k)
                         *dest++ += *source++ * weight;
@@ -680,18 +673,16 @@ void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
         develop();
 }
 
-void VCMProcess::bindResource(const std::string &name, int id) {
-    BlockedRenderProcess::bindResource(name, id);
-    if (name == "sensor") {
-        if (!m_result.get()) {
+void VCMProcess::bindResource(const std::string &name, int id)
+{
+    VCMProcessBase::bindResource(name, id);
+    if (name == "sensor")
+    {
+        if (!m_result.get())
+        {
             /* If needed, allocate memory for the light image */
             m_result = new VCMWorkResult(m_config, NULL, m_film->getCropSize());
             m_result->clear();
-            nbx = ceil_div(m_film->getCropSize().x, m_config.blockSize);
-            nby = ceil_div(m_film->getCropSize().y, m_config.blockSize);
-
-            m_sensorPathPool.resize(nbx * nby);
-            m_emitterPathPool.resize(nbx * nby);
         }
     }
 }

@@ -136,10 +136,10 @@ MTS_NAMESPACE_BEGIN
  *          \pluginref{bumpmap}, but this will be addressed in the future
  * }
  */
-class VCMIntegrator : public Integrator {
+class VCMIntegrator : public VCMIntegratorBase {
 public:
 
-    VCMIntegrator(const Properties &props) : Integrator(props) {
+    VCMIntegrator(const Properties &props) : VCMIntegratorBase(props) {
         /* Load the parameters / defaults */
         m_config.maxDepth = props.getInteger("maxDepth", -1);
         m_config.rrDepth = props.getInteger("rrDepth", 5);
@@ -169,7 +169,7 @@ public:
     /// Unserialize from a binary data stream
 
     VCMIntegrator(Stream *stream, InstanceManager *manager)
-    : Integrator(stream, manager) {
+    : VCMIntegratorBase(stream, manager) {
         m_config = VCMConfiguration(stream);
     }
 
@@ -230,52 +230,19 @@ public:
 
         ref<Scene> bidir_scene = new Scene(scene);
         bidir_scene->initializeBidirectional();
-
         int bidirSceneResID = scheduler->registerResource(bidir_scene);
-        ref<Sampler> indepSampler = static_cast<Sampler *> (PluginManager::getInstance()->
-                createObject(MTS_CLASS(Sampler), Properties("independent")));
-        /* Create a sampler instance for every core */
-        std::vector<SerializableObject *> samplers(scheduler->getCoreCount());
-        for (size_t i = 0; i < scheduler->getCoreCount(); ++i) {
-            ref<Sampler> clonedSampler = indepSampler->clone();
-            clonedSampler->incRef();
-            samplers[i] = clonedSampler.get();
-        }
-        int indepSamplerResID = scheduler->registerMultiResource(samplers);
-        for (size_t i = 0; i < scheduler->getCoreCount(); ++i)
-            samplers[i]->decRef();
         
         ref<VCMProcess> process = new VCMProcess(job, queue, m_config);
-        m_process = process;
         process->bindResource("scene", bidirSceneResID);
         process->bindResource("sampler", samplerResID);
-        process->bindResource("indSampler", indepSamplerResID);
         
 #if defined(MTS_OPENMP)
         Thread::initializeOpenMP(nCores);
 #endif
         for (size_t i = 0; i < sampleCount; i++) {
-            process->updateRadius(i+1);
-            process->clearPhotons();
-            // connection phase
-            // we also collect photons in this phase
-            process->bindResource("sensor", sensorResID);
-            process->phase = VCMProcess::SAMPLE;
-            scheduler->schedule(process);
-            scheduler->wait(process);
-
-            // build photon look up structure
-            process->buildPhotonLookupStructure();
-            
-            // merging phase
-            process->bindResource("sensor", sensorResID);
-            process->phase = VCMProcess::EVAL;
-            scheduler->schedule(process);
-            scheduler->wait(process);
+            iterateVCM(process, sensorResID, i);
         }
         scheduler->unregisterResource(bidirSceneResID);
-        scheduler->unregisterResource(indepSamplerResID);
-
         m_process = NULL;
         process->develop();
 
