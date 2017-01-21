@@ -198,8 +198,11 @@ public:
         
         return true;
     }
+    
+    bool m_cancelled;
 
     void cancel() {
+        m_cancelled = true;
         Scheduler::getInstance()->cancel(m_process);
     }
 
@@ -210,6 +213,7 @@ public:
 
     bool render(Scene *scene, RenderQueue *queue, const RenderJob *job,
             int sceneResID, int sensorResID, int samplerResID) {
+        m_cancelled = false;
         ref<Scheduler> scheduler = Scheduler::getInstance();
         ref<Sensor> sensor = scene->getSensor();
         const Film *film = sensor->getFilm();
@@ -263,7 +267,7 @@ public:
             process->phase = VCMProcess::SAMPLE;
             scheduler->schedule(process);
             scheduler->wait(process);
-
+            if(m_cancelled) break;
             // build photon look up structure
             process->buildPhotonLookupStructure();
             
@@ -272,6 +276,7 @@ public:
             process->phase = VCMProcess::EVAL;
             scheduler->schedule(process);
             scheduler->wait(process);
+            if(m_cancelled) break;
         }
         scheduler->unregisterResource(bidirSceneResID);
         scheduler->unregisterResource(indepSamplerResID);

@@ -378,8 +378,7 @@ public:
         Path emitterSubpath;
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
-        PathVertex tempEndpoint, tempSample;
-        PathEdge tempEdge, connectionEdge;
+        PathEdge connectionEdge;
         
         Spectrum sampleValue(0.0f);
 
@@ -468,41 +467,7 @@ public:
                     value = importanceWeights[s] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
-                } 
-                // We never use direct sampling in merging stage.
-//                else if (m_config.sampleDirect && ((t == 1 && s > 1) || (s == 1 && t > 1))) {
-//                    /* s==1/t==1 path: use a direct sampling strategy if requested */
-//                    
-//                    if (s == 1) {
-//                        if (vt->isDegenerate())
-//                            continue;
-//                        /* Generate a position on an emitter using direct sampling */
-//                        value = radianceWeights[t] * vt->sampleDirect(scene, m_sampler,
-//                                &tempEndpoint, &tempEdge, &tempSample, EImportance);
-//                        if (value.isZero())
-//                            continue;
-//                        vs = &tempSample;
-//                        vsPred = &tempEndpoint;
-//                        vsEdge = &tempEdge;
-//                        value *= vt->eval(scene, vtPred, vs, ERadiance);
-//                        vt->measure = EArea;
-//                    } else {
-//                        if (vs->isDegenerate())
-//                            continue;
-//                        /* Generate a position on the sensor using direct sampling */
-//                        value = importanceWeights[s] * vs->sampleDirect(scene, m_sampler,
-//                                &tempEndpoint, &tempEdge, &tempSample, ERadiance);
-//                        if (value.isZero())
-//                            continue;
-//                        vt = &tempSample;
-//                        vtPred = &tempEndpoint;
-//                        vtEdge = &tempEdge;
-//                        value *= vs->eval(scene, vsPred, vt, EImportance);
-//                        vs->measure = EArea;
-//                    }
-//
-//                    sampleDirect = true;
-//                } 
+                }
                 else {
                     /* Can't connect degenerate endpoints */
                     if (vs->isDegenerate() || vt->isDegenerate())
