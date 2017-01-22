@@ -23,6 +23,7 @@
 #include <mitsuba/render/renderjob.h>
 #include <mitsuba/core/bitmap.h>
 #include <mitsuba/core/sfcurve.h>
+#include <mitsuba/bidir/path.h>
 
 #if defined(MTS_OPENMP)
 #define NANOFLANN_USE_OMP
@@ -110,7 +111,7 @@ public:
     virtual void setSize(const Vector2i &size) = 0;
 
     virtual void setOffset(const Point2i &offset) = 0;
-    
+
     virtual void clear() = 0;
 protected:
     std::vector<VCMPhoton> m_photonMap;
@@ -145,13 +146,12 @@ public:
     std::vector<CompactBlockPathPool> m_sensorPathPool;
     std::vector<CompactBlockPathPool> m_emitterPathPool;
     VCMPhotonMap m_photonMap;
-    kd_tree_t* m_photonKDTree;
+    std::shared_ptr<kd_tree_t> m_photonKDTree;
     Float m_mergeRadius;
 
     void buildPhotonLookupStructure()
     {
-        if (m_photonKDTree) delete m_photonKDTree;
-        m_photonKDTree = new kd_tree_t(3, m_photonMap, nanoflann::KDTreeSingleIndexAdaptorParams());
+        m_photonKDTree.reset(new kd_tree_t(3, m_photonMap, nanoflann::KDTreeSingleIndexAdaptorParams()));
         m_photonKDTree->buildIndex(true);
     }
 
@@ -192,10 +192,10 @@ public:
 };
 
 struct VCMConfigBase
-    {
-        int maxDepth;
-        int rrDepth;
-    };
+{
+    int maxDepth;
+    int rrDepth;
+};
 
 class VCMRendererBase : public WorkProcessor
 {
@@ -212,7 +212,7 @@ protected:
         sensorPathPool.extractPathItem(sensorSubpath, pointID);
         emitterPathPool.extractPathItem(emitterSubpath, pointID);
     }
-    
+
     void processSampling(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop, VCMProcessBase* m_process, VCMConfigBase* config)
     {
         VCMConfigBase& m_config = *config;
@@ -276,7 +276,6 @@ protected:
 
             sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
             emitterPathPool.addPathItem(emitterSubpath); // cache path into emitter Path Pool
-
             // add photons to local photon map
             for (size_t k = 1; k < emitterSubpath.m_vertices.size(); k++)
             {
@@ -297,7 +296,7 @@ protected:
         sensorPathPool.buildIndex();
         emitterPathPool.buildIndex();
     }
-    
+
     ref<Scene> m_scene;
     ref<Sensor> m_sensor;
     ref<Sampler> m_sampler;
@@ -307,29 +306,34 @@ protected:
 
 class VCMIntegratorBase : public Integrator
 {
+protected:
+    bool m_cancelled;
     using Integrator::Integrator;
 public:
-
+    
     bool iterateVCM(VCMProcessBase* process, int sensorResID, int iter)
     {
         ref<Scheduler> scheduler = Scheduler::getInstance();
         process->updateRadius(iter + 1);
         process->clearPhotons();
+        if(m_cancelled) return false;
         // connection phase
         // we also collect photons in this phase
         process->bindResource("sensor", sensorResID);
         process->phase = VCMProcessBase::SAMPLE;
         scheduler->schedule(process);
         scheduler->wait(process);
-
+        if(m_cancelled) return false;
+        
         // build photon look up structure
         process->buildPhotonLookupStructure();
-
+        
         // merging phase
         process->bindResource("sensor", sensorResID);
         process->phase = VCMProcessBase::EVAL;
         scheduler->schedule(process);
         scheduler->wait(process);
+        if(m_cancelled) return false;
         return true;
     }
 };

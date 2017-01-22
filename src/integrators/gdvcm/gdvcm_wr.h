@@ -34,7 +34,7 @@ MTS_NAMESPACE_BEGIN
    since each rendering thread simultaneously renders to a small 'camera
    image' block and potentially a full-resolution 'light image'.
 */
-class GDVCMWorkResult : public WorkResult {
+class GDVCMWorkResult : public VCMWorkResultBase {
 public:
 	GDVCMWorkResult(const GDVCMConfiguration &conf, const ReconstructionFilter *filter,
 			Vector2i blockSize = Vector2i(-1, -1), int nbuff = 1, int extraBorder = 0);

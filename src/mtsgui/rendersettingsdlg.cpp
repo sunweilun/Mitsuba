@@ -487,7 +487,7 @@ void RenderSettingsDialog::apply(SceneContext *ctx) {
 	if (getPluginName(ui->integratorBox) == "gbdpt" || 
                 getPluginName(ui->integratorBox) == "gpt" || 
                 getPluginName(ui->integratorBox) == "agpt" ||
-                getPluginName(ui->integratorBox) == "upt")
+                getPluginName(ui->integratorBox) == "gdvcm")
 		filmProps.setPluginName("multifilm");
 	else
 		filmProps.setPluginName("hdrfilm");

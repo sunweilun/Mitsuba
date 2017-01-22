@@ -35,7 +35,7 @@ MTS_NAMESPACE_BEGIN
  * \brief Renders work units (rectangular image regions) using
  * bidirectional path tracing
  */
-class GDVCMProcess : public BlockedRenderProcess {
+class GDVCMProcess : public VCMProcessBase {
 public:
 	GDVCMProcess(const RenderJob *parent, RenderQueue *queue,
 		const GDVCMConfiguration &config);

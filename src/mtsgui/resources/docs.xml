@@ -607,6 +607,43 @@
 			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
 		</param>	
 	</plugin>
+        
+        <plugin type="integrator" name="gdvcm" readableName="Gradient-Domain VCM" show="true"
+			className="GradientBidirectionalIntegrator" extends="Integrator">
+		<descr>
+			<p>This plugin implements a gradient-domain bidirectional path tracer (short: G-BDPT) as described in the paper "Gradient-Domain Bidirectional Path Tracing" by Manzi et al.
+			It supports classical materials like diffuse, specular and glossy materials, depth-of-field, motion blur and low discrepancy samplers. The final image shown in the GUI is 
+			the L1 reconstruction. However, the L2 reconstruction, the primal image and the gradient images are also written to disc. </p> 
+			<p>Note that it is still an experimental implementation that hasn't been tested with all of Mitsubas features. 
+			Notably there is no support yet for any kind of participating media or pixel filters beside the box filter. 
+			Also smart sampling of the direct illumination is not implemented (i.e. no sampleDirect option as in BDPT).</p>
+		</descr>
+		<param name="maxDepth" readableName="Maximum depth" type="integer" default="-1">
+			Specifies the longest path depth in the generated output image (where <tt>-1</tt>
+			corresponds to ∞). A value of 1 will only render directly visible light sources.
+			2 will lead to single-bounce (direct-only) illumination, and so on.
+		</param>
+		<param name="rrDepth" readableName="Russian Roulette starting depth" type="integer" default="5" importance="1">
+			Specifies the minimum path depth, after which the implementation will start to use the
+			"russian roulette" path termination criterion (set to <tt>-1</tt> to disable).
+		</param>
+		<param name="lightImage" readableName="Create light image" type="boolean" default="true">
+			Analogous to the lightImage-parameter in BDPT. If an image contains caustic paths it is generally a good idea to activate this. If enabled, using small block-sizes will slow down the rendering process massively. 
+		</param>
+		<param name="shiftThreshold" readableName="Shift Threshold" type="float" default="0.001">
+			<p>Specifies the roughness threshold for classifying materials as 'diffuse', in contrast to 'specular', for the purposes of constructing paths pairs for estimating pixel differences.</p>
+			<p>This value should usually be somewhere between 0.0005 and 0.01. If the result image has noise similar to standard path tracing, increasing or decreasing this value may sometimes help. This implementation assumes that this value is small.</p>
+		</param>	
+		<param name="reconstructL1" readableName="Reconstruct with L1" type="boolean" default="true">
+			If set, the rendering method reconstructs the final image using a reconstruction method that efficiently kills many image artifacts. The reconstruction is slightly biased, but the bias will go away by increasing sample count.
+		</param>		
+		<param name="reconstructL2" readableName="Reconstruct with L2" type="boolean" default="false">
+			If set, the rendering method reconstructs the final image using a reconstruction method that is unbiased, but sometimes introduces severe dipole artifacts.
+		</param>
+		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">
+			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
+		</param>	
+	</plugin>
   
 	<plugin type="integrator" name="gpt" readableName="Gradient-Domain Path Tracer" show="true"
 			className="GradientIntegrator" extends="MonteCarloIntegrator">

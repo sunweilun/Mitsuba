@@ -84,7 +84,7 @@ public:
 
     void process(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop)
     {
-        if (m_process->phase == VCMProcess::SAMPLE)
+        if (m_process->phase == VCMProcessBase::SAMPLE)
         {
             processSampling(workUnit, workResult, stop, m_process, &m_config);
             return;
@@ -588,7 +588,6 @@ VCMProcess::VCMProcess(const RenderJob *parent, RenderQueue *queue,
 VCMProcessBase(parent, queue, config.blockSize), m_config(config)
 {
     m_refreshTimer = new Timer();
-    m_photonKDTree = NULL;
 }
 
 ref<WorkProcessor> VCMProcess::createWorkProcessor() const

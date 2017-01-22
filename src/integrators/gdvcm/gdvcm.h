@@ -20,7 +20,7 @@
 #define __GDVCM_H
 
 #include <mitsuba/mitsuba.h>
-
+#include "../vcm/vcm_basics.h"
 
 MTS_NAMESPACE_BEGIN
 
@@ -32,13 +32,12 @@ MTS_NAMESPACE_BEGIN
  * \brief Stores all configuration parameters of the
  * bidirectional path tracer
  */
-struct GDVCMConfiguration {
-	int maxDepth, blockSize;
+struct GDVCMConfiguration : VCMConfigBase {
+	int blockSize;
 	bool lightImage;
 	bool sampleDirect;
 	size_t sampleCount;
 	Vector2i cropSize;
-	int rrDepth;
 
 	int extraBorder;
 	int nNeighbours;

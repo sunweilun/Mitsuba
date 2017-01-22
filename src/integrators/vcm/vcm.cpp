@@ -200,6 +200,7 @@ public:
     }
 
     void cancel() {
+        m_cancelled = true;
         Scheduler::getInstance()->cancel(m_process);
     }
 
@@ -235,12 +236,13 @@ public:
         ref<VCMProcess> process = new VCMProcess(job, queue, m_config);
         process->bindResource("scene", bidirSceneResID);
         process->bindResource("sampler", samplerResID);
-        
+        m_process = process;
+        m_cancelled = false;
 #if defined(MTS_OPENMP)
         Thread::initializeOpenMP(nCores);
 #endif
         for (size_t i = 0; i < sampleCount; i++) {
-            iterateVCM(process, sensorResID, i);
+            if(iterateVCM(process, sensorResID, i) == false) break;
         }
         scheduler->unregisterResource(bidirSceneResID);
         m_process = NULL;
