@@ -609,7 +609,7 @@
 	</plugin>
         
         <plugin type="integrator" name="gdvcm" readableName="Gradient-Domain VCM" show="true"
-			className="GradientBidirectionalIntegrator" extends="Integrator">
+			className="GDVCMIntegrator" extends="Integrator">
 		<descr>
 			<p>This plugin implements a gradient-domain bidirectional path tracer (short: G-BDPT) as described in the paper "Gradient-Domain Bidirectional Path Tracing" by Manzi et al.
 			It supports classical materials like diffuse, specular and glossy materials, depth-of-field, motion blur and low discrepancy samplers. The final image shown in the GUI is 
@@ -643,6 +643,9 @@
 		<param name="reconstructAlpha" readableName="Reconstruction Alpha" type="float" default="0.2">
 			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
 		</param>	
+                <param name="initialRadius" readableName="Initial Merging Radius" type="float" default="0.0">
+			Specifies initial merging radius of VCM.
+		</param>
 	</plugin>
   
 	<plugin type="integrator" name="gpt" readableName="Gradient-Domain Path Tracer" show="true"

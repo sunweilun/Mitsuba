@@ -369,7 +369,6 @@ public:
             maxT = std::min(maxT, m_config.maxDepth + 1);
         for (int t = maxT; t >= minT; --t)
         {
-
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
             Float radius = m_process->m_mergeRadius;
 
@@ -453,40 +452,6 @@ public:
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
                 }
-                    // We never use direct sampling in merging stage.
-                    //                else if (m_config.sampleDirect && ((t == 1 && s > 1) || (s == 1 && t > 1))) {
-                    //                    /* s==1/t==1 path: use a direct sampling strategy if requested */
-                    //                    
-                    //                    if (s == 1) {
-                    //                        if (vt->isDegenerate())
-                    //                            continue;
-                    //                        /* Generate a position on an emitter using direct sampling */
-                    //                        value = radianceWeights[t] * vt->sampleDirect(scene, m_sampler,
-                    //                                &tempEndpoint, &tempEdge, &tempSample, EImportance);
-                    //                        if (value.isZero())
-                    //                            continue;
-                    //                        vs = &tempSample;
-                    //                        vsPred = &tempEndpoint;
-                    //                        vsEdge = &tempEdge;
-                    //                        value *= vt->eval(scene, vtPred, vs, ERadiance);
-                    //                        vt->measure = EArea;
-                    //                    } else {
-                    //                        if (vs->isDegenerate())
-                    //                            continue;
-                    //                        /* Generate a position on the sensor using direct sampling */
-                    //                        value = importanceWeights[s] * vs->sampleDirect(scene, m_sampler,
-                    //                                &tempEndpoint, &tempEdge, &tempSample, ERadiance);
-                    //                        if (value.isZero())
-                    //                            continue;
-                    //                        vt = &tempSample;
-                    //                        vtPred = &tempEndpoint;
-                    //                        vtEdge = &tempEdge;
-                    //                        value *= vs->eval(scene, vsPred, vt, EImportance);
-                    //                        vs->measure = EArea;
-                    //                    }
-                    //
-                    //                    sampleDirect = true;
-                    //                } 
                 else
                 {
                     /* Can't connect degenerate endpoints */
@@ -554,8 +519,6 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-
-                //miWeight = 1.0; // for debug
                 sampleValue += value * miWeight / (p_acc * nEmitterPaths);
             }
         }

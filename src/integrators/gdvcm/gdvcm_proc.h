@@ -14,7 +14,7 @@
 
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #if !defined(__GBVCM_PROC_H)
 #define __GDVCM_PROC_H
@@ -35,30 +35,41 @@ MTS_NAMESPACE_BEGIN
  * \brief Renders work units (rectangular image regions) using
  * bidirectional path tracing
  */
-class GDVCMProcess : public VCMProcessBase {
+class GDVCMProcess : public VCMProcessBase
+{
 public:
-	GDVCMProcess(const RenderJob *parent, RenderQueue *queue,
-		const GDVCMConfiguration &config);
+    GDVCMProcess(const RenderJob *parent, RenderQueue *queue,
+            const GDVCMConfiguration &config);
 
-	inline const GDVCMWorkResult *getResult() const { return m_result.get(); }
+    inline const GDVCMWorkResult *getResult() const
+    {
+        return m_result.get();
+    }
 
-	/// Develop the image
-	void develop();
+    /// Develop the image
+    void develop();
 
-	/* ParallelProcess impl. */
-	void processResult(const WorkResult *wr, bool cancelled);
-	ref<WorkProcessor> createWorkProcessor() const;
-	void bindResource(const std::string &name, int id);
+    /* ParallelProcess impl. */
+    void processResult(const WorkResult *wr, bool cancelled);
+    ref<WorkProcessor> createWorkProcessor() const;
+    void bindResource(const std::string &name, int id);
 
-	MTS_DECLARE_CLASS()
+    void updateRadius(int n)
+    {
+        m_mergeRadius = m_config.initialRadius / pow(n, 1.0 / 3.0);
+    }
+
+    MTS_DECLARE_CLASS()
 protected:
-	/// Virtual destructor
-	virtual ~GDVCMProcess() { }
+    /// Virtual destructor
+    virtual ~GDVCMProcess()
+    {
+    }
 private:
-	ref<GDVCMWorkResult> m_result;
-	ref<Timer> m_refreshTimer;
-	GDVCMConfiguration m_config;
-	//ref<ImageBlockContainer> m_imbc;
+    ref<GDVCMWorkResult> m_result;
+    ref<Timer> m_refreshTimer;
+    GDVCMConfiguration m_config;
+    //ref<ImageBlockContainer> m_imbc;
 };
 
 MTS_NAMESPACE_END

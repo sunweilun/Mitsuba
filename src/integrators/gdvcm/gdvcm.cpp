@@ -85,6 +85,7 @@ public:
         /* Load the parameters / defaults */
         m_config.maxDepth = props.getInteger("maxDepth", -1);
         m_config.rrDepth = props.getInteger("rrDepth", 5);
+        m_config.initialRadius = props.getFloat("initialRadius", 0.f);
         m_config.lightImage = props.getBoolean("lightImage", true);
 
         m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
@@ -133,12 +134,21 @@ public:
         if (scene->getSubsurfaceIntegrators().size() > 0)
             Log(EError, "Subsurface integrators are not supported "
                 "by the bidirectional path tracer!");
+        if (m_config.initialRadius == 0) {
+            /* Guess an initial radius if not provided
+              (scene width / horizontal or vertical pixel count) * 5 */
+            Float rad = scene->getBSphere().radius;
+            Vector2i filmSize = scene->getSensor()->getFilm()->getSize();
 
+            m_config.initialRadius = std::min(rad / filmSize.x, rad / filmSize.y) * 5;
+        }
+        
         return true;
     }
 
     void cancel()
     {
+        m_cancelled = true;
         Scheduler::getInstance()->cancel(m_process);
     }
 

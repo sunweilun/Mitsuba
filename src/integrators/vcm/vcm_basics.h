@@ -182,9 +182,13 @@ public:
         return photons;
     }
 
-    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath)
+    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath, bool clone = false)
     {
-        m_emitterPathPool[photon.blockID].extractPathItem(emitterPath, photon.pointID);
+        if (!clone)
+        {
+            m_emitterPathPool[photon.blockID].extractPathItem(emitterPath, photon.pointID);
+            return;
+        }
     }
 
     void processResultSample(const VCMWorkResultBase *result)
@@ -205,7 +209,7 @@ class VCMRendererBase : public WorkProcessor
     using WorkProcessor::WorkProcessor;
 protected:
 
-    void extractPathPair(VCMProcessBase* process, Path& emitterSubpath, Path& sensorSubpath, const RectangularWorkUnit *rect, int pointID)
+    void extractPathPair(VCMProcessBase* process, Path& emitterSubpath, Path& sensorSubpath, const RectangularWorkUnit *rect, int pointID, bool clone = false)
     {
         size_t blockSize = m_scene->getBlockSize();
         size_t nbx = process->nbx;
@@ -213,8 +217,19 @@ protected:
                 rect->getOffset().x / blockSize;
         CompactBlockPathPool& sensorPathPool = process->m_sensorPathPool[blockID];
         CompactBlockPathPool& emitterPathPool = process->m_emitterPathPool[blockID];
-        sensorPathPool.extractPathItem(sensorSubpath, pointID);
-        emitterPathPool.extractPathItem(emitterSubpath, pointID);
+
+        if (!clone)
+        {
+            sensorPathPool.extractPathItem(sensorSubpath, pointID);
+            emitterPathPool.extractPathItem(emitterSubpath, pointID);
+            return;
+        }
+
+        Path s, e;
+        sensorPathPool.extractPathItem(s, pointID);
+        emitterPathPool.extractPathItem(e, pointID);
+        s.clone(sensorSubpath, m_pool);
+        e.clone(emitterSubpath, m_pool);
     }
 
     void processSampling(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop, VCMProcessBase* m_process, VCMConfigBase* config)

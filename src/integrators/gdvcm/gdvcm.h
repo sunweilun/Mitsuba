@@ -47,6 +47,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 	bool m_reconstructL2;
 	float m_reconstructAlpha;
         int m_nJacobiIters;
+        Float initialRadius;
 
 	inline GDVCMConfiguration() { }
 
@@ -58,7 +59,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 		sampleCount = stream->readSize();
 		cropSize = Vector2i(stream);
 		rrDepth = stream->readInt();
-
+                initialRadius = stream->readFloat();
 
 		extraBorder = stream->readInt();
 		nNeighbours = stream->readInt();
@@ -77,6 +78,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 		stream->writeSize(sampleCount);
 		cropSize.serialize(stream);
 		stream->writeInt(rrDepth);	//possible problem with network rendering?
+                stream->writeFloat(initialRadius);
 
 		stream->writeInt(extraBorder);
 		stream->writeInt(nNeighbours);
