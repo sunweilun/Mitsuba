@@ -380,7 +380,7 @@ public:
             { // inspect every photon in range
 
                 int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
-                if (m_config.maxDepth > -1 && s + t > m_config.maxDepth) continue;
+                if (m_config.maxDepth > -1 && s + t > m_config.maxDepth+1) continue;
                 m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
                 Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius*radius;
                 //p_acc = std::min(Float(1.f), p_acc); // acceptance probability
