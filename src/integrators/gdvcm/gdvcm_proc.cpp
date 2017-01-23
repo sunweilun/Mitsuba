@@ -90,7 +90,8 @@ public:
         m_rfilter = m_sensor->getFilm()->getReconstructionFilter();
 
         /* create offset path generator */
-        m_offsetGenerator = new ManifoldPerturbation(m_scene, NULL, m_pool, 0.f, true, true, 0, 0, m_config.m_shiftThreshold);
+        if (m_process->phase == VCMProcessBase::EVAL)
+            m_offsetGenerator = new ManifoldPerturbation(m_scene, NULL, m_pool, 0.f, true, true, 0, 0, m_config.m_shiftThreshold);
     }
 
     void process(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop)
@@ -171,7 +172,6 @@ public:
 
             /* Start new emitter and sensor subpaths */
             extractPathPair(m_process, emitterSubpath[0], sensorSubpath[0], rect, i);
-
             samplePos = sensorSubpath[0].vertex(1)->getSamplePosition();
 
             double jx, jy;
@@ -651,7 +651,7 @@ private:
         {
             t--;
             //the tail of the path can then be removed
-            sensorSubpath.removeAndReleaseLastElement(m_pool);
+            sensorSubpath.removeLastElement();
         }
 
         //if the sensor connection vertex is on the lightsource then we must connect to the emitterSuperSample
@@ -736,7 +736,7 @@ VCMProcessBase(parent, queue, config.blockSize), m_config(config)
 
 ref<WorkProcessor> GDVCMProcess::createWorkProcessor() const
 {
-    return new GDVCMRenderer(m_config, const_cast<GDVCMProcess*>(this));
+    return new GDVCMRenderer(m_config, const_cast<GDVCMProcess*> (this));
 }
 
 void GDVCMProcess::develop()
@@ -762,14 +762,14 @@ void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled)
 
     const GDVCMWorkResult *result = static_cast<const GDVCMWorkResult *> (wr);
     LockGuard lock(m_resultMutex);
-    
+
     if (phase == SAMPLE)
     {
         processResultSample(result);
         m_queue->signalWorkEnd(m_parent, result->getImageBlock(), false);
         return;
     }
-    
+
     m_progress->update(++m_resultCount);
     ImageBlock *block = NULL;
 

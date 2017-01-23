@@ -539,6 +539,10 @@ public:
 		pool.release(m_edges.back()); 
 		m_vertices.pop_back(); m_edges.pop_back(); 
 	}
+        
+        void removeLastElement() {
+		m_vertices.pop_back(); m_edges.pop_back(); 
+	}
 
 	/// Release a certain subpath [start, end) to the memory pool
 	void release(size_t start, size_t end, MemoryPool &pool);
@@ -628,6 +632,7 @@ struct MTS_EXPORT_BIDIR CompactBlockPathPool {
         path.m_edges.clear();
         for(size_t i=0; i<item.nEdges; i++)
             path.m_edges.push_back(&edges[item.eStartIndex+i]);
+        
     }
     
 };

@@ -127,10 +127,13 @@ public:
         BlockedRenderProcess::bindResource(name, id);
         if (name == "sensor")
         {
-            nbx = ceil_div(m_film->getCropSize().x, m_blockSize);
-            nby = ceil_div(m_film->getCropSize().y, m_blockSize);
-            m_sensorPathPool.resize(nbx * nby);
-            m_emitterPathPool.resize(nbx * nby);
+            if (!m_sensorPathPool.size())
+            {
+                nbx = ceil_div(m_film->getCropSize().x, m_blockSize);
+                nby = ceil_div(m_film->getCropSize().y, m_blockSize);
+                m_sensorPathPool.resize(nbx * nby);
+                m_emitterPathPool.resize(nbx * nby);
+            }
         }
     }
 
@@ -204,9 +207,10 @@ protected:
 
     void extractPathPair(VCMProcessBase* process, Path& emitterSubpath, Path& sensorSubpath, const RectangularWorkUnit *rect, int pointID)
     {
+        size_t blockSize = m_scene->getBlockSize();
         size_t nbx = process->nbx;
-        size_t blockID = (rect->getOffset().y / rect->getSize().y) * nbx +
-                rect->getOffset().x / rect->getSize().x;
+        size_t blockID = (rect->getOffset().y / blockSize) * nbx +
+                rect->getOffset().x / blockSize;
         CompactBlockPathPool& sensorPathPool = process->m_sensorPathPool[blockID];
         CompactBlockPathPool& emitterPathPool = process->m_emitterPathPool[blockID];
         sensorPathPool.extractPathItem(sensorSubpath, pointID);
@@ -220,6 +224,7 @@ protected:
         VCMWorkResultBase *result = static_cast<VCMWorkResultBase *> (workResult);
         bool needsTimeSample = m_sensor->needsTimeSample();
         Float time = m_sensor->getShutterOpen();
+        size_t block_size = m_scene->getBlockSize();
 
         result->setOffset(rect->getOffset());
         result->setSize(rect->getSize());
@@ -227,8 +232,8 @@ protected:
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
         size_t nbx = m_process->nbx;
-        size_t blockID = (rect->getOffset().y / rect->getSize().y) * nbx +
-                rect->getOffset().x / rect->getSize().x;
+        size_t blockID = (rect->getOffset().y / block_size) * nbx +
+                rect->getOffset().x / block_size;
 
 #if defined(MTS_DEBUG_FP)
         enableFPExceptions();
@@ -310,30 +315,31 @@ protected:
     bool m_cancelled;
     using Integrator::Integrator;
 public:
-    
+
     bool iterateVCM(VCMProcessBase* process, int sensorResID, int iter)
     {
         ref<Scheduler> scheduler = Scheduler::getInstance();
         process->updateRadius(iter + 1);
         process->clearPhotons();
-        if(m_cancelled) return false;
+        if (m_cancelled) return false;
         // connection phase
         // we also collect photons in this phase
+
         process->bindResource("sensor", sensorResID);
         process->phase = VCMProcessBase::SAMPLE;
         scheduler->schedule(process);
         scheduler->wait(process);
-        if(m_cancelled) return false;
-        
+        if (m_cancelled) return false;
+
         // build photon look up structure
         process->buildPhotonLookupStructure();
-        
+
         // merging phase
         process->bindResource("sensor", sensorResID);
         process->phase = VCMProcessBase::EVAL;
         scheduler->schedule(process);
         scheduler->wait(process);
-        if(m_cancelled) return false;
+        if (m_cancelled) return false;
         return true;
     }
 };
