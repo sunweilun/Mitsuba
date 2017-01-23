@@ -52,7 +52,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
-        int s, int t, bool sampleDirect, bool lightImage, Float jDet, 
+        int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th)
 {
 
@@ -221,12 +221,11 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
-        int s, int t, bool sampleDirect, bool lightImage, Float jDet, 
+        int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
         Float radius, size_t nEmitterPaths, bool merge)
 {
     int k = s + t + 1, n = k + 1;
-    
     // for vcm
     Float mergeArea = M_PI * radius * radius;
     Float *accProb = (Float *) alloca(n * sizeof (Float));
@@ -360,14 +359,13 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     double sum_p = 0.f, pdf = initial, oPdf = initial;
 
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
-    for(int i=0; i<n; i++) {
-        accProb[i] =  Float(0.f);
-        bool mergable = connectable[i] && i >= 2 && i <= n-3;
-        if(mergable)
-            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea)*nEmitterPaths;
+    for (int i = 0; i < n; i++)
+    {
+        accProb[i] = Float(0.f);
+        bool mergable = connectable[i] && i >= 2 && i <= n - 3;
+        if (mergable)
+            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea) * nEmitterPaths;
     }
-    
-    
 
     /* No linear sweep */
     double p_i, p_st;
@@ -383,7 +381,8 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         for (int i = p + 1; i < s + t + 1; ++i)
         {
             p_i *= pdfRad[i];
-            p_i *= 1.0+accProb[i]; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
+            if (i == p + 1)
+                p_i *= 1.0 + accProb[i]; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
         }
 
         int tPrime = k - p - 1;
@@ -392,20 +391,21 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
             sum_p += std::pow(p_i * geomTermX, exponent);
 
-        if (tPrime == t) {
+        if (tPrime == t)
+        {
             p_st = std::pow(p_i * geomTermX, exponent);
         }
     }
-    double mergeWeight = accProb[s+1] / (1.0+accProb[s+1]);
-    if(merge) return (Float) (p_st / sum_p) * mergeWeight;
-    return (Float) (p_st / sum_p) * (1-mergeWeight);
+    double mergeWeight = accProb[s + 1] / (1.0 + accProb[s + 1]);
+    if (merge) return (Float) (p_st / sum_p) * mergeWeight;
+    return (Float) (p_st / sum_p) * (1 - mergeWeight);
 }
 
 Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
-        int s, int t, bool sampleDirect, bool lightImage, Float jDet, 
+        int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th)
 {
 
@@ -596,12 +596,16 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
-        int s, int t, bool sampleDirect, bool lightImage, Float jDet, 
+        int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
         Float radius, size_t nEmitterPaths, bool merge)
 {
-
     int k = s + t + 1, n = k + 1;
+
+    // for vcm
+    Float mergeArea = M_PI * radius * radius;
+    Float *accProb = (Float *) alloca(n * sizeof (Float));
+    Float *oAccProb = (Float *) alloca(n * sizeof (Float));
 
     const PathVertex
             *vsPred = emitterSubpath.vertexOrNull(s - 1),
@@ -752,6 +756,18 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
                 (offset_cur->isOnSurface() ? dot(offset_edge->d, offset_cur->getGeometricNormal()) : 1));
     }
 
+    /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
+    for (int i = 0; i < n; i++)
+    {
+        accProb[i] = Float(0.f);
+        oAccProb[i] = Float(0.f);
+        bool mergable = connectable[i] && i >= 2 && i <= n - 3;
+        if (mergable)
+        {
+            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea) * nEmitterPaths;
+            oAccProb[i] = std::min(Float(1.f), offsetPdfImp[i] * mergeArea) * nEmitterPaths;
+        }
+    }
 
     double sum_p_i = 0.f, p_st = 0.f;
 
@@ -772,6 +788,11 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         {
             value *= pdfRad[i];
             oValue *= offsetPdfRad[i];
+            if (i == p + 1)
+            {
+                value *= 1.0 + accProb[i];
+                oValue *= 1.0 + oAccProb[i];
+            }
         }
 
         int tPrime = k - p - 1;
@@ -781,7 +802,12 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         if (tPrime == t)
             p_st = std::pow(value * geomTermX, exponent);
     }
-    return (Float) (p_st / sum_p_i);
+
+    double mergeWeight = accProb[s + 1] / (1.0 + accProb[s + 1]);
+
+    if (merge)
+        return (Float) (mergeWeight * p_st / sum_p_i);
+    return (Float) ((1.0 - mergeWeight) * p_st / sum_p_i);
 }
 
 double Path::halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator)
@@ -1423,7 +1449,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         Float radius, size_t nEmitterPaths, bool merge)
 {
     int k = s + t + 1, n = k + 1;
-    
+
     // for vcm
     Float mergeArea = M_PI * radius * radius;
     Float *accProb = (Float *) alloca(n * sizeof (Float));
@@ -1444,7 +1470,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     bool *connectable = (bool *) alloca(n * sizeof (bool)),
             *isNull = (bool *) alloca(n * sizeof (bool));
 
-    
+
     /* Keep track of which vertices are connectable / null interactions */
     int pos = 0;
     for (int i = 0; i <= s; ++i)
@@ -1616,13 +1642,14 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
         i = end;
     }
-    
+
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
-    for(int i=0; i<n; i++) {
-        accProb[i] =  Float(0.f);
-        bool mergable = connectable[i] && i >= 2 && i <= n-3;
-        if(mergable)
-            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea)*nEmitterPaths;
+    for (int i = 0; i < n; i++)
+    {
+        accProb[i] = Float(0.f);
+        bool mergable = connectable[i] && i >= 2 && i <= n - 3;
+        if (mergable)
+            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea) * nEmitterPaths;
     }
 
     double initial = 1.0f;
@@ -1667,7 +1694,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        details, refer to the Veach thesis, p.306. */
     for (int i = s + 1; i < k; ++i)
     {
-        double mergeRatio = sqrt((1.0 + accProb[i+1]*accProb[i+1]) / (1.0 + accProb[i]*accProb[i]));
+        double mergeRatio = sqrt((1.0 + accProb[i + 1] * accProb[i + 1]) / (1.0 + accProb[i] * accProb[i]));
         double next = pdf * (double) pdfImp[i] / (double) pdfRad[i] * mergeRatio,
                 value = next;
 
@@ -1692,7 +1719,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     pdf = initial;
     for (int i = s - 1; i >= 0; --i)
     {
-        double mergeRatio = sqrt((1.0 + accProb[i+1]*accProb[i+1]) / (1.0 + accProb[i+2]*accProb[i+2]));
+        double mergeRatio = sqrt((1.0 + accProb[i + 1] * accProb[i + 1]) / (1.0 + accProb[i + 2] * accProb[i + 2]));
         double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1] * mergeRatio,
                 value = next;
 
@@ -1710,11 +1737,11 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
         pdf = next;
     }
-    
+
     Float total_weight = 1.0 / weight;
-    Float w_merge = accProb[s+1]*accProb[s+1] / (1.0 + accProb[s+1]*accProb[s+1]);
-    
-    if(merge) return total_weight * w_merge;
+    Float w_merge = accProb[s + 1] * accProb[s + 1] / (1.0 + accProb[s + 1] * accProb[s + 1]);
+
+    if (merge) return total_weight * w_merge;
     return total_weight * (1.0 - w_merge);
 }
 

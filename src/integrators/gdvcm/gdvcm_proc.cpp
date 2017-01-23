@@ -293,7 +293,7 @@ public:
                     maxT = std::min(maxT, m_config.maxDepth + 1);
                 for (int t = maxT; t >= minT; --t)
                 {
-                    if (!(t == 3)) continue; // for debug
+                    //if (!(t == 3)) continue; // for debug
 
                     PathVertex *vt = sp.vertex(t); // the vertex we are looking at
 
