@@ -23,13 +23,11 @@
 MTS_NAMESPACE_BEGIN
 
 
-bool Path::MIScond_GBDPT(int tPrime, int maxT, bool lightImage)
-{
+bool Path::MIScond_GBDPT(int tPrime, int maxT, bool lightImage) {
     return lightImage || tPrime > 1;
 }
 
-bool Path::isConnectable_GBDPT(const PathVertex *va, float threshold)
-{
+bool Path::isConnectable_GBDPT(const PathVertex *va, float threshold) {
     if (!va->isConnectable())
         return false;
 
@@ -53,8 +51,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
-        Float exponent, double geomTermX, double geomTermY, int maxT, float th)
-{
+        Float exponent, double geomTermX, double geomTermY, int maxT, float th) {
 
     int k = s + t + 1, n = k + 1;
 
@@ -80,8 +77,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     /* Keep track of which vertices are connectable / null interactions */
     // a perfectly specular interaction is *not* connectable!
     int pos = 0;
-    for (int i = 0; i <= s; ++i)
-    {
+    for (int i = 0; i <= s; ++i) {
         const PathVertex *v = emitterSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -90,8 +86,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         pos++;
     }
 
-    for (int i = t; i >= 0; --i)
-    {
+    for (int i = t; i >= 0; --i) {
         const PathVertex *v = sensorSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -107,28 +102,23 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     pos = 0;
     pdfImp[pos++] = 1.0;
 
-    for (int i = 0; i < s; ++i)
-    {
+    for (int i = 0; i < s; ++i) {
         pdfImp[pos++] = emitterSubpath.vertex(i)->pdf[EImportance] * emitterSubpath.edge(i)->pdf[EImportance];
     }
     pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure) * connectionEdge->pdf[EImportance];
 
-    if (t > 0)
-    {
+    if (t > 0) {
         pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure) * sensorSubpath.edge(t - 1)->pdf[EImportance];
 
-        for (int i = t - 1; i > 0; --i)
-        {
+        for (int i = t - 1; i > 0; --i) {
             pdfImp[pos++] = sensorSubpath.vertex(i)->pdf[EImportance] * sensorSubpath.edge(i - 1)->pdf[EImportance];
         }
     }
 
     /* Collect radiance transfer area/volume densities from vertices */
     pos = 0;
-    if (s > 0)
-    {
-        for (int i = 0; i < s - 1; ++i)
-        {
+    if (s > 0) {
+        for (int i = 0; i < s - 1; ++i) {
             pdfRad[pos++] = emitterSubpath.vertex(i + 1)->pdf[ERadiance] * emitterSubpath.edge(i)->pdf[ERadiance];
         }
         pdfRad[pos++] = vs->evalPdf(scene, vt, vsPred, ERadiance, vsMeasure) * emitterSubpath.edge(s - 1)->pdf[ERadiance];
@@ -136,8 +126,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
     pdfRad[pos++] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure) * connectionEdge->pdf[ERadiance];
 
-    for (int i = t; i > 0; --i)
-    {
+    for (int i = t; i > 0; --i) {
         pdfRad[pos++] = sensorSubpath.vertex(i - 1)->pdf[ERadiance] * sensorSubpath.edge(i - 1)->pdf[ERadiance];
     }
 
@@ -152,8 +141,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
     into the projected solid angle measure */
     //corresponds to removing geomerty terms!!!
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (i == s || !(connectableStrict[i] && !connectableStrict[i + 1]))
             continue;
 
@@ -166,8 +154,7 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
                 (cur->isOnSurface() ? dot(edge->d, cur->getGeometricNormal()) : 1));
     }
 
-    for (int i = k - 1; i >= 3; --i)
-    {
+    for (int i = k - 1; i >= 3; --i) {
         if (i - 1 == s || !(connectableStrict[i] && !connectableStrict[i - 1]))
             continue;
 
@@ -190,17 +177,14 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
     /* No linear sweep */
     double p_i, p_st;
-    for (int p = 0; p < s + t + 1; ++p)
-    {
+    for (int p = 0; p < s + t + 1; ++p) {
         p_i = 1.f;
 
-        for (int i = 1; i < p + 1; ++i)
-        {
+        for (int i = 1; i < p + 1; ++i) {
             p_i *= pdfImp[i];
         }
 
-        for (int i = p + 1; i < s + t + 1; ++i)
-        {
+        for (int i = p + 1; i < s + t + 1; ++i) {
             p_i *= pdfRad[i];
         }
 
@@ -223,8 +207,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
-        Float radius, size_t nEmitterPaths, bool merge)
-{
+        Float radius, size_t nEmitterPaths, bool merge) {
     int k = s + t + 1, n = k + 1;
     // for vcm
     Float mergeArea = M_PI * radius * radius;
@@ -252,8 +235,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     /* Keep track of which vertices are connectable / null interactions */
     // a perfectly specular interaction is *not* connectable!
     int pos = 0;
-    for (int i = 0; i <= s; ++i)
-    {
+    for (int i = 0; i <= s; ++i) {
         const PathVertex *v = emitterSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -262,8 +244,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         pos++;
     }
 
-    for (int i = t; i >= 0; --i)
-    {
+    for (int i = t; i >= 0; --i) {
         const PathVertex *v = sensorSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -279,28 +260,23 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     pos = 0;
     pdfImp[pos++] = 1.0;
 
-    for (int i = 0; i < s; ++i)
-    {
+    for (int i = 0; i < s; ++i) {
         pdfImp[pos++] = emitterSubpath.vertex(i)->pdf[EImportance] * emitterSubpath.edge(i)->pdf[EImportance];
     }
     pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure) * connectionEdge->pdf[EImportance];
 
-    if (t > 0)
-    {
+    if (t > 0) {
         pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure) * sensorSubpath.edge(t - 1)->pdf[EImportance];
 
-        for (int i = t - 1; i > 0; --i)
-        {
+        for (int i = t - 1; i > 0; --i) {
             pdfImp[pos++] = sensorSubpath.vertex(i)->pdf[EImportance] * sensorSubpath.edge(i - 1)->pdf[EImportance];
         }
     }
 
     /* Collect radiance transfer area/volume densities from vertices */
     pos = 0;
-    if (s > 0)
-    {
-        for (int i = 0; i < s - 1; ++i)
-        {
+    if (s > 0) {
+        for (int i = 0; i < s - 1; ++i) {
             pdfRad[pos++] = emitterSubpath.vertex(i + 1)->pdf[ERadiance] * emitterSubpath.edge(i)->pdf[ERadiance];
         }
         pdfRad[pos++] = vs->evalPdf(scene, vt, vsPred, ERadiance, vsMeasure) * emitterSubpath.edge(s - 1)->pdf[ERadiance];
@@ -308,8 +284,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
 
     pdfRad[pos++] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure) * connectionEdge->pdf[ERadiance];
 
-    for (int i = t; i > 0; --i)
-    {
+    for (int i = t; i > 0; --i) {
         pdfRad[pos++] = sensorSubpath.vertex(i - 1)->pdf[ERadiance] * sensorSubpath.edge(i - 1)->pdf[ERadiance];
     }
 
@@ -324,8 +299,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
     into the projected solid angle measure */
     //corresponds to removing geomerty terms!!!
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (i == s || !(connectableStrict[i] && !connectableStrict[i + 1]))
             continue;
 
@@ -338,8 +312,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
                 (cur->isOnSurface() ? dot(edge->d, cur->getGeometricNormal()) : 1));
     }
 
-    for (int i = k - 1; i >= 3; --i)
-    {
+    for (int i = k - 1; i >= 3; --i) {
         if (i - 1 == s || !(connectableStrict[i] && !connectableStrict[i - 1]))
             continue;
 
@@ -359,8 +332,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     double sum_p = 0.f, pdf = initial, oPdf = initial;
 
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         accProb[i] = Float(0.f);
         bool mergable = connectable[i] && i >= 2 && i <= n - 3;
         if (mergable)
@@ -369,17 +341,14 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
 
     /* No linear sweep */
     double p_i, p_st;
-    for (int p = 0; p < s + t + 1; ++p)
-    {
+    for (int p = 0; p < s + t + 1; ++p) {
         p_i = 1.f;
 
-        for (int i = 1; i < p + 1; ++i)
-        {
+        for (int i = 1; i < p + 1; ++i) {
             p_i *= pdfImp[i];
         }
 
-        for (int i = p + 1; i < s + t + 1; ++i)
-        {
+        for (int i = p + 1; i < s + t + 1; ++i) {
             p_i *= pdfRad[i];
             if (i == p + 1)
                 p_i *= 1.0 + accProb[i]; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
@@ -391,8 +360,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
             sum_p += std::pow(p_i * geomTermX, exponent);
 
-        if (tPrime == t)
-        {
+        if (tPrime == t) {
             p_st = std::pow(p_i * geomTermX, exponent);
         }
     }
@@ -406,8 +374,7 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
-        Float exponent, double geomTermX, double geomTermY, int maxT, float th)
-{
+        Float exponent, double geomTermX, double geomTermY, int maxT, float th) {
 
     int k = s + t + 1, n = k + 1;
 
@@ -443,8 +410,7 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     /* Keep track of which vertices are connectable / null interactions */
     // a perfectly specular interaction is *not* connectable!
     int pos = 0;
-    for (int i = 0; i <= s; ++i)
-    {
+    for (int i = 0; i <= s; ++i) {
         const PathVertex *v = emitterSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -453,8 +419,7 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         pos++;
     }
 
-    for (int i = t; i >= 0; --i)
-    {
+    for (int i = t; i >= 0; --i) {
         const PathVertex *v = sensorSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -471,21 +436,18 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     pdfImp[pos] = 1.0;
     offsetPdfImp[pos++] = 1.0;
 
-    for (int i = 0; i < s; ++i)
-    {
+    for (int i = 0; i < s; ++i) {
         pdfImp[pos] = emitterSubpath.vertex(i)->pdf[EImportance] * emitterSubpath.edge(i)->pdf[EImportance];
         offsetPdfImp[pos++] = offsetEmitterSubpath.vertex(i)->pdf[EImportance] * offsetEmitterSubpath.edge(i)->pdf[EImportance];
     }
     pdfImp[pos] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure) * connectionEdge->pdf[EImportance];
     offsetPdfImp[pos++] = o_vs->evalPdf(scene, o_vsPred, o_vt, EImportance, vsMeasure) * offsetConnectionEdge->pdf[EImportance];
 
-    if (t > 0)
-    {
+    if (t > 0) {
         pdfImp[pos] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure) * sensorSubpath.edge(t - 1)->pdf[EImportance];
         offsetPdfImp[pos++] = o_vt->evalPdf(scene, o_vs, o_vtPred, EImportance, vtMeasure) * offsetSensorSubpath.edge(t - 1)->pdf[EImportance];
 
-        for (int i = t - 1; i > 0; --i)
-        {
+        for (int i = t - 1; i > 0; --i) {
             pdfImp[pos] = sensorSubpath.vertex(i)->pdf[EImportance] * sensorSubpath.edge(i - 1)->pdf[EImportance];
             offsetPdfImp[pos++] = offsetSensorSubpath.vertex(i)->pdf[EImportance] * offsetSensorSubpath.edge(i - 1)->pdf[EImportance];
         }
@@ -493,10 +455,8 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
     /* Collect radiance transfer area/volume densities from vertices */
     pos = 0;
-    if (s > 0)
-    {
-        for (int i = 0; i < s - 1; ++i)
-        {
+    if (s > 0) {
+        for (int i = 0; i < s - 1; ++i) {
             pdfRad[pos] = emitterSubpath.vertex(i + 1)->pdf[ERadiance] * emitterSubpath.edge(i)->pdf[ERadiance];
             offsetPdfRad[pos++] = offsetEmitterSubpath.vertex(i + 1)->pdf[ERadiance] * offsetEmitterSubpath.edge(i)->pdf[ERadiance];
         }
@@ -507,8 +467,7 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     pdfRad[pos] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure) * connectionEdge->pdf[ERadiance];
     offsetPdfRad[pos++] = o_vt->evalPdf(scene, o_vtPred, o_vs, ERadiance, vtMeasure) * offsetConnectionEdge->pdf[ERadiance];
 
-    for (int i = t; i > 0; --i)
-    {
+    for (int i = t; i > 0; --i) {
         pdfRad[pos] = sensorSubpath.vertex(i - 1)->pdf[ERadiance] * sensorSubpath.edge(i - 1)->pdf[ERadiance];
         offsetPdfRad[pos++] = offsetSensorSubpath.vertex(i - 1)->pdf[ERadiance] * offsetSensorSubpath.edge(i - 1)->pdf[ERadiance];
     }
@@ -516,8 +475,7 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     pdfRad[pos] = 1.0;
     offsetPdfRad[pos++] = 1.0;
 
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (i == s || !(connectableStrict[i] && !connectableStrict[i + 1]))
             continue;
 
@@ -538,8 +496,7 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
                 (offset_cur->isOnSurface() ? dot(offset_edge->d, offset_cur->getGeometricNormal()) : 1));
     }
 
-    for (int i = k - 1; i >= 3; --i)
-    {
+    for (int i = k - 1; i >= 3; --i) {
         if (i - 1 == s || !(connectableStrict[i] && !connectableStrict[i - 1]))
             continue;
 
@@ -565,19 +522,16 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
     /* No linear sweep */
     double value, oValue;
-    for (int p = 0; p < s + t + 1; ++p)
-    {
+    for (int p = 0; p < s + t + 1; ++p) {
         value = 1.f;
         oValue = 1.f;
 
-        for (int i = 1; i < p + 1; ++i)
-        {
+        for (int i = 1; i < p + 1; ++i) {
             value *= pdfImp[i];
             oValue *= offsetPdfImp[i];
         }
 
-        for (int i = p + 1; i < s + t + 1; ++i)
-        {
+        for (int i = p + 1; i < s + t + 1; ++i) {
             value *= pdfRad[i];
             oValue *= offsetPdfRad[i];
         }
@@ -598,8 +552,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
-        Float radius, size_t nEmitterPaths, bool merge)
-{
+        Float radius, size_t nEmitterPaths, bool merge) {
     int k = s + t + 1, n = k + 1;
 
     // for vcm
@@ -639,8 +592,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     /* Keep track of which vertices are connectable / null interactions */
     // a perfectly specular interaction is *not* connectable!
     int pos = 0;
-    for (int i = 0; i <= s; ++i)
-    {
+    for (int i = 0; i <= s; ++i) {
         const PathVertex *v = emitterSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -649,8 +601,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         pos++;
     }
 
-    for (int i = t; i >= 0; --i)
-    {
+    for (int i = t; i >= 0; --i) {
         const PathVertex *v = sensorSubpath.vertex(i);
         connectable[pos] = Path::isConnectable_GBDPT(v, th);
         connectableStrict[pos] = v->isConnectable();
@@ -667,21 +618,18 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     pdfImp[pos] = 1.0;
     offsetPdfImp[pos++] = 1.0;
 
-    for (int i = 0; i < s; ++i)
-    {
+    for (int i = 0; i < s; ++i) {
         pdfImp[pos] = emitterSubpath.vertex(i)->pdf[EImportance] * emitterSubpath.edge(i)->pdf[EImportance];
         offsetPdfImp[pos++] = offsetEmitterSubpath.vertex(i)->pdf[EImportance] * offsetEmitterSubpath.edge(i)->pdf[EImportance];
     }
     pdfImp[pos] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure) * connectionEdge->pdf[EImportance];
     offsetPdfImp[pos++] = o_vs->evalPdf(scene, o_vsPred, o_vt, EImportance, vsMeasure) * offsetConnectionEdge->pdf[EImportance];
 
-    if (t > 0)
-    {
+    if (t > 0) {
         pdfImp[pos] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure) * sensorSubpath.edge(t - 1)->pdf[EImportance];
         offsetPdfImp[pos++] = o_vt->evalPdf(scene, o_vs, o_vtPred, EImportance, vtMeasure) * offsetSensorSubpath.edge(t - 1)->pdf[EImportance];
 
-        for (int i = t - 1; i > 0; --i)
-        {
+        for (int i = t - 1; i > 0; --i) {
             pdfImp[pos] = sensorSubpath.vertex(i)->pdf[EImportance] * sensorSubpath.edge(i - 1)->pdf[EImportance];
             offsetPdfImp[pos++] = offsetSensorSubpath.vertex(i)->pdf[EImportance] * offsetSensorSubpath.edge(i - 1)->pdf[EImportance];
         }
@@ -689,10 +637,8 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
 
     /* Collect radiance transfer area/volume densities from vertices */
     pos = 0;
-    if (s > 0)
-    {
-        for (int i = 0; i < s - 1; ++i)
-        {
+    if (s > 0) {
+        for (int i = 0; i < s - 1; ++i) {
             pdfRad[pos] = emitterSubpath.vertex(i + 1)->pdf[ERadiance] * emitterSubpath.edge(i)->pdf[ERadiance];
             offsetPdfRad[pos++] = offsetEmitterSubpath.vertex(i + 1)->pdf[ERadiance] * offsetEmitterSubpath.edge(i)->pdf[ERadiance];
         }
@@ -703,8 +649,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     pdfRad[pos] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure) * connectionEdge->pdf[ERadiance];
     offsetPdfRad[pos++] = o_vt->evalPdf(scene, o_vtPred, o_vs, ERadiance, vtMeasure) * offsetConnectionEdge->pdf[ERadiance];
 
-    for (int i = t; i > 0; --i)
-    {
+    for (int i = t; i > 0; --i) {
         pdfRad[pos] = sensorSubpath.vertex(i - 1)->pdf[ERadiance] * sensorSubpath.edge(i - 1)->pdf[ERadiance];
         offsetPdfRad[pos++] = offsetSensorSubpath.vertex(i - 1)->pdf[ERadiance] * offsetSensorSubpath.edge(i - 1)->pdf[ERadiance];
     }
@@ -712,8 +657,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     pdfRad[pos] = 1.0;
     offsetPdfRad[pos++] = 1.0;
 
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (i == s || !(connectableStrict[i] && !connectableStrict[i + 1]))
             continue;
 
@@ -734,8 +678,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
                 (offset_cur->isOnSurface() ? dot(offset_edge->d, offset_cur->getGeometricNormal()) : 1));
     }
 
-    for (int i = k - 1; i >= 3; --i)
-    {
+    for (int i = k - 1; i >= 3; --i) {
         if (i - 1 == s || !(connectableStrict[i] && !connectableStrict[i - 1]))
             continue;
 
@@ -757,13 +700,11 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     }
 
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         accProb[i] = Float(0.f);
         oAccProb[i] = Float(0.f);
         bool mergable = connectable[i] && i >= 2 && i <= n - 3;
-        if (mergable)
-        {
+        if (mergable) {
             accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea) * nEmitterPaths;
             oAccProb[i] = std::min(Float(1.f), offsetPdfImp[i] * mergeArea) * nEmitterPaths;
         }
@@ -773,23 +714,19 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
 
     /* No linear sweep */
     double value, oValue;
-    for (int p = 0; p < s + t + 1; ++p)
-    {
+    for (int p = 0; p < s + t + 1; ++p) {
         value = 1.f;
         oValue = 1.f;
 
-        for (int i = 1; i < p + 1; ++i)
-        {
+        for (int i = 1; i < p + 1; ++i) {
             value *= pdfImp[i];
             oValue *= offsetPdfImp[i];
         }
 
-        for (int i = p + 1; i < s + t + 1; ++i)
-        {
+        for (int i = p + 1; i < s + t + 1; ++i) {
             value *= pdfRad[i];
             oValue *= offsetPdfRad[i];
-            if (i == p + 1)
-            {
+            if (i == p + 1) {
                 value *= 1.0 + accProb[i];
                 oValue *= 1.0 + oAccProb[i];
             }
@@ -810,8 +747,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     return (Float) ((1.0 - mergeWeight) * p_st / sum_p_i);
 }
 
-double Path::halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator)
-{
+double Path::halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator) {
     //c = std::max(c, 1); // chain extends to emitter supernode => ignore
     double value = 1.0;
     value /= vertex(a)->pdf[ERadiance];
@@ -826,16 +762,14 @@ double Path::halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offse
     return value;
 }
 
-Float Path::getGeometryTerm(int i) const
-{
+Float Path::getGeometryTerm(int i) const {
     Float cosI = absDot(edge(i)->d, vertex(i)->getShadingNormal());
     float cosJ = absDot(edge(i)->d, vertex(i + 1)->getShadingNormal());
     Float len = edge(i)->length;
     return cosI * cosJ / (len * len);
 }
 
-Float Path::calcSpecularPDFChange(int c, ManifoldPerturbation* offsetMutator, bool lightpath)
-{
+Float Path::calcSpecularPDFChange(int c, ManifoldPerturbation* offsetMutator, bool lightpath) {
     Float value(1.0);
     int k = length() - 1;
     c = std::max(1, c); //ignore sensor super-node
@@ -854,20 +788,17 @@ Float Path::calcSpecularPDFChange(int c, ManifoldPerturbation* offsetMutator, bo
     return offsetMutator->getSpecularManifold()->multiG(*this, c, k) / value;
 }
 
-double Path::G(int i, int j, ManifoldPerturbation* offsetMutator) const
-{
+double Path::G(int i, int j, ManifoldPerturbation* offsetMutator) const {
     // No edges => error.
 
-    if (i >= j)
-    {
+    if (i >= j) {
         SLog(EError, "Path::G() called with i >= j");
         return 1.0;
     }
 
     // One edge => traditional G( x(i) <-> x(j) )
 
-    if (j == i + 1)
-    {
+    if (j == i + 1) {
         double cosI = absDot(edge(i)->d, vertex(i)->getShadingNormal());
         double cosJ = absDot(edge(i)->d, vertex(j)->getShadingNormal());
         double len = edge(i)->length;
@@ -880,16 +811,14 @@ double Path::G(int i, int j, ManifoldPerturbation* offsetMutator) const
 
     // Check errors.
 
-    if (res <= 0.0 || !std::isfinite(res))
-    {
+    if (res <= 0.0 || !std::isfinite(res)) {
         SLog(EWarn, "Invalid Path::G(%d,%d)=%g (k=%d)", i, j, res, length());
     }
     return res;
 }
 
 void Path::initialize(const Scene *scene, Float time,
-        ETransportMode mode, MemoryPool &pool)
-{
+        ETransportMode mode, MemoryPool &pool) {
     release(pool);
     m_vertices.push_back(pool.allocVertex());
     m_vertices[0]->makeEndpoint(scene, time, mode);
@@ -897,8 +826,7 @@ void Path::initialize(const Scene *scene, Float time,
 
 int Path::randomWalk(const Scene *scene, Sampler *sampler,
         int nSteps, int rrStart, ETransportMode mode,
-        MemoryPool &pool)
-{
+        MemoryPool &pool) {
     /* Determine the relevant edge and vertex to start the random walk */
     PathVertex *curVertex = m_vertices[m_vertices.size() - 1],
             *predVertex = m_vertices.size() < 2 ? NULL :
@@ -907,14 +835,12 @@ int Path::randomWalk(const Scene *scene, Sampler *sampler,
             m_edges[m_edges.size() - 1];
     Spectrum throughput(1.0f);
 
-    for (int i = 0; i < nSteps || nSteps == -1; ++i)
-    {
+    for (int i = 0; i < nSteps || nSteps == -1; ++i) {
         PathVertex *succVertex = pool.allocVertex();
         PathEdge *succEdge = pool.allocEdge();
 
         if (!curVertex->sampleNext(scene, sampler, predVertex, predEdge, succEdge,
-                succVertex, mode, rrStart != -1 && i >= rrStart, &throughput))
-        {
+                succVertex, mode, rrStart != -1 && i >= rrStart, &throughput)) {
             pool.release(succVertex);
             pool.release(succEdge);
             return i;
@@ -931,8 +857,7 @@ int Path::randomWalk(const Scene *scene, Sampler *sampler,
 }
 
 int Path::randomWalkFromPixel(const Scene *scene, Sampler *sampler,
-        int nSteps, const Point2i &pixelPosition, int rrStart, MemoryPool &pool)
-{
+        int nSteps, const Point2i &pixelPosition, int rrStart, MemoryPool &pool) {
 
     PathVertex *v1 = pool.allocVertex(), *v2 = pool.allocVertex();
     PathEdge *e0 = pool.allocEdge(), *e1 = pool.allocEdge();
@@ -942,8 +867,7 @@ int Path::randomWalkFromPixel(const Scene *scene, Sampler *sampler,
     int t = vertex(0)->sampleSensor(scene,
             sampler, pixelPosition, e0, v1, e1, v2);
 
-    if (t < 1)
-    {
+    if (t < 1) {
         pool.release(e0);
         pool.release(v1);
         return 0;
@@ -951,8 +875,7 @@ int Path::randomWalkFromPixel(const Scene *scene, Sampler *sampler,
 
     append(e0, v1);
 
-    if (t < 2)
-    {
+    if (t < 2) {
         pool.release(e1);
         pool.release(v2);
         return 1;
@@ -964,14 +887,12 @@ int Path::randomWalkFromPixel(const Scene *scene, Sampler *sampler,
     PathEdge *predEdge = e1;
     Spectrum throughput(1.0f);
 
-    for (; t < nSteps || nSteps == -1; ++t)
-    {
+    for (; t < nSteps || nSteps == -1; ++t) {
         PathVertex *succVertex = pool.allocVertex();
         PathEdge *succEdge = pool.allocEdge();
 
         if (!curVertex->sampleNext(scene, sampler, predVertex, predEdge, succEdge,
-                succVertex, ERadiance, rrStart != -1 && t >= rrStart, &throughput))
-        {
+                succVertex, ERadiance, rrStart != -1 && t >= rrStart, &throughput)) {
             pool.release(succVertex);
             pool.release(succEdge);
             return t;
@@ -989,8 +910,7 @@ int Path::randomWalkFromPixel(const Scene *scene, Sampler *sampler,
 
 std::pair<int, int> Path::alternatingRandomWalkFromPixel(const Scene *scene, Sampler *sampler,
         Path &emitterPath, int nEmitterSteps, Path &sensorPath, int nSensorSteps,
-        const Point2i &pixelPosition, int rrStart, MemoryPool &pool)
-{
+        const Point2i &pixelPosition, int rrStart, MemoryPool &pool) {
     /* Determine the relevant edges and vertices to start the random walk */
     PathVertex *curVertexS = emitterPath.vertex(0),
             *curVertexT = sensorPath.vertex(0),
@@ -1005,23 +925,19 @@ std::pair<int, int> Path::alternatingRandomWalkFromPixel(const Scene *scene, Sam
     int t = curVertexT->sampleSensor(scene,
             sampler, pixelPosition, e0, v1, e1, v2);
 
-    if (t >= 1)
-    {
+    if (t >= 1) {
         sensorPath.append(e0, v1);
-    } else
-    {
+    } else {
         pool.release(e0);
         pool.release(v1);
     }
 
-    if (t == 2)
-    {
+    if (t == 2) {
         sensorPath.append(e1, v2);
         predVertexT = v1;
         curVertexT = v2;
         predEdgeT = e1;
-    } else
-    {
+    } else {
         pool.release(e1);
         pool.release(v2);
         curVertexT = NULL;
@@ -1030,55 +946,46 @@ std::pair<int, int> Path::alternatingRandomWalkFromPixel(const Scene *scene, Sam
     Spectrum throughputS(1.0f), throughputT(1.0f);
 
     int s = 0;
-    do
-    {
-        if (curVertexT && (t < nSensorSteps || nSensorSteps == -1))
-        {
+    do {
+        if (curVertexT && (t < nSensorSteps || nSensorSteps == -1)) {
             PathVertex *succVertexT = pool.allocVertex();
             PathEdge *succEdgeT = pool.allocEdge();
 
             if (curVertexT->sampleNext(scene, sampler, predVertexT,
                     predEdgeT, succEdgeT, succVertexT, ERadiance,
-                    rrStart != -1 && t >= rrStart, &throughputT))
-            {
+                    rrStart != -1 && t >= rrStart, &throughputT)) {
                 sensorPath.append(succEdgeT, succVertexT);
                 predVertexT = curVertexT;
                 curVertexT = succVertexT;
                 predEdgeT = succEdgeT;
                 t++;
-            } else
-            {
+            } else {
                 pool.release(succVertexT);
                 pool.release(succEdgeT);
                 curVertexT = NULL;
             }
-        } else
-        {
+        } else {
             curVertexT = NULL;
         }
 
-        if (curVertexS && (s < nEmitterSteps || nEmitterSteps == -1))
-        {
+        if (curVertexS && (s < nEmitterSteps || nEmitterSteps == -1)) {
             PathVertex *succVertexS = pool.allocVertex();
             PathEdge *succEdgeS = pool.allocEdge();
 
             if (curVertexS->sampleNext(scene, sampler, predVertexS,
                     predEdgeS, succEdgeS, succVertexS, EImportance,
-                    rrStart != -1 && s >= rrStart, &throughputS))
-            {
+                    rrStart != -1 && s >= rrStart, &throughputS)) {
                 emitterPath.append(succEdgeS, succVertexS);
                 predVertexS = curVertexS;
                 curVertexS = succVertexS;
                 predEdgeS = succEdgeS;
                 s++;
-            } else
-            {
+            } else {
                 pool.release(succVertexS);
                 pool.release(succEdgeS);
                 curVertexS = NULL;
             }
-        } else
-        {
+        } else {
             curVertexS = NULL;
         }
     } while (curVertexS || curVertexT);
@@ -1086,14 +993,12 @@ std::pair<int, int> Path::alternatingRandomWalkFromPixel(const Scene *scene, Sam
     return std::make_pair(s, t);
 }
 
-void Path::reverse()
-{
+void Path::reverse() {
     std::reverse(m_vertices.begin(), m_vertices.end());
     std::reverse(m_edges.begin(), m_edges.end());
 }
 
-void Path::release(MemoryPool &pool)
-{
+void Path::release(MemoryPool &pool) {
     for (size_t i = 0; i < m_vertices.size(); ++i)
         pool.release(m_vertices[i]);
     for (size_t i = 0; i < m_edges.size(); ++i)
@@ -1102,8 +1007,7 @@ void Path::release(MemoryPool &pool)
     m_edges.clear();
 }
 
-void Path::clone(Path &target, MemoryPool &pool) const
-{
+void Path::clone(Path &target, MemoryPool &pool) const {
     target.release(pool);
 
     for (size_t i = 0; i < m_vertices.size(); ++i)
@@ -1112,44 +1016,37 @@ void Path::clone(Path &target, MemoryPool &pool) const
         target.append(m_edges[i]->clone(pool));
 }
 
-void Path::append(const Path &path)
-{
+void Path::append(const Path &path) {
     for (size_t i = 0; i < path.vertexCount(); ++i)
         m_vertices.push_back(path.vertex(i));
     for (size_t i = 0; i < path.edgeCount(); ++i)
         m_edges.push_back(path.edge(i));
 }
 
-void Path::append(const Path &path, size_t start, size_t end, bool reverse)
-{
+void Path::append(const Path &path, size_t start, size_t end, bool reverse) {
     size_t count = end - start;
 
-    for (size_t i = start; i < end; ++i)
-    {
+    for (size_t i = start; i < end; ++i) {
         m_vertices.push_back(path.vertex(i));
         if (i + 1 < end)
             m_edges.push_back(path.edge(i));
     }
 
-    if (reverse)
-    {
+    if (reverse) {
         std::reverse(m_vertices.end() - count, m_vertices.end());
         std::reverse(m_edges.end() - (count - 1), m_edges.end());
     }
 }
 
-void Path::release(size_t start, size_t end, MemoryPool &pool)
-{
-    for (size_t i = start; i < end; ++i)
-    {
+void Path::release(size_t start, size_t end, MemoryPool &pool) {
+    for (size_t i = start; i < end; ++i) {
         pool.release(m_vertices[i]);
         if (i + 1 < end)
             pool.release(m_edges[i]);
     }
 }
 
-bool Path::operator==(const Path &path) const
-{
+bool Path::operator==(const Path &path) const {
     if (m_vertices.size() != path.vertexCount() ||
             m_edges.size() != path.edgeCount())
         return false;
@@ -1164,8 +1061,7 @@ bool Path::operator==(const Path &path) const
 
 Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
-        int s, int t, bool sampleDirect, bool lightImage)
-{
+        int s, int t, bool sampleDirect, bool lightImage) {
     int k = s + t + 1, n = k + 1;
 
     const PathVertex
@@ -1186,16 +1082,14 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 
     /* Keep track of which vertices are connectable / null interactions */
     int pos = 0;
-    for (int i = 0; i <= s; ++i)
-    {
+    for (int i = 0; i <= s; ++i) {
         const PathVertex *v = emitterSubpath.vertex(i);
         connectable[pos] = v->isConnectable();
         isNull[pos] = v->isNullInteraction() && !connectable[pos];
         pos++;
     }
 
-    for (int i = t; i >= 0; --i)
-    {
+    for (int i = t; i >= 0; --i) {
         const PathVertex *v = sensorSubpath.vertex(i);
         connectable[pos] = v->isConnectable();
         isNull[pos] = v->isNullInteraction() && !connectable[pos];
@@ -1206,8 +1100,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
         sampleDirect = false;
 
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
-    if (sampleDirect)
-    {
+    if (sampleDirect) {
         /* When direct sampling is enabled, we may be able to create certain
            connections that otherwise would have failed (e.g. to an
            orthographic camera or a directional light source) */
@@ -1241,8 +1134,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
     pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
             * connectionEdge->pdf[EImportance];
 
-    if (t > 0)
-    {
+    if (t > 0) {
         pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure)
                 * sensorSubpath.edge(t - 1)->pdf[EImportance];
 
@@ -1253,8 +1145,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 
     /* Collect radiance transfer area/volume densities from vertices */
     pos = 0;
-    if (s > 0)
-    {
+    if (s > 0) {
         for (int i = 0; i < s - 1; ++i)
             pdfRad[pos++] = emitterSubpath.vertex(i + 1)->pdf[ERadiance]
                 * emitterSubpath.edge(i)->pdf[ERadiance];
@@ -1280,8 +1171,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
        all cancel out. But to make sure that that's actually true, we need to
        convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
        into the projected solid angle measure */
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (i == s || !(connectable[i] && !connectable[i + 1]))
             continue;
 
@@ -1294,8 +1184,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
                 (cur->isOnSurface() ? dot(edge->d, cur->getGeometricNormal()) : 1));
     }
 
-    for (int i = k - 1; i >= 3; --i)
-    {
+    for (int i = k - 1; i >= 3; --i) {
         if (i - 1 == s || !(connectable[i] && !connectable[i - 1]))
             continue;
 
@@ -1314,8 +1203,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
        "Collapse" edges/vertices that were caused by BSDF::ENull interactions.
        The BDPT implementation is smart enough to connect straight through those,
        so they shouldn't be treated as Dirac delta events in what follows */
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (!connectable[i] || !isNull[i + 1])
             continue;
 
@@ -1323,8 +1211,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
         while (isNull[end + 1])
             ++end;
 
-        if (!connectable[end + 1])
-        {
+        if (!connectable[end + 1]) {
             /// The chain contains a non-ENull interaction
             isNull[start] = false;
             continue;
@@ -1360,8 +1247,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 
     /* When direct sampling strategies are enabled, we must
        account for them here as well */
-    if (sampleDirect)
-    {
+    if (sampleDirect) {
         /* Direct connection probability of the emitter */
         const PathVertex *sample = s > 0 ? emitterSubpath.vertex(1) : vt;
         const PathVertex *ref = emitterRefIndirection <= s
@@ -1396,13 +1282,11 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
        an incremental scheme can be used that only finds the densities relative
        to the (s,t) strategy, which can be done using a linear sweep. For
        details, refer to the Veach thesis, p.306. */
-    for (int i = s + 1; i < k; ++i)
-    {
+    for (int i = s + 1; i < k; ++i) {
         double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
                 value = next;
 
-        if (sampleDirect)
-        {
+        if (sampleDirect) {
             if (i == 1)
                 value *= ratioEmitterDirect;
             else if (i == sensorRefIndirection)
@@ -1420,13 +1304,11 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
     /* As above, but now compute pdf[i] with i<s (this is done by
        evaluating the inverse of the previous expressions). */
     pdf = initial;
-    for (int i = s - 1; i >= 0; --i)
-    {
+    for (int i = s - 1; i >= 0; --i) {
         double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1],
                 value = next;
 
-        if (sampleDirect)
-        {
+        if (sampleDirect) {
             if (i == 1)
                 value *= ratioEmitterDirect;
             else if (i == sensorRefIndirection)
@@ -1446,8 +1328,7 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage,
-        Float radius, size_t nEmitterPaths, bool merge)
-{
+        Float radius, size_t nEmitterPaths, bool merge) {
     int k = s + t + 1, n = k + 1;
 
     // for vcm
@@ -1473,16 +1354,14 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
     /* Keep track of which vertices are connectable / null interactions */
     int pos = 0;
-    for (int i = 0; i <= s; ++i)
-    {
+    for (int i = 0; i <= s; ++i) {
         const PathVertex *v = emitterSubpath.vertex(i);
         connectable[pos] = v->isConnectable();
         isNull[pos] = v->isNullInteraction() && !connectable[pos];
         pos++;
     }
 
-    for (int i = t; i >= 0; --i)
-    {
+    for (int i = t; i >= 0; --i) {
         const PathVertex *v = sensorSubpath.vertex(i);
         connectable[pos] = v->isConnectable();
         isNull[pos] = v->isNullInteraction() && !connectable[pos];
@@ -1493,8 +1372,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         sampleDirect = false;
 
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
-    if (sampleDirect)
-    {
+    if (sampleDirect) {
         /* When direct sampling is enabled, we may be able to create certain
            connections that otherwise would have failed (e.g. to an
            orthographic camera or a directional light source) */
@@ -1516,6 +1394,8 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         else if (s == 1)
             vsMeasure = emitter->needsDirectionSample() ? EArea : EDiscrete;
     }
+    
+    if(!merge && !connectable[s]) return Float(0.f);
 
     /* Collect importance transfer area/volume densities from vertices */
     pos = 0;
@@ -1528,8 +1408,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
             * connectionEdge->pdf[EImportance];
 
-    if (t > 0)
-    {
+    if (t > 0) {
         pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure)
                 * sensorSubpath.edge(t - 1)->pdf[EImportance];
 
@@ -1540,8 +1419,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
     /* Collect radiance transfer area/volume densities from vertices */
     pos = 0;
-    if (s > 0)
-    {
+    if (s > 0) {
         for (int i = 0; i < s - 1; ++i)
             pdfRad[pos++] = emitterSubpath.vertex(i + 1)->pdf[ERadiance]
                 * emitterSubpath.edge(i)->pdf[ERadiance];
@@ -1567,8 +1445,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        all cancel out. But to make sure that that's actually true, we need to
        convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
        into the projected solid angle measure */
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (i == s || !(connectable[i] && !connectable[i + 1]))
             continue;
 
@@ -1581,8 +1458,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
                 (cur->isOnSurface() ? dot(edge->d, cur->getGeometricNormal()) : 1));
     }
 
-    for (int i = k - 1; i >= 3; --i)
-    {
+    for (int i = k - 1; i >= 3; --i) {
         if (i - 1 == s || !(connectable[i] && !connectable[i - 1]))
             continue;
 
@@ -1601,8 +1477,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        "Collapse" edges/vertices that were caused by BSDF::ENull interactions.
        The BDPT implementation is smart enough to connect straight through those,
        so they shouldn't be treated as Dirac delta events in what follows */
-    for (int i = 1; i <= k - 3; ++i)
-    {
+    for (int i = 1; i <= k - 3; ++i) {
         if (!connectable[i] || !isNull[i + 1])
             continue;
 
@@ -1610,8 +1485,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         while (isNull[end + 1])
             ++end;
 
-        if (!connectable[end + 1])
-        {
+        if (!connectable[end + 1]) {
             /// The chain contains a non-ENull interaction
             isNull[start] = false;
             continue;
@@ -1644,20 +1518,20 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     }
 
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         accProb[i] = Float(0.f);
         bool mergable = connectable[i] && i >= 2 && i <= n - 3;
-        if (mergable)
-            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea) * nEmitterPaths;
+        if (mergable) {
+            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
+            if(i > 1 && !connectable[i-1]) accProb[i] = Float(1.f);
+        }
     }
 
     double initial = 1.0f;
 
     /* When direct sampling strategies are enabled, we must
        account for them here as well */
-    if (sampleDirect)
-    {
+    if (sampleDirect) {
         /* Direct connection probability of the emitter */
         const PathVertex *sample = s > 0 ? emitterSubpath.vertex(1) : vt;
         const PathVertex *ref = emitterRefIndirection <= s
@@ -1692,14 +1566,15 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        an incremental scheme can be used that only finds the densities relative
        to the (s,t) strategy, which can be done using a linear sweep. For
        details, refer to the Veach thesis, p.306. */
-    for (int i = s + 1; i < k; ++i)
-    {
-        double mergeRatio = sqrt((1.0 + accProb[i + 1] * accProb[i + 1]) / (1.0 + accProb[i] * accProb[i]));
-        double next = pdf * (double) pdfImp[i] / (double) pdfRad[i] * mergeRatio,
+    
+    double base_prob_sqr = (connectable[s] ? 1.0 : 0.0) + accProb[s + 1] * accProb[s + 1] * nEmitterPaths;
+    
+    for (int i = s + 1; i < k; ++i) {
+        double prob_sqr = (connectable[i] ? 1.0 : 0.0) + accProb[i + 1] * accProb[i + 1] * nEmitterPaths;
+        double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
                 value = next;
 
-        if (sampleDirect)
-        {
+        if (sampleDirect) {
             if (i == 1)
                 value *= ratioEmitterDirect;
             else if (i == sensorRefIndirection)
@@ -1708,8 +1583,9 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
 
         int tPrime = k - i - 1;
-        if (connectable[i] && (connectable[i + 1] || isNull[i + 1]) && (lightImage || tPrime > 1))
-            weight += value * value;
+        if ((connectable[i + 1] || isNull[i + 1]) && (lightImage || tPrime > 1)) {
+            weight += value * value * prob_sqr / base_prob_sqr;
+        }
 
         pdf = next;
     }
@@ -1717,14 +1593,12 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     /* As above, but now compute pdf[i] with i<s (this is done by
        evaluating the inverse of the previous expressions). */
     pdf = initial;
-    for (int i = s - 1; i >= 0; --i)
-    {
-        double mergeRatio = sqrt((1.0 + accProb[i + 1] * accProb[i + 1]) / (1.0 + accProb[i + 2] * accProb[i + 2]));
-        double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1] * mergeRatio,
+    for (int i = s - 1; i >= 0; --i) {
+        double prob_sqr = (connectable[i] ? 1.0 : 0.0) + accProb[i+1] * accProb[i+1] * nEmitterPaths;
+        double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1],
                 value = next;
 
-        if (sampleDirect)
-        {
+        if (sampleDirect) {
             if (i == 1)
                 value *= ratioEmitterDirect;
             else if (i == sensorRefIndirection)
@@ -1732,21 +1606,21 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         }
 
         int tPrime = k - i - 1;
-        if (connectable[i] && (connectable[i + 1] || isNull[i + 1]) && (lightImage || tPrime > 1))
-            weight += value * value;
+        if ((connectable[i + 1] || isNull[i + 1]) && (lightImage || tPrime > 1)) {
+            weight += value * value * prob_sqr / base_prob_sqr;
+        }
 
         pdf = next;
     }
 
     Float total_weight = 1.0 / weight;
-    Float w_merge = accProb[s + 1] * accProb[s + 1] / (1.0 + accProb[s + 1] * accProb[s + 1]);
-
+    Float w_merge = accProb[s + 1] * accProb[s + 1] / base_prob_sqr;
+    
     if (merge) return total_weight * w_merge;
     return total_weight * (1.0 - w_merge);
 }
 
-void Path::collapseTo(PathEdge &target) const
-{
+void Path::collapseTo(PathEdge &target) const {
     BDAssert(m_edges.size() > 0);
 
     target.pdf[ERadiance] = 1.0f;
@@ -1757,8 +1631,7 @@ void Path::collapseTo(PathEdge &target) const
     target.medium = m_edges[0]->medium;
     target.length = 0;
 
-    for (size_t i = 0; i < m_edges.size(); ++i)
-    {
+    for (size_t i = 0; i < m_edges.size(); ++i) {
         const PathEdge *edge = m_edges[i];
         target.weight[ERadiance] *= edge->weight[ERadiance];
         target.weight[EImportance] *= edge->weight[EImportance];
@@ -1769,8 +1642,7 @@ void Path::collapseTo(PathEdge &target) const
             target.medium = NULL;
     }
 
-    for (size_t i = 0; i < m_vertices.size(); ++i)
-    {
+    for (size_t i = 0; i < m_vertices.size(); ++i) {
         const PathVertex *vertex = m_vertices[i];
         BDAssert(vertex->isSurfaceInteraction() &&
                 vertex->componentType == BSDF::ENull);
@@ -1781,19 +1653,15 @@ void Path::collapseTo(PathEdge &target) const
     }
 }
 
-std::string Path::toString() const
-{
+std::string Path::toString() const {
     std::ostringstream oss;
     oss << "Path[" << endl;
 
-    if (m_vertices.size() == m_edges.size() + 1)
-    {
-        for (size_t i = 0; i < m_vertices.size(); ++i)
-        {
+    if (m_vertices.size() == m_edges.size() + 1) {
+        for (size_t i = 0; i < m_vertices.size(); ++i) {
             oss << "  Vertex " << i << " => " << indent(m_vertices[i]->toString());
 
-            if (i < m_edges.size())
-            {
+            if (i < m_edges.size()) {
                 oss << "," << endl;
                 oss << "  Edge " << i << " => " << indent(m_edges[i]->toString());
             }
@@ -1802,14 +1670,11 @@ std::string Path::toString() const
                 oss << ",";
             oss << endl;
         }
-    } else if (m_edges.size() == m_vertices.size() + 1)
-    {
-        for (size_t i = 0; i < m_edges.size(); ++i)
-        {
+    } else if (m_edges.size() == m_vertices.size() + 1) {
+        for (size_t i = 0; i < m_edges.size(); ++i) {
             oss << "  Edge " << i << " => " << indent(m_edges[i]->toString());
 
-            if (i < m_vertices.size())
-            {
+            if (i < m_vertices.size()) {
                 oss << "," << endl;
                 oss << "  Vertex " << i << " => " << indent(m_vertices[i]->toString());
             }
@@ -1818,8 +1683,7 @@ std::string Path::toString() const
                 oss << ",";
             oss << endl;
         }
-    } else
-    {
+    } else {
         SLog(EError, "Unknown path configuration!");
     }
 
@@ -1827,17 +1691,14 @@ std::string Path::toString() const
     return oss.str();
 }
 
-std::string Path::summarize() const
-{
+std::string Path::summarize() const {
     std::ostringstream oss;
 
     BDAssert(m_vertices.size() == m_edges.size() + 1);
 
-    for (size_t i = 0; i < m_vertices.size(); ++i)
-    {
+    for (size_t i = 0; i < m_vertices.size(); ++i) {
         const PathVertex *vertex = m_vertices[i];
-        switch (vertex->type)
-        {
+        switch (vertex->type) {
             case PathVertex::EEmitterSupernode: oss << "E";
                 break;
             case PathVertex::ESensorSupernode: oss << "C";
@@ -1856,8 +1717,7 @@ std::string Path::summarize() const
         if (!vertex->isConnectable())
             oss << "d";
 
-        if (i < m_edges.size())
-        {
+        if (i < m_edges.size()) {
             const PathEdge *edge = m_edges[i];
             if (edge->medium == NULL)
                 oss << " - ";
