@@ -90,7 +90,7 @@ public:
         result->clear();
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
-
+        //if(rect->getOffset().x != 0 || rect->getOffset().y != 128) return; // for debug
 
 #if defined(MTS_DEBUG_FP)
         enableFPExceptions();
@@ -128,7 +128,7 @@ public:
 
             Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             Spectrum color(Float(0.f));
-            //color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+            color += evaluateConnection(result, emitterSubpath, sensorSubpath);
             color += evaluateMerging(result, sensorSubpath);
             result->putSample(initialSamplePos, color, 1.f);
             m_sampler->advance();
@@ -334,24 +334,26 @@ public:
         Path emitterSubpath;
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
-        PathVertex tempEndpoint, tempSample;
-        PathEdge tempEdge, connectionEdge;
+        PathEdge connectionEdge;
 
         Spectrum sampleValue(0.0f);
-
+        
         int minT = 2;
         int maxT = (int) sensorSubpath.vertexCount() - 1;
         if (m_config.maxDepth != -1)
             maxT = std::min(maxT, m_config.maxDepth + 1);
-        for (int t = maxT; t >= minT; --t) {
+        
+        for (int t = minT; t <= maxT; ++t) {
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
             Float radius = m_process->m_mergeRadius;
 
+            if(!vt->isConnectable()) continue;
+            
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
 
             for (const VCMPhoton& photon : photons) { // inspect every photon in range
-
+                
                 int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
                 if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
                 m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
@@ -359,7 +361,10 @@ public:
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
-
+                
+                
+                //if(!emitterSubpath.vertex(s-1)->isConnectable()) continue; // for debug
+                
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
                 Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
@@ -457,10 +462,16 @@ public:
                 if (reconnect)
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
 
+                //if(t != 3) continue;// for debug
+                
                 /* Compute the multiple importance sampling weight */
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, false, m_config.lightImage,
                         radius, nEmitterPaths, true);
+                
+                //miWeight = 1.0 / nEmitterPaths; // for debug
+                
+                
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -485,6 +496,7 @@ public:
 #endif
                 sampleValue += value * Spectrum(miWeight) / p_acc;
             }
+            //break; // for debug
         }
         
         return sampleValue;

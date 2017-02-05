@@ -1133,7 +1133,7 @@ namespace nanoflann {
                 const size_t N = dataset.kdtree_get_point_count();
 #if defined(NANOFLANN_USE_OMP)
                 for (int i = 0; i < (DIM > 0 ? DIM : dim); ++i) {
-                    computeMinMax(NULL, N, i, bbox[i].low, bbox[i].high);
+                    computeMinMax(vind.data(), N, i, bbox[i].low, bbox[i].high);
                 }
 #endif
 

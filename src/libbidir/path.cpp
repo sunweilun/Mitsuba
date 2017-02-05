@@ -1394,8 +1394,6 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         else if (s == 1)
             vsMeasure = emitter->needsDirectionSample() ? EArea : EDiscrete;
     }
-    
-    if(!merge && !connectable[s]) return Float(0.f);
 
     /* Collect importance transfer area/volume densities from vertices */
     pos = 0;
@@ -1405,8 +1403,13 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         pdfImp[pos++] = emitterSubpath.vertex(i)->pdf[EImportance]
             * emitterSubpath.edge(i)->pdf[EImportance];
 
-    pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
-            * connectionEdge->pdf[EImportance];
+    if (merge && !vs->isConnectable()) { // use cached pdf
+        pdfImp[pos++] = vs->pdf[EImportance]
+                * emitterSubpath.edge(s)->pdf[EImportance];
+    } else {
+        pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
+                * connectionEdge->pdf[EImportance];
+    }
 
     if (t > 0) {
         pdfImp[pos++] = vt->evalPdf(scene, vs, vtPred, EImportance, vtMeasure)
@@ -1424,10 +1427,16 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
             pdfRad[pos++] = emitterSubpath.vertex(i + 1)->pdf[ERadiance]
                 * emitterSubpath.edge(i)->pdf[ERadiance];
 
-        pdfRad[pos++] = vs->evalPdf(scene, vt, vsPred, ERadiance, vsMeasure)
-                * emitterSubpath.edge(s - 1)->pdf[ERadiance];
+        if (merge && !vs->isConnectable()) { // use cached pdf
+            pdfRad[pos++] = vs->pdf[ERadiance]
+                    * emitterSubpath.edge(s - 1)->pdf[ERadiance];
+        } else {
+            pdfRad[pos++] = vs->evalPdf(scene, vt, vsPred, ERadiance, vsMeasure)
+                    * emitterSubpath.edge(s - 1)->pdf[ERadiance];
+        }
     }
 
+    
     pdfRad[pos++] = vt->evalPdf(scene, vtPred, vs, ERadiance, vtMeasure)
             * connectionEdge->pdf[ERadiance];
 
@@ -1446,12 +1455,13 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        convert some of the area densities in the 'pdfRad' and 'pdfImp' arrays
        into the projected solid angle measure */
     for (int i = 1; i <= k - 3; ++i) {
-        if (i == s || !(connectable[i] && !connectable[i + 1]))
+        if (!merge && i == s) continue;
+        if (!(connectable[i] && !connectable[i + 1]))
             continue;
 
         const PathVertex *cur = i <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k - i);
         const PathVertex *succ = i + 1 <= s ? emitterSubpath.vertex(i + 1) : sensorSubpath.vertex(k - i - 1);
-        const PathEdge *edge = i < s ? emitterSubpath.edge(i) : sensorSubpath.edge(k - i - 1);
+        const PathEdge *edge = i < s ? emitterSubpath.edge(i) : i==s? connectionEdge : sensorSubpath.edge(k - i - 1);
 
         pdfImp[i + 1] *= edge->length * edge->length / std::abs(
                 (succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
@@ -1459,12 +1469,13 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     }
 
     for (int i = k - 1; i >= 3; --i) {
-        if (i - 1 == s || !(connectable[i] && !connectable[i - 1]))
+        if (!merge && i - 1 == s) continue;
+        if (!(connectable[i] && !connectable[i - 1]))
             continue;
 
         const PathVertex *cur = i <= s ? emitterSubpath.vertex(i) : sensorSubpath.vertex(k - i);
         const PathVertex *succ = i - 1 <= s ? emitterSubpath.vertex(i - 1) : sensorSubpath.vertex(k - i + 1);
-        const PathEdge *edge = i <= s ? emitterSubpath.edge(i - 1) : sensorSubpath.edge(k - i);
+        const PathEdge *edge = i <= s ? emitterSubpath.edge(i - 1) : i-1==s? connectionEdge : sensorSubpath.edge(k - i);
 
         pdfRad[i - 1] *= edge->length * edge->length / std::abs(
                 (succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
@@ -1520,10 +1531,11 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
     for (int i = 0; i < n; i++) {
         accProb[i] = Float(0.f);
-        bool mergable = connectable[i] && i >= 2 && i <= n - 3;
+        bool mergable = i >= 2 && i <= n - 3 && connectable[i];
         if (mergable) {
             accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
-            if(i > 1 && !connectable[i-1]) accProb[i] = Float(1.f);
+            if (!connectable[i - 1]) accProb[i] = pdfImp[i];
+            //accProb[i] = 1e3; // for debug
         }
     }
 
@@ -1566,9 +1578,9 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        an incremental scheme can be used that only finds the densities relative
        to the (s,t) strategy, which can be done using a linear sweep. For
        details, refer to the Veach thesis, p.306. */
-    
+
     double base_prob_sqr = (connectable[s] ? 1.0 : 0.0) + accProb[s + 1] * accProb[s + 1] * nEmitterPaths;
-    
+
     for (int i = s + 1; i < k; ++i) {
         double prob_sqr = (connectable[i] ? 1.0 : 0.0) + accProb[i + 1] * accProb[i + 1] * nEmitterPaths;
         double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
@@ -1594,7 +1606,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        evaluating the inverse of the previous expressions). */
     pdf = initial;
     for (int i = s - 1; i >= 0; --i) {
-        double prob_sqr = (connectable[i] ? 1.0 : 0.0) + accProb[i+1] * accProb[i+1] * nEmitterPaths;
+        double prob_sqr = (connectable[i] ? 1.0 : 0.0) + accProb[i + 1] * accProb[i + 1] * nEmitterPaths;
         double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1],
                 value = next;
 
@@ -1608,16 +1620,20 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         int tPrime = k - i - 1;
         if ((connectable[i + 1] || isNull[i + 1]) && (lightImage || tPrime > 1)) {
             weight += value * value * prob_sqr / base_prob_sqr;
+            
         }
 
         pdf = next;
     }
-
+    
+    // printf("imp:\n"); for(int i=0; i<k; i++) printf("%d: %f |", i, pdfImp[i]); printf("\n");
+    // printf("rad:\n"); for(int i=0; i<k; i++) printf("%d: %f |", i, pdfRad[i]); printf("\n");
+    
     Float total_weight = 1.0 / weight;
     Float w_merge = accProb[s + 1] * accProb[s + 1] / base_prob_sqr;
-    
+
     if (merge) return total_weight * w_merge;
-    return total_weight * (1.0 - w_merge);
+    return total_weight * 1.0 / base_prob_sqr;
 }
 
 void Path::collapseTo(PathEdge &target) const {
