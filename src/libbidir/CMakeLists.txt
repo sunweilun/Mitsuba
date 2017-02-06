@@ -34,6 +34,7 @@ set(SRCS
   mut_manifold.cpp
   mut_mchain.cpp
   path.cpp
+  pathvcm.cpp
   pathsampler.cpp
   rsampler.cpp
   util.cpp

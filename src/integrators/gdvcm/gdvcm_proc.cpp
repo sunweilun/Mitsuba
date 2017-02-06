@@ -24,6 +24,8 @@
 
 MTS_NAMESPACE_BEGIN
 
+#define POWER_EXPONENT 1
+
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
 /* ==================================================================== */
@@ -173,6 +175,7 @@ public:
                 gradient[k] = Spectrum(0.f);
             }
 
+            //if(0) // for debug
             // connection part
             {
                 double jx, jy;
@@ -268,7 +271,7 @@ public:
                 emitterSubpath[0].release(m_pool);
                 sensorSubpath[0].release(m_pool);
             }
-
+            //if(0) // for debug
             // merging part
             {
                 double jx, jy;
@@ -666,7 +669,7 @@ public:
                                 //	miWeight[0] = Path::miWeight(scene, emitterSubpath, &connectionEdge, sensorSubpath[0], s, t, m_config.sampleDirect, m_config.lightImage) / valuePdf[0];
                                 miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                         *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                        1.0, 2.0, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
+                                        1.0, POWER_EXPONENT, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
                                         radius, nEmitterPaths, false) / valuePdf[0];
                             } else
                             {
@@ -675,7 +678,7 @@ public:
                                 // some smarter computation should be done at some point to handle this
                                 miWeight[k] = Path::miWeightGradNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                         *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                        (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), 1.0,
+                                        (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), POWER_EXPONENT,
                                         (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
                                         vert_b, m_config.m_shiftThreshold,
                                         radius, nEmitterPaths, false) / valuePdf[0];
@@ -839,7 +842,6 @@ public:
 
             Spectrum geomTerm = Spectrum(0.0);
 
-
             do
             { //this should really go away at some point...
                 if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero())))
@@ -861,48 +863,24 @@ public:
                     int remaining = m_config.maxDepth - s - t + 1;
 
                     /* Account for the terms of the measurement contribution function that are coupled to the connection endpoints, i.e. s==0*/
-                    if (vs->isEmitterSupernode())
+                    
                     {
-                        /* If possible, convert 'vt' into an emitter sample */
-                        if (!vt->cast(scene, PathVertex::EEmitterSample) || vt->isDegenerate())
-                        {
-                            valuePdf[k] = *radiancePdfTmp;
-                            break;
-                        }
-
-                        Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
-                        if (k == 0) connectionPartsBase = connectionParts;
-
-                        value[k] = *radianceWeightTmp * connectionParts;
-                        valuePdf[k] = *radiancePdfTmp;
-                    }/* Accounts for direct hits of light-subpaths to sensor, i.e t==0. If this happens do not compute gradients but fall back to the T0 mapping */
-                    else if (vt->isSensorSupernode())
-                    {
-                        if (!vs->cast(scene, PathVertex::ESensorSample) || vs->isDegenerate() || k > 0) //Note the k>0...
-                        {
-                            valuePdf[k] = *importancePdfTmp;
-                            break;
-                        }
-                        /* Make note of the changed pixel sample position */
-                        if (!vs->getSamplePosition(vsPred, samplePos))
-                        {
-                            valuePdf[k] = *importancePdfTmp;
-                            break;
-                        }
-                        value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
-                        valuePdf[k] = *importancePdfTmp;
-                    } else
-                    {
+                        /*
                         if (!Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)
                                 || !Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
+                                || vs->getType() == 0 || vt->getType() == 0)
+                        */
+                        if (!Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
                                 || vs->getType() == 0 || vt->getType() == 0)
                         {
                             valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                             break;
                         }
-                        Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
+                        //Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
+                        Spectrum vs_weight = vs->weight[EImportance] * vs->rrWeight * emitterSubpathTmp->edge(s)->weight[EImportance];
+                        Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs_weight * vt->eval(scene, vtPred, vs, ERadiance);
                         if (k == 0) connectionPartsBase = connectionParts;
-                        value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
+                        value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / (M_PI * radius * radius);
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         vs->measure = vt->measure = EArea;
                     }
@@ -924,7 +902,8 @@ public:
 
                     //this is the missing geometry factor in c_{s,t} of f_j mentioned in veach thesis equation 10.8
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase : connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
-                    value[k] *= geomTerm;
+                    
+                    //value[k] *= geomTerm;
                     valuePdf[k] *= (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]);
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
@@ -940,7 +919,7 @@ public:
                         //	miWeight[0] = Path::miWeight(scene, emitterSubpath, &connectionEdge, sensorSubpath[0], s, t, m_config.sampleDirect, m_config.lightImage) / valuePdf[0];
                         miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                 *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                1.0, 2.0, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
+                                1.0, POWER_EXPONENT, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
                                 radius, nEmitterPaths, true) / valuePdf[0];
                     } else
                     {
@@ -949,7 +928,7 @@ public:
                         // some smarter computation should be done at some point to handle this
                         miWeight[k] = Path::miWeightGradNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                 *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), 1.0,
+                                (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), POWER_EXPONENT,
                                 (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
                                 vert_b, m_config.m_shiftThreshold,
                                 radius, nEmitterPaths, true) / valuePdf[0];
@@ -982,7 +961,7 @@ public:
         /* store primal paths contribution */
         Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
         if (t >= 2)
-            primal += mainRad / (p_acc * nEmitterPaths);
+            primal += mainRad;
         else
             wr->putLightSample(samplePos, mainRad, 0);
 
@@ -993,7 +972,7 @@ public:
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * (t < 2 ? jacobianLP[n] : pathData[n + 1].jacobianDet[t]);
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
             if (t >= 2)
-                gradient[n] += gradVal / (p_acc * nEmitterPaths);
+                gradient[n] += gradVal;
             else
                 wr->putLightSample(samplePos, gradVal, n + 1);
         }
