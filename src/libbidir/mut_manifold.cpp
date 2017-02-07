@@ -1149,7 +1149,7 @@ bool ManifoldPerturbation::propagatePerturbation(Path &source, Path &proposal, i
 	return true;
 }
 
-bool ManifoldPerturbation::manifoldWalk(Path &source, Path &proposal, int step, int b, int c)
+bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int step, int b, int c)
 {
 
 	/* Choose a local parameterization of the specular manifold using

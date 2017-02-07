@@ -603,6 +603,12 @@ public:
         m_vertices.pop_back();
         m_edges.pop_back();
     }
+    
+    void removeAndReleaseLastVertex(MemoryPool &pool)
+    {
+        pool.release(m_vertices.back());
+        m_vertices.pop_back();
+    }
 
     void removeLastElement()
     {

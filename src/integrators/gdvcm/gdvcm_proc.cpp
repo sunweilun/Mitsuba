@@ -24,7 +24,7 @@
 
 MTS_NAMESPACE_BEGIN
 
-#define POWER_EXPONENT 1
+#define POWER_EXPONENT 2
 
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
@@ -834,6 +834,21 @@ public:
                             valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                             break;
                         }
+                        
+                        if(k > 0 && !Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)) {
+                            Path emitterSubpathOffset;
+                            emitterSubpathTmp->clone(emitterSubpathOffset, m_pool);
+                            int prev_diff = m_offsetGenerator->getSpecularChainEndGBDPT(*emitterSubpathTmp, s, -1);
+                            // make emitterSubpathOffset's last vertex vt.
+                            emitterSubpathOffset.removeAndReleaseLastVertex(m_pool);
+                            emitterSubpathOffset.append(vt->clone(m_pool));
+                            bool success = m_offsetGenerator->manifoldWalk(*emitterSubpathTmp, emitterSubpathOffset, -1, s+1, prev_diff);
+                            if(!success)
+                                value[k] = Spectrum(0.0);
+                            emitterSubpathOffset.release(m_pool);
+                            
+                        }
+                        
                         //Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                         Spectrum vs_weight = vs->weight[EImportance] * vs->rrWeight * emitterSubpathTmp->edge(s)->weight[EImportance];
                         Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs_weight * vt->eval(scene, vtPred, vs, ERadiance);

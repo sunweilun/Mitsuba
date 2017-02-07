@@ -80,6 +80,11 @@ public:
 
 	/// access to specular threshold
 	Float getSpecularThreshold(){ return m_specularThreshold; }
+        
+        /* helper functions for G-BDPT*/
+        bool manifoldWalk(const Path &source, Path &proposal, int step, int b, int c);
+        int getSpecularChainEndGBDPT(const Path &path, int pos, int step);
+	int getSpecularChainEnd(const Path &path, int pos, int step);
 
 	//! @}
 	// =============================================================
@@ -102,11 +107,10 @@ protected:
 	}
 
 	/* helper functions for G-BDPT*/
-	bool manifoldWalk(Path &source, Path &proposal, int step, int b, int c);
+	
 	bool propagatePerturbation(Path &source, Path &proposal, int step, int a, int b, ETransportMode mode);
 	bool perturbDirection(Path &source, Path &proposal, int step, int a, Vector2 offset, ETransportMode mode, bool lightPath = false);
-	int getSpecularChainEndGBDPT(const Path &path, int pos, int step);
-	int getSpecularChainEnd(const Path &path, int pos, int step);
+	
 protected:
 	ref<const Scene> m_scene;
 	ref<Sampler> m_sampler;
