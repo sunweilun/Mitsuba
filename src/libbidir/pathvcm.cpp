@@ -4,6 +4,8 @@
 
 MTS_NAMESPACE_BEGIN
 
+#define MERGE_ONLY
+
 Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
@@ -154,8 +156,9 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         if (mergable) {
             accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
             if (!connectable[i - 1]) accProb[i] = pdfImp[i];
-            
-            //accProb[i] = 1e3; // for debug
+#if defined(MERGE_ONLY)
+            accProb[i] = 1e5;
+#endif
         }
     }
 
@@ -383,8 +386,9 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             oAccProb[i] = std::min(Float(1.f), offsetPdfImp[i] * mergeArea);
             if (!connectable[i - 1]) accProb[i] = pdfImp[i];
             if (!connectable[i - 1]) oAccProb[i] = offsetPdfImp[i];
-            
-            //accProb[i] = oAccProb[i] = 1e3; // for debug
+#if defined(MERGE_ONLY)
+            accProb[i] = oAccProb[i] = 1e3; // for debug
+#endif
         }
     }
 

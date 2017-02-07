@@ -29,12 +29,10 @@ MTS_NAMESPACE_BEGIN
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
 /* ==================================================================== */
-class ShiftPathData
-{
+class ShiftPathData {
 public:
 
-    ShiftPathData(int n)
-    {
+    ShiftPathData(int n) {
         jacobianDet.resize(n + 3, 1.0);
         genGeomTerm.resize(n + 3, 1.0);
     }
@@ -51,40 +49,32 @@ public:
 
 /* ==================================================================== */
 
-class GDVCMRenderer : public VCMRendererBase
-{
+class GDVCMRenderer : public VCMRendererBase {
 public:
 
-    GDVCMRenderer(const GDVCMConfiguration &config, GDVCMProcess* process) : m_config(config), m_process(process)
-    {
+    GDVCMRenderer(const GDVCMConfiguration &config, GDVCMProcess* process) : m_config(config), m_process(process) {
     }
 
     GDVCMRenderer(Stream *stream, InstanceManager *manager)
-    : VCMRendererBase(stream, manager), m_config(stream)
-    {
+    : VCMRendererBase(stream, manager), m_config(stream) {
     }
 
-    virtual ~GDVCMRenderer()
-    {
+    virtual ~GDVCMRenderer() {
     }
 
-    void serialize(Stream *stream, InstanceManager *manager) const
-    {
+    void serialize(Stream *stream, InstanceManager *manager) const {
         m_config.serialize(stream);
     }
 
-    ref<WorkUnit> createWorkUnit() const
-    {
+    ref<WorkUnit> createWorkUnit() const {
         return new RectangularWorkUnit();
     }
 
-    ref<WorkResult> createWorkResult() const
-    {
+    ref<WorkResult> createWorkResult() const {
         return new GDVCMWorkResult(m_config, m_rfilter.get(), Vector2i(m_config.blockSize), m_config.nNeighbours/*, m_config.nFeatures*/, m_config.extraBorder);
     }
 
-    void prepare()
-    {
+    void prepare() {
 
         m_scene = static_cast<Scene *> (getResource("scene"));
         m_sampler = static_cast<Sampler *> (getResource("sampler"));
@@ -96,10 +86,8 @@ public:
             m_offsetGenerator = new ManifoldPerturbation(m_scene, NULL, m_pool, 0.f, true, true, 0, 0, m_config.m_shiftThreshold);
     }
 
-    void process(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop)
-    {
-        if (m_process->phase == VCMProcessBase::SAMPLE)
-        {
+    void process(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop) {
+        if (m_process->phase == VCMProcessBase::SAMPLE) {
             processSampling(workUnit, workResult, stop, m_process, &m_config);
             return;
         }
@@ -116,8 +104,7 @@ public:
         /*shift direction is hard-coded. future releases should support arbitrary kernels. */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
 
-        if (m_config.maxDepth == -1)
-        {
+        if (m_config.maxDepth == -1) {
             Log(EWarn, "maxDepth is unlimited, set to 12!");
             m_config.maxDepth = 12;
         }
@@ -140,8 +127,7 @@ public:
 
 
         /*loop over pixels in block*/
-        for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i)
-        {
+        for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i) {
             int neighborCount = m_config.nNeighbours;
 
             Point2 samplePos;
@@ -159,8 +145,7 @@ public:
 
 
             //marco: Hack- Required to store negative gradients...
-            for (size_t i = 0; i < (1 + m_config.nNeighbours); ++i)
-            {
+            for (size_t i = 0; i < (1 + m_config.nNeighbours); ++i) {
                 const_cast<ImageBlock *> (result->getImageBlock(i))->setAllowNegativeValues(true);
                 if (m_config.lightImage)
                     const_cast<ImageBlock *> (result->getLightImage(i))->setAllowNegativeValues(true);
@@ -170,13 +155,12 @@ public:
             Spectrum primal = Spectrum(0.f);
             Spectrum *gradient = (Spectrum *) alloca(neighborCount * sizeof (Spectrum));
 
-            for (int k = 0; k < neighborCount; k++)
-            {
+            for (int k = 0; k < neighborCount; k++) {
                 gradient[k] = Spectrum(0.f);
             }
 
-            //if(0) // for debug
-            // connection part
+            //if (0) // for debug
+                // connection part
             {
                 double jx, jy;
                 std::vector<ShiftPathData> pathData(neighborCount + 1, sensorDepth + 3);
@@ -207,8 +191,7 @@ public:
                 /*  geometry term(s) of base  */
                 m_offsetGenerator->computeMuRec(connectPath, pathData[0].muRec);
                 int idx = 0;
-                for (int v = pathData[0].muRec.extra[0] - 1; v >= 0; v--)
-                {
+                for (int v = pathData[0].muRec.extra[0] - 1; v >= 0; v--) {
                     int idx = connectPath.vertexCount() - 1 - v;
                     if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[0].muRec.extra[2])
                         pathData[0].genGeomTerm.at(idx) = connectPath.calcSpecularPDFChange(v, m_offsetGenerator);
@@ -217,23 +200,19 @@ public:
                 }
 
                 /*shift base path if possible*/
-                for (int k = 0; k < neighborCount; k++)
-                {
+                for (int k = 0; k < neighborCount; k++) {
                     //we cannot shift very direct paths!
                     pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 ? false : m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1], pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false);
 
                     //if shift successful, compute jacobian and geometry term for each possible connection strategy that affects the shifted sub path
                     //for the manifold exploration shift there are only two connectible vertices in the affected chain (v_b and v_c)
-                    if (pathData[k + 1].success)
-                    {
+                    if (pathData[k + 1].success) {
 
                         int idx = 0;
                         int a, b, c;
-                        for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--)
-                        {
+                        for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--) {
                             int idx = connectPath.vertexCount() - 1 - v;
-                            if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[k + 1].muRec.extra[2])
-                            {
+                            if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[k + 1].muRec.extra[2]) {
                                 a = pathData[k + 1].muRec.extra[0];
                                 b = v >= pathData[k + 1].muRec.extra[1] ? v : pathData[k + 1].muRec.extra[1];
                                 c = v >= pathData[k + 1].muRec.extra[1] ? v - 1 : pathData[k + 1].muRec.extra[2];
@@ -241,8 +220,7 @@ public:
                                 jy = sensorSubpath[k + 1].halfJacobian_GBDPT(a, b, c, m_offsetGenerator);
                                 pathData[k + 1].jacobianDet.at(idx) = jy / jx;
                                 pathData[k + 1].genGeomTerm.at(idx) = sensorSubpath[k + 1].calcSpecularPDFChange(v, m_offsetGenerator);
-                            } else
-                            {
+                            } else {
                                 pathData[k + 1].jacobianDet.at(idx) = pathData[k + 1].jacobianDet.at(idx - 1);
                                 pathData[k + 1].genGeomTerm.at(idx) = pathData[k + 1].genGeomTerm.at(idx - 1);
                             }
@@ -255,15 +233,13 @@ public:
                 int v_b = connectPath.vertexCount() - 1 - pathData[0].muRec.extra[1];
 
                 /* evaluate base and offset paths */
-                evaluateConnection(result, emitterSubpath[0], sensorSubpath, pathData, v_b, value, 
+                evaluateConnection(result, emitterSubpath[0], sensorSubpath, pathData, v_b, value,
                         miWeight, valuePdf, jacobianLP, genGeomTermLP, pathSuccess, primal, gradient);
 
                 /* clean up memory */
                 connectPath.release(ptx, ptx + 2, m_pool);
-                for (int k = 0; k < neighborCount; k++)
-                {
-                    if (pathData[k + 1].success)
-                    {
+                for (int k = 0; k < neighborCount; k++) {
+                    if (pathData[k + 1].success) {
                         sensorSubpath[k + 1].reverse();
                         sensorSubpath[k + 1].release(pathData[k + 1].muRec.l, pathData[k + 1].muRec.m + 1, m_pool);
                     }
@@ -294,19 +270,17 @@ public:
                 int maxT = (int) sp.vertexCount() - 1;
                 if (m_config.maxDepth != -1)
                     maxT = std::min(maxT, m_config.maxDepth + 1);
-                for (int t = maxT; t >= minT; --t)
-                {
+                for (int t = maxT; t >= minT; --t) {
                     PathVertex *vt = sp.vertex(t); // the vertex we are looking at
 
                     Float radius = m_process->m_mergeRadius;
 
                     // look up photons
                     std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
-                    
+
                     samplePos = sp.vertex(1)->getSamplePosition();
-                    
-                    for (const VCMPhoton& photon : photons)
-                    { // inspect every photon in range
+
+                    for (const VCMPhoton& photon : photons) { // inspect every photon in range
                         pathData[0].success = true;
                         pathData[0].couldConnectAfterB = true;
                         std::vector<Path> emitterSubpath(neighborCount + 1);
@@ -331,8 +305,7 @@ public:
                         /*  geometry term(s) of base  */
                         m_offsetGenerator->computeMuRec(connectPath, pathData[0].muRec);
                         int idx = 0;
-                        for (int v = pathData[0].muRec.extra[0] - 1; v >= 0; v--)
-                        {
+                        for (int v = pathData[0].muRec.extra[0] - 1; v >= 0; v--) {
                             int idx = connectPath.vertexCount() - 1 - v;
                             if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[0].muRec.extra[2])
                                 pathData[0].genGeomTerm.at(idx) = connectPath.calcSpecularPDFChange(v, m_offsetGenerator);
@@ -341,22 +314,18 @@ public:
                         }
 
                         /*shift base path if possible*/
-                        for (int k = 0; k < neighborCount; k++)
-                        {
+                        for (int k = 0; k < neighborCount; k++) {
                             //we cannot shift very direct paths!
                             pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 ? false : m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1], pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false);
 
                             //if shift successful, compute jacobian and geometry term for each possible connection strategy that affects the shifted sub path
                             //for the manifold exploration shift there are only two connectible vertices in the affected chain (v_b and v_c)
-                            if (pathData[k + 1].success)
-                            {
+                            if (pathData[k + 1].success) {
                                 int idx = 0;
                                 int a, b, c;
-                                for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--)
-                                {
+                                for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--) {
                                     int idx = connectPath.vertexCount() - 1 - v;
-                                    if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[k + 1].muRec.extra[2])
-                                    {
+                                    if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[k + 1].muRec.extra[2]) {
                                         a = pathData[k + 1].muRec.extra[0];
                                         b = v >= pathData[k + 1].muRec.extra[1] ? v : pathData[k + 1].muRec.extra[1];
                                         c = v >= pathData[k + 1].muRec.extra[1] ? v - 1 : pathData[k + 1].muRec.extra[2];
@@ -364,8 +333,7 @@ public:
                                         jy = sensorSubpath[k + 1].halfJacobian_GBDPT(a, b, c, m_offsetGenerator);
                                         pathData[k + 1].jacobianDet.at(idx) = jy / jx;
                                         pathData[k + 1].genGeomTerm.at(idx) = sensorSubpath[k + 1].calcSpecularPDFChange(v, m_offsetGenerator);
-                                    } else
-                                    {
+                                    } else {
                                         pathData[k + 1].jacobianDet.at(idx) = pathData[k + 1].jacobianDet.at(idx - 1);
                                         pathData[k + 1].genGeomTerm.at(idx) = pathData[k + 1].genGeomTerm.at(idx - 1);
                                     }
@@ -374,14 +342,11 @@ public:
                             sensorSubpath[k + 1].reverse();
                         }
 
-                        if (t >= sensorSubpath[0].vertexCount())
-                        {
+                        if (t >= sensorSubpath[0].vertexCount()) {
                             /* clean up memory */
                             connectPath.release(ptx, ptx + 2, m_pool);
-                            for (int k = 0; k < neighborCount; k++)
-                            {
-                                if (pathData[k + 1].success)
-                                {
+                            for (int k = 0; k < neighborCount; k++) {
+                                if (pathData[k + 1].success) {
                                     sensorSubpath[k + 1].reverse();
                                     sensorSubpath[k + 1].release(pathData[k + 1].muRec.l, pathData[k + 1].muRec.m + 1, m_pool);
                                 }
@@ -397,13 +362,11 @@ public:
                         /* evaluate base and offset paths */
                         evaluateMerging(result, emitterSubpath[0], sensorSubpath, pathData, v_b,
                                 value, miWeight, valuePdf, jacobianLP, genGeomTermLP, pathSuccess, s, t, radius, primal, gradient);
-                        
+
                         /* clean up memory */
                         connectPath.release(ptx, ptx + 2, m_pool);
-                        for (int k = 0; k < neighborCount; k++)
-                        {
-                            if (pathData[k + 1].success)
-                            {
+                        for (int k = 0; k < neighborCount; k++) {
+                            if (pathData[k + 1].success) {
                                 sensorSubpath[k + 1].reverse();
                                 sensorSubpath[k + 1].release(pathData[k + 1].muRec.l, pathData[k + 1].muRec.m + 1, m_pool);
                             }
@@ -411,17 +374,16 @@ public:
                         emitterSubpath[0].release(m_pool);
                         sensorSubpath[0].release(m_pool);
                     }
-                    
+
                 }
             }
-            
+
             /* store accumulated primal and gradient samples with t>=2 */
             result->putSample(samplePos, primal, 0);
             for (int k = 0; k < neighborCount; ++k)
                 result->putSample(samplePos, gradient[k], k + 1);
 
-            for (size_t i = 0; i < (1 + m_config.nNeighbours); ++i)
-            {
+            for (size_t i = 0; i < (1 + m_config.nNeighbours); ++i) {
                 const_cast<ImageBlock *> (result->getImageBlock(i))->setAllowNegativeValues(false);
                 if (m_config.lightImage)
                     const_cast<ImageBlock *> (result->getLightImage(i))->setAllowNegativeValues(false);
@@ -442,8 +404,7 @@ public:
             Path &emitterSubpath, std::vector<Path> &sensorSubpath, std::vector<ShiftPathData> &pathData, int vert_b,
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess
-            , Spectrum& primal, Spectrum * gradient)
-    {
+            , Spectrum& primal, Spectrum * gradient) {
 
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
@@ -463,8 +424,7 @@ public:
         Float *importancePdf = (Float*) alloca(emitterSubpath.vertexCount() * sizeof (Float));
         Float **radiancePdf = (Float **) alloca((neighbourCount + 1) * sizeof (Float*));
 
-        for (int k = 0; k <= neighbourCount; k++)
-        {
+        for (int k = 0; k <= neighbourCount; k++) {
             radianceWeights[k] = (Spectrum *) alloca(sensorSubpath[0].vertexCount() * sizeof (Spectrum));
             radiancePdf[k] = (Float *) alloca(sensorSubpath[0].vertexCount() * sizeof (Float));
         }
@@ -483,8 +443,7 @@ public:
         Spectrum visibility = Spectrum(0.f);
         Spectrum light = Spectrum(0.f);
 
-        for (int s = (int) emitterSubpath.vertexCount() - 1; s >= 0; --s)
-        {
+        for (int s = (int) emitterSubpath.vertexCount() - 1; s >= 0; --s) {
 
             /* Determine the range of sensor vertices to be traversed, while respecting the specified maximum path length */
             int minT = std::max(2 - s, m_config.lightImage ? 1 : 2), // disable t=0 paths
@@ -492,8 +451,7 @@ public:
             if (m_config.maxDepth != -1)
                 maxT = std::min(maxT, m_config.maxDepth + 1 - s);
 
-            for (int t = maxT; t >= minT; --t)
-            {
+            for (int t = maxT; t >= minT; --t) {
 
                 samplePosValid = true;
 
@@ -501,8 +459,7 @@ public:
                 samplePos = initialSamplePos;
 
                 /* if light path can be computed: recalculate pixel position and neighbours*/
-                if (t == 1)
-                {
+                if (t == 1) {
                     if (sensorSubpath[0].vertex(t)->isSensorSample()&& !sensorSubpath[0].vertex(t)->getSamplePosition(emitterSubpath.vertex(s), samplePos)
                             || !Path::isConnectable_GBDPT(emitterSubpath.vertex(s), m_config.m_shiftThreshold))
                         continue;
@@ -510,8 +467,7 @@ public:
 
                 int memPointer;
 
-                for (int k = 0; k <= neighbourCount; k++)
-                {
+                for (int k = 0; k <= neighbourCount; k++) {
 
                     miWeight[k] = 1.f / (s + t + 1);
                     pathSuccess[k] = pathData[k].success;
@@ -532,23 +488,19 @@ public:
 
 
                     /* create the base path on which the shift is applied. changes for every light tracing path */
-                    if (t == 1 && k == 0)
-                    {
+                    if (t == 1 && k == 0) {
                         pathSuccess[0] = createShiftablePath(connectedBasePath, emitterSubpath, sensorSubpath[0], s, 1, memPointer);
                         m_offsetGenerator->computeMuRec(connectedBasePath, muRec);
                         genGeomTermLP[0] = connectedBasePath.calcSpecularPDFChange(muRec.extra[2], m_offsetGenerator, true);
                     }
 
                     /* if we have a light tracing path we need to modify the emitter-sub path */
-                    if (t == 1 && k > 0 && !value[0].isZero())
-                    {
+                    if (t == 1 && k > 0 && !value[0].isZero()) {
                         if (!pathSuccess[0])
                             pathSuccess[k] = false;
-                        else
-                        {
+                        else {
                             createShiftedLightPath(connectedBasePath, offsetEmitterSubpath, jacobianLP[k - 1], pathSuccess[k], offsetImportanceWeight, offsetImportancePdf, muRec, samplePos, shifts[k - 1]/*nIdxL[k - 1]*/, s);
-                            if (pathSuccess[k])
-                            {
+                            if (pathSuccess[k]) {
                                 genGeomTermLP[k] = offsetEmitterSubpath.calcSpecularPDFChange(muRec.extra[2], m_offsetGenerator, true);
                                 importanceWeightTmp = &offsetImportanceWeight;
                                 importancePdfTmp = &offsetImportancePdf;
@@ -561,10 +513,8 @@ public:
                     Spectrum geomTerm = Spectrum(0.0);
 
 
-                    do
-                    { //this should really go away at some point...
-                        if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero())))
-                        {
+                    do { //this should really go away at some point...
+                        if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero()))) {
 
                             if (!pathData[k].couldConnectAfterB && t > vert_b)
                                 break;
@@ -582,11 +532,9 @@ public:
                             int remaining = m_config.maxDepth - s - t + 1;
 
                             /* Account for the terms of the measurement contribution function that are coupled to the connection endpoints, i.e. s==0*/
-                            if (vs->isEmitterSupernode())
-                            {
+                            if (vs->isEmitterSupernode()) {
                                 /* If possible, convert 'vt' into an emitter sample */
-                                if (!vt->cast(scene, PathVertex::EEmitterSample) || vt->isDegenerate())
-                                {
+                                if (!vt->cast(scene, PathVertex::EEmitterSample) || vt->isDegenerate()) {
                                     valuePdf[k] = *radiancePdfTmp;
                                     break;
                                 }
@@ -597,27 +545,23 @@ public:
                                 value[k] = *radianceWeightTmp * connectionParts;
                                 valuePdf[k] = *radiancePdfTmp;
                             }/* Accounts for direct hits of light-subpaths to sensor, i.e t==0. If this happens do not compute gradients but fall back to the T0 mapping */
-                            else if (vt->isSensorSupernode())
-                            {
+                            else if (vt->isSensorSupernode()) {
                                 if (!vs->cast(scene, PathVertex::ESensorSample) || vs->isDegenerate() || k > 0) //Note the k>0...
                                 {
                                     valuePdf[k] = *importancePdfTmp;
                                     break;
                                 }
                                 /* Make note of the changed pixel sample position */
-                                if (!vs->getSamplePosition(vsPred, samplePos))
-                                {
+                                if (!vs->getSamplePosition(vsPred, samplePos)) {
                                     valuePdf[k] = *importancePdfTmp;
                                     break;
                                 }
                                 value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                                 valuePdf[k] = *importancePdfTmp;
-                            } else
-                            {
+                            } else {
                                 if (!Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)
                                         || !Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
-                                        || vs->getType() == 0 || vt->getType() == 0)
-                                {
+                                        || vs->getType() == 0 || vt->getType() == 0) {
                                     valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                                     break;
                                 }
@@ -637,8 +581,7 @@ public:
                             bool successConnect = (k > 0 && t > vert_b) ? successConnectBase : connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions);
                             if (k == 0) successConnectBase = successConnect;
 
-                            if (!successConnect)
-                            { //early exit
+                            if (!successConnect) { //early exit
                                 value[k] = Spectrum(0.f);
                                 break;
                             }
@@ -655,8 +598,7 @@ public:
                             const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                             size_t nEmitterPaths = image_size.x * image_size.y;
 
-                            if (k == 0)
-                            {
+                            if (k == 0) {
                                 connectionEdgeBase = connectionEdge;
                                 geomTermBase = geomTerm;
 
@@ -666,8 +608,7 @@ public:
                                         *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
                                         1.0, POWER_EXPONENT, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
                                         radius, nEmitterPaths, false) / valuePdf[0];
-                            } else
-                            {
+                            } else {
                                 /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
                                 // Note: we use the balance heuristic, not the power heuristic! The latter may cause numerical errors with long paths (since we compute the pdf explicitly)
                                 // some smarter computation should be done at some point to handle this
@@ -688,8 +629,7 @@ public:
 
 
                     /* use T0 if base or offset is occluded with at least one strategy */
-                    if (value[k].isZero() || value[0].isZero())
-                    {
+                    if (value[k].isZero() || value[0].isZero()) {
                         value[k] = Spectrum(0.f);
                         miWeight[k] = miWeight[0];
                         valuePdf[k] = valuePdf[0];
@@ -712,8 +652,7 @@ public:
 
                 /* compute and store gradients */
                 Spectrum fx = value[0] * valuePdf[0];
-                for (int n = 0; n < neighbourCount; n++)
-                {
+                for (int n = 0; n < neighbourCount; n++) {
                     Spectrum fy = value[n + 1] * valuePdf[n + 1] * (t < 2 ? jacobianLP[n] : pathData[n + 1].jacobianDet[t]);
                     Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
                     if (t >= 2)
@@ -729,9 +668,8 @@ public:
             Path &emitterSubpath, std::vector<Path> &sensorSubpath, std::vector<ShiftPathData> &pathData, int vert_b,
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, float radius
-            , Spectrum& primal, Spectrum * gradient)
-    {
-        
+            , Spectrum& primal, Spectrum * gradient) {
+
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
         int neighbourCount = 4;
@@ -747,7 +685,7 @@ public:
         bool successConnectBase, successOffsetGen, lightpathSuccess, samplePosValid;
         Float offsetImportancePdf, offsetImportanceGeom;
         Point2 samplePos;
-        
+
         //p_acc = std::min(Float(1.f), p_acc); // acceptance probability
         const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
         size_t nEmitterPaths = image_size.x * image_size.y;
@@ -761,8 +699,7 @@ public:
         Float *importancePdf = (Float*) alloca(emitterSubpath.vertexCount() * sizeof (Float));
         Float **radiancePdf = (Float **) alloca((neighbourCount + 1) * sizeof (Float*));
 
-        for (int k = 0; k <= neighbourCount; k++)
-        {
+        for (int k = 0; k <= neighbourCount; k++) {
             radianceWeights[k] = (Spectrum *) alloca(sensorSubpath[0].vertexCount() * sizeof (Spectrum));
             radiancePdf[k] = (Float *) alloca(sensorSubpath[0].vertexCount() * sizeof (Float));
         }
@@ -778,8 +715,7 @@ public:
 
         int memPointer;
 
-        for (int k = 0; k <= neighbourCount; k++)
-        {
+        for (int k = 0; k <= neighbourCount; k++) {
 
             miWeight[k] = 1.f / (s + t + 1);
             pathSuccess[k] = pathData[k].success;
@@ -800,10 +736,8 @@ public:
 
             Spectrum geomTerm = Spectrum(0.0);
 
-            do
-            { //this should really go away at some point...
-                if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero())))
-                {
+            do { //this should really go away at some point...
+                if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero()))) {
 
                     if (!pathData[k].couldConnectAfterB && t > vert_b)
                         break;
@@ -821,34 +755,29 @@ public:
                     int remaining = m_config.maxDepth - s - t + 1;
 
                     /* Account for the terms of the measurement contribution function that are coupled to the connection endpoints, i.e. s==0*/
-                    
+
                     {
                         /*
                         if (!Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)
                                 || !Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
                                 || vs->getType() == 0 || vt->getType() == 0)
-                        */
+                         */
                         if (!Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
-                                || vs->getType() == 0 || vt->getType() == 0)
-                        {
+                                || vs->getType() == 0 || vt->getType() == 0) {
                             valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                             break;
                         }
-                        
-                        if(k > 0 && !Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)) {
+
+                        bool success = true;
+                        if (k > 0 && !Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)) {
                             Path emitterSubpathOffset;
                             emitterSubpathTmp->clone(emitterSubpathOffset, m_pool);
                             int prev_diff = m_offsetGenerator->getSpecularChainEndGBDPT(*emitterSubpathTmp, s, -1);
                             // make emitterSubpathOffset's last vertex vt.
-                            emitterSubpathOffset.removeAndReleaseLastVertex(m_pool);
-                            emitterSubpathOffset.append(vt->clone(m_pool));
-                            bool success = m_offsetGenerator->manifoldWalk(*emitterSubpathTmp, emitterSubpathOffset, -1, s+1, prev_diff);
-                            if(!success)
-                                value[k] = Spectrum(0.0);
+                            emitterSubpathOffset.replaceVertex(s+1, vt);
+                            success = m_offsetGenerator->manifoldWalk(*emitterSubpathTmp, emitterSubpathOffset, -1, s + 1, prev_diff);
                             emitterSubpathOffset.release(m_pool);
-                            
                         }
-                        
                         //Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                         Spectrum vs_weight = vs->weight[EImportance] * vs->rrWeight * emitterSubpathTmp->edge(s)->weight[EImportance];
                         Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs_weight * vt->eval(scene, vtPred, vs, ERadiance);
@@ -856,6 +785,7 @@ public:
                         value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / (M_PI * radius * radius);
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         vs->measure = vt->measure = EArea;
+                        if(!success) value[k] = Spectrum(0.0);
                     }
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
@@ -867,26 +797,24 @@ public:
                     bool successConnect = (k > 0 && t > vert_b) ? successConnectBase : connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions);
                     if (k == 0) successConnectBase = successConnect;
 
-                    if (!successConnect)
-                    { //early exit
+                    if (!successConnect) { //early exit
                         value[k] = Spectrum(0.f);
                         break;
                     }
 
                     //this is the missing geometry factor in c_{s,t} of f_j mentioned in veach thesis equation 10.8
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase : connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
-                    
-                    if(k > 0 && geomTermBase[0] == 0.0) break;
-                    value[k] *= k==0 ? Spectrum(1.0) : geomTerm / geomTermBase;
-                    
+
+                    if (k > 0 && geomTermBase[0] == 0.0) break;
+                    value[k] *= k == 0 ? Spectrum(1.0) : geomTerm / geomTermBase;
+
                     valuePdf[k] *= (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]);
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
                         break;
 
 
-                    if (k == 0)
-                    {
+                    if (k == 0) {
                         connectionEdgeBase = connectionEdge;
                         geomTermBase = geomTerm;
 
@@ -896,8 +824,7 @@ public:
                                 *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
                                 1.0, POWER_EXPONENT, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
                                 radius, nEmitterPaths, true) / valuePdf[0];
-                    } else
-                    {
+                    } else {
                         /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
                         // Note: we use the balance heuristic, not the power heuristic! The latter may cause numerical errors with long paths (since we compute the pdf explicitly)
                         // some smarter computation should be done at some point to handle this
@@ -918,8 +845,7 @@ public:
 
 
             /* use T0 if base or offset is occluded with at least one strategy */
-            if (value[k].isZero() || value[0].isZero())
-            {
+            if (value[k].isZero() || value[0].isZero()) {
                 value[k] = Spectrum(0.f);
                 miWeight[k] = miWeight[0];
                 valuePdf[k] = valuePdf[0];
@@ -932,53 +858,45 @@ public:
 
         if (value[0].isZero()) //if basepath is zero everything is zero!
             return;
-        
+
         /* store primal paths contribution */
-        
+
         Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
         primal += mainRad;
 
         /* compute and store gradients */
         Spectrum fx = value[0] * valuePdf[0];
-        for (int n = 0; n < neighbourCount; n++)
-        {
-            
+        for (int n = 0; n < neighbourCount; n++) {
+
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * (t < 2 ? jacobianLP[n] : pathData[n + 1].jacobianDet[t]);
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
             gradient[n] += gradVal;
         }
     }
 
-    ref<WorkProcessor> clone() const
-    {
+    ref<WorkProcessor> clone() const {
         return new GDVCMRenderer(m_config, NULL);
     }
 
 private:
 
     /* Compute importance data from the emitter path and store it in a easy to access way */
-    void combineImportanceData(const Path &path, Spectrum *weights, Float * pdf)
-    {
+    void combineImportanceData(const Path &path, Spectrum *weights, Float * pdf) {
         weights[0] = Spectrum(1.0f);
         pdf[0] = Float(1.0);
-        for (size_t i = 1; i < path.vertexCount(); ++i)
-        {
+        for (size_t i = 1; i < path.vertexCount(); ++i) {
             weights[i] = weights[i - 1] * path.vertex(i - 1)->weight[EImportance] * path.vertex(i - 1)->rrWeight * path.edge(i - 1)->weight[EImportance];
             pdf[i] = pdf[i - 1] * path.vertex(i - 1)->pdf[EImportance] * path.vertex(i - 1)->rrWeight * path.edge(i - 1)->pdf[EImportance];
         }
     }
 
     /* Compute radiance data from the emitter path and store it in a easy to access way */
-    void combineRadianceData(const std::vector<Path> path, std::vector<ShiftPathData> pathData, const int neighbours, Spectrum **weights, Float **pdf)
-    {
-        for (int k = 0; k <= neighbours; k++)
-        {
+    void combineRadianceData(const std::vector<Path> path, std::vector<ShiftPathData> pathData, const int neighbours, Spectrum **weights, Float **pdf) {
+        for (int k = 0; k <= neighbours; k++) {
             weights[k][0] = Spectrum(1.0f);
             pdf[k][0] = Float(1.0);
-            for (size_t i = 1; i < path[0].vertexCount(); ++i)
-            {
-                if (pathData[k].success && i < path[k].vertexCount())
-                {
+            for (size_t i = 1; i < path[0].vertexCount(); ++i) {
+                if (pathData[k].success && i < path[k].vertexCount()) {
                     weights[k][i] = weights[k][i - 1] * path[k].vertex(i - 1)->weight[ERadiance] * path[k].vertex(i - 1)->rrWeight * path[k].edge(i - 1)->weight[ERadiance];
                     pdf[k][i] = pdf[k][i - 1] * path[k].vertex(i - 1)->pdf[ERadiance] * path[k].vertex(i - 1)->rrWeight * path[k].edge(i - 1)->pdf[ERadiance];
                 }
@@ -988,8 +906,7 @@ private:
 
     /* Shift path method for light tracing paths: Shifts the base path and stores important data */
     void createShiftedLightPath(Path &base, Path &offset, double &jacobian, bool &pathSuccess, Spectrum &offsetWeight, Float &offsetPdf, MutationRecord &muRec,
-            const Point2 samplePos, const Vector2 shift, const int s)
-    {
+            const Point2 samplePos, const Vector2 shift, const int s) {
         jacobian = 1.0;
         //get offset shift position					
         int bufferIdx;
@@ -999,16 +916,14 @@ private:
         pathSuccess = m_offsetGenerator->generateOffsetPathGBDPT(base, offset, muRec, shiftOffset, couldConnectWithB, true);
 
         //we also need to recompute the jacobian determinant
-        if (pathSuccess)
-        {
+        if (pathSuccess) {
             jacobian = offset.halfJacobian_GBDPT(muRec.extra[0], muRec.extra[1], muRec.extra[2], m_offsetGenerator) /
                     base.halfJacobian_GBDPT(muRec.extra[0], muRec.extra[1], muRec.extra[2], m_offsetGenerator);
 
             offsetPdf = Float(1.0); // pdf of ERadiance of SensorSample ( =vertex(s+1) ) is always 1
             offsetWeight = Spectrum(1.f);
 
-            for (size_t i = 1; i <= s; ++i)
-            {
+            for (size_t i = 1; i <= s; ++i) {
                 offsetWeight = offsetWeight * offset.vertex(i - 1)->weight[EImportance] * offset.vertex(i - 1)->rrWeight * offset.edge(i - 1)->weight[EImportance];
                 offsetPdf = offsetPdf * offset.vertex(i - 1)->pdf[EImportance] * offset.vertex(i - 1)->rrWeight * offset.edge(i - 1)->pdf[EImportance];
             }
@@ -1024,13 +939,11 @@ private:
      *tracing paths this is needed anyway to ensure that we don't create base paths that are occluded 
      *from the eye. So the overhead is relatively small. 
      **/
-    bool createShiftablePath(Path &connectedPath, Path &emitterSubpath, Path &sensorSubpath, int s, int t, int &memPointer)
-    {
+    bool createShiftablePath(Path &connectedPath, Path &emitterSubpath, Path &sensorSubpath, int s, int t, int &memPointer) {
         connectedPath.clear();
 
         //make sure we connect across connect able vertices only!
-        while (!Path::isConnectable_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold))
-        {
+        while (!Path::isConnectable_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold)) {
             t--;
             //the tail of the path can then be removed
             sensorSubpath.removeAndReleaseLastElement(m_pool);
@@ -1038,8 +951,7 @@ private:
 
         //if the sensor connection vertex is on the lightsource then we must connect to the emitterSuperSample
 
-        if (sensorSubpath.vertex(t)->type == PathVertex::ESurfaceInteraction)
-        {
+        if (sensorSubpath.vertex(t)->type == PathVertex::ESurfaceInteraction) {
             const Intersection &its = sensorSubpath.vertex(t)->getIntersection();
             const Emitter *emitter = its.shape->getEmitter();
             if (emitter)
@@ -1047,8 +959,7 @@ private:
         }
 
         //append unchanged part of emitter subpath				
-        for (memPointer = 0; memPointer < s; memPointer++)
-        {
+        for (memPointer = 0; memPointer < s; memPointer++) {
             connectedPath.append(emitterSubpath.vertex(memPointer));
             connectedPath.append(emitterSubpath.edge(memPointer));
         }
@@ -1067,8 +978,7 @@ private:
         connectedPath.vertex(memPointer + 1)->cast(m_scene, PathVertex::EEmitterSample);
 
         //append unchanged part of sensor subpath
-        for (int i = t - 1; i >= 0; i--)
-        {
+        for (int i = t - 1; i >= 0; i--) {
             connectedPath.append(sensorSubpath.vertex(i));
             connectedPath.append(sensorSubpath.edge(i));
         }
@@ -1111,24 +1021,20 @@ private:
 
 GDVCMProcess::GDVCMProcess(const RenderJob *parent, RenderQueue *queue,
         const GDVCMConfiguration & config) :
-VCMProcessBase(parent, queue, config.blockSize), m_config(config)
-{
+VCMProcessBase(parent, queue, config.blockSize), m_config(config) {
     m_refreshTimer = new Timer();
 }
 
-ref<WorkProcessor> GDVCMProcess::createWorkProcessor() const
-{
+ref<WorkProcessor> GDVCMProcess::createWorkProcessor() const {
     return new GDVCMRenderer(m_config, const_cast<GDVCMProcess*> (this));
 }
 
-void GDVCMProcess::develop()
-{
+void GDVCMProcess::develop() {
     if (!m_config.lightImage)
         return;
 
     LockGuard lock(m_resultMutex);
-    for (int i = 0; i <= m_config.nNeighbours; ++i)
-    {
+    for (int i = 0; i <= m_config.nNeighbours; ++i) {
         m_film->setBitmapMulti(m_result->getImageBlock(i)->getBitmap()->crop(Point2i(m_config.extraBorder), m_film->getCropSize()), Float(1.0), i);
         m_film->addBitmapMulti(m_result->getLightImage(i)->getBitmap(), 1.0f / m_config.sampleCount, i);
     }
@@ -1137,16 +1043,14 @@ void GDVCMProcess::develop()
     m_queue->signalRefresh(m_parent);
 }
 
-void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled)
-{
+void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled) {
     if (cancelled)
         return;
 
     const GDVCMWorkResult *result = static_cast<const GDVCMWorkResult *> (wr);
     LockGuard lock(m_resultMutex);
 
-    if (phase == SAMPLE)
-    {
+    if (phase == SAMPLE) {
         processResultSample(result);
         m_queue->signalWorkEnd(m_parent, result->getImageBlock(), false);
         return;
@@ -1155,13 +1059,11 @@ void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled)
     m_progress->update(++m_resultCount);
     ImageBlock *block = NULL;
 
-    if (m_config.lightImage)
-    {
+    if (m_config.lightImage) {
         block = const_cast<ImageBlock *> (result->getImageBlock(0));
         const ImageBlock *lightImage = m_result->getLightImage(0);
         m_result->put(result);
-        if (m_parent->isInteractive())
-        {
+        if (m_parent->isInteractive()) {
             /* Modify the finished image block so that it includes the light image contributions,
             which creates a more intuitive preview of the rendering process. This is
             not 100% correct but doesn't matter, as the shown image will be properly re-developed
@@ -1173,13 +1075,11 @@ void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled)
             Point2i offset = block->getOffset();
             Vector2i size = block->getSize();
 
-            for (int y = 0; y < size.y; ++y)
-            {
+            for (int y = 0; y < size.y; ++y) {
                 const Float *source = sourceBitmap->getFloatData() + (offset.x + (y + offset.y) * sourceBitmap->getWidth()) * SPECTRUM_SAMPLES;
                 Float *dest = destBitmap->getFloatData() + (borderSize + (y + borderSize) * destBitmap->getWidth()) * (SPECTRUM_SAMPLES + 2);
 
-                for (int x = 0; x < size.x; ++x)
-                {
+                for (int x = 0; x < size.x; ++x) {
                     Float weight = dest[SPECTRUM_SAMPLES + 1] * invSampleCount;
                     for (int k = 0; k < SPECTRUM_SAMPLES; ++k)
                         *dest++ += *source++ * weight;
@@ -1188,10 +1088,8 @@ void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled)
             }
         }
         m_film->put(block);
-    } else
-    {
-        for (int i = 0; i <= m_config.nNeighbours; ++i)
-        {
+    } else {
+        for (int i = 0; i <= m_config.nNeighbours; ++i) {
             block = const_cast<ImageBlock *> (result->getImageBlock(i));
             m_film->putMulti(block, i);
         }
@@ -1208,13 +1106,10 @@ void GDVCMProcess::processResult(const WorkResult *wr, bool cancelled)
         develop();
 }
 
-void GDVCMProcess::bindResource(const std::string &name, int id)
-{
+void GDVCMProcess::bindResource(const std::string &name, int id) {
     VCMProcessBase::bindResource(name, id);
-    if (name == "sensor" && m_config.lightImage)
-    {
-        if (!m_result.get())
-        {
+    if (name == "sensor" && m_config.lightImage) {
+        if (!m_result.get()) {
             /* If needed, allocate memory for the light image */
             m_result = new GDVCMWorkResult(m_config, NULL, m_film->getCropSize(), m_config.nNeighbours, m_config.extraBorder);
             m_result->clear();

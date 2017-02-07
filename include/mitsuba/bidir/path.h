@@ -604,10 +604,9 @@ public:
         m_edges.pop_back();
     }
     
-    void removeAndReleaseLastVertex(MemoryPool &pool)
+    void replaceVertex(int i, const PathVertex* v) 
     {
-        pool.release(m_vertices.back());
-        m_vertices.pop_back();
+        *m_vertices[i] = *v;
     }
 
     void removeLastElement()
