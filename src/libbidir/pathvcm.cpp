@@ -154,6 +154,8 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         if (mergable) {
             accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
             if (!connectable[i - 1]) accProb[i] = pdfImp[i];
+            
+            //accProb[i] = 1e3; // for debug
         }
     }
 
@@ -185,7 +187,9 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     double mergeWeight = std::pow(accProb[s + 1], exponent);
     double totalWeight = (connectable[s] ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
     
-    if (merge) return (Float) (p_st / sum_p) * mergeWeight / totalWeight;
+    if(sum_p == 0.0) return 0.0;
+    
+    if (merge) return (Float) mergeWeight > 0.0 ? (mergeWeight * p_st / sum_p / totalWeight) : 0;
     return (Float) (p_st / sum_p) / totalWeight;
 }
 
@@ -197,7 +201,6 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
         Float radius, size_t nEmitterPaths, bool merge) {
     int k = s + t + 1, n = k + 1;
-
     // for vcm
     Float mergeArea = M_PI * radius * radius;
     Float *accProb = (Float *) alloca(n * sizeof (Float));
@@ -380,10 +383,12 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             oAccProb[i] = std::min(Float(1.f), offsetPdfImp[i] * mergeArea);
             if (!connectable[i - 1]) accProb[i] = pdfImp[i];
             if (!connectable[i - 1]) oAccProb[i] = offsetPdfImp[i];
+            
+            //accProb[i] = oAccProb[i] = 1e3; // for debug
         }
     }
 
-    double sum_p_i = 0.f, p_st = 0.f;
+    double sum_p = 0.f, p_st = 0.f;
 
     /* No linear sweep */
     double value, oValue;
@@ -410,18 +415,20 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         int tPrime = k - p - 1;
         bool allowedToConnect = connectable[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
-            sum_p_i += std::pow(value * geomTermX, exponent) * p_conn_merge + 
+            sum_p += std::pow(value * geomTermX, exponent) * p_conn_merge + 
                     std::pow(oValue * jDet * geomTermY, exponent) * op_conn_merge;
         if (tPrime == t)
-            p_st = std::pow(value * geomTermX, exponent);
+            p_st = std::pow(value * geomTermX, exponent) * p_conn_merge;
     }
 
     double mergeWeight = std::pow(accProb[s + 1], exponent);
     double totalWeight = (connectable[s] ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
-
+    
+    if(sum_p == 0.0) return 0.0;
+    
     if (merge)
-        return (Float) (mergeWeight * p_st / sum_p_i / totalWeight);
-    return (Float) (p_st / sum_p_i / totalWeight);
+        return (Float) (mergeWeight > 0.0 ? (mergeWeight * p_st / sum_p / totalWeight) : 0.0);
+    return (Float) (p_st / sum_p / totalWeight);
 }
 
 MTS_NAMESPACE_END

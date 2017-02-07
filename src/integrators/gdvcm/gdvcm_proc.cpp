@@ -296,15 +296,15 @@ public:
                     maxT = std::min(maxT, m_config.maxDepth + 1);
                 for (int t = maxT; t >= minT; --t)
                 {
-                    //if (!(t == 3)) continue; // for debug
-
                     PathVertex *vt = sp.vertex(t); // the vertex we are looking at
 
                     Float radius = m_process->m_mergeRadius;
 
                     // look up photons
                     std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
-
+                    
+                    samplePos = sp.vertex(1)->getSamplePosition();
+                    
                     for (const VCMPhoton& photon : photons)
                     { // inspect every photon in range
                         pathData[0].success = true;
@@ -321,8 +321,6 @@ public:
                         m_process->extractPhotonPath(photon, ep); // extract the path that this photon bounded to.
                         ep.clone(emitterSubpath[0], m_pool);
                         sp.clone(sensorSubpath[0], m_pool);
-
-                        samplePos = sensorSubpath[0].vertex(1)->getSamplePosition();
 
                         Path connectPath;
                         int ptx;
@@ -352,7 +350,6 @@ public:
                             //for the manifold exploration shift there are only two connectible vertices in the affected chain (v_b and v_c)
                             if (pathData[k + 1].success)
                             {
-
                                 int idx = 0;
                                 int a, b, c;
                                 for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--)
@@ -400,7 +397,7 @@ public:
                         /* evaluate base and offset paths */
                         evaluateMerging(result, emitterSubpath[0], sensorSubpath, pathData, v_b,
                                 value, miWeight, valuePdf, jacobianLP, genGeomTermLP, pathSuccess, s, t, radius, primal, gradient);
-
+                        
                         /* clean up memory */
                         connectPath.release(ptx, ptx + 2, m_pool);
                         for (int k = 0; k < neighborCount; k++)
@@ -414,10 +411,10 @@ public:
                         emitterSubpath[0].release(m_pool);
                         sensorSubpath[0].release(m_pool);
                     }
+                    
                 }
-
             }
-
+            
             /* store accumulated primal and gradient samples with t>=2 */
             result->putSample(samplePos, primal, 0);
             for (int k = 0; k < neighborCount; ++k)
@@ -483,10 +480,8 @@ public:
         Float offsetImportancePdf, offsetImportanceGeom;
         Point2 samplePos;
 
-
         Spectrum visibility = Spectrum(0.f);
         Spectrum light = Spectrum(0.f);
-
 
         for (int s = (int) emitterSubpath.vertexCount() - 1; s >= 0; --s)
         {
@@ -736,13 +731,12 @@ public:
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, float radius
             , Spectrum& primal, Spectrum * gradient)
     {
-
+        
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
         int neighbourCount = 4;
 
         Point2 initialSamplePos = sensorSubpath[0].vertex(1)->getSamplePosition();
-        int pixelIndex = (int) initialSamplePos[0] + (int) initialSamplePos[1] * m_sensor->getFilm()->getSize().x;
 
         const Scene *scene = m_scene;
         PathEdge connectionEdge;
@@ -753,15 +747,7 @@ public:
         bool successConnectBase, successOffsetGen, lightpathSuccess, samplePosValid;
         Float offsetImportancePdf, offsetImportanceGeom;
         Point2 samplePos;
-
-
-        Spectrum visibility = Spectrum(0.f);
-        Spectrum light = Spectrum(0.f);
-
-
-
-
-        Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius*radius;
+        
         //p_acc = std::min(Float(1.f), p_acc); // acceptance probability
         const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
         size_t nEmitterPaths = image_size.x * image_size.y;
@@ -811,34 +797,6 @@ public:
                     *emitterSubpathTmp = &emitterSubpath;
 
             MutationRecord muRec;
-
-
-            /* create the base path on which the shift is applied. changes for every light tracing path */
-            if (t == 1 && k == 0)
-            {
-                pathSuccess[0] = createShiftablePath(connectedBasePath, emitterSubpath, sensorSubpath[0], s, 1, memPointer);
-                m_offsetGenerator->computeMuRec(connectedBasePath, muRec);
-                genGeomTermLP[0] = connectedBasePath.calcSpecularPDFChange(muRec.extra[2], m_offsetGenerator, true);
-            }
-
-            /* if we have a light tracing path we need to modify the emitter-sub path */
-            if (t == 1 && k > 0 && !value[0].isZero())
-            {
-                if (!pathSuccess[0])
-                    pathSuccess[k] = false;
-                else
-                {
-                    createShiftedLightPath(connectedBasePath, offsetEmitterSubpath, jacobianLP[k - 1], pathSuccess[k], offsetImportanceWeight, offsetImportancePdf, muRec, samplePos, shifts[k - 1]/*nIdxL[k - 1]*/, s);
-                    if (pathSuccess[k])
-                    {
-                        genGeomTermLP[k] = offsetEmitterSubpath.calcSpecularPDFChange(muRec.extra[2], m_offsetGenerator, true);
-                        importanceWeightTmp = &offsetImportanceWeight;
-                        importancePdfTmp = &offsetImportancePdf;
-                        emitterSubpathTmp = &offsetEmitterSubpath;
-                    }
-                    sensorSubpathTmp = &sensorSubpath[0];
-                }
-            }
 
             Spectrum geomTerm = Spectrum(0.0);
 
@@ -903,7 +861,9 @@ public:
                     //this is the missing geometry factor in c_{s,t} of f_j mentioned in veach thesis equation 10.8
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase : connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
                     
-                    //value[k] *= geomTerm;
+                    if(k > 0 && geomTermBase[0] == 0.0) break;
+                    value[k] *= k==0 ? Spectrum(1.0) : geomTerm / geomTermBase;
+                    
                     valuePdf[k] *= (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]);
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
@@ -957,24 +917,20 @@ public:
 
         if (value[0].isZero()) //if basepath is zero everything is zero!
             return;
-
+        
         /* store primal paths contribution */
+        
         Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
-        if (t >= 2)
-            primal += mainRad;
-        else
-            wr->putLightSample(samplePos, mainRad, 0);
+        primal += mainRad;
 
         /* compute and store gradients */
         Spectrum fx = value[0] * valuePdf[0];
         for (int n = 0; n < neighbourCount; n++)
         {
+            
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * (t < 2 ? jacobianLP[n] : pathData[n + 1].jacobianDet[t]);
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
-            if (t >= 2)
-                gradient[n] += gradVal;
-            else
-                wr->putLightSample(samplePos, gradVal, n + 1);
+            gradient[n] += gradVal;
         }
     }
 
