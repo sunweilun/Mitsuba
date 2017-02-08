@@ -27,6 +27,8 @@ MTS_NAMESPACE_BEGIN
 
 #define POWER_EXPONENT 2
 
+const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
+
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
 /* ==================================================================== */
@@ -790,19 +792,16 @@ public:
                         break;
                     }
                     //Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
-                    vsPred = emitterSubpathTmp->vertexOrNull(prev_diff - 1);
-                    vs = emitterSubpathTmp->vertexOrNull(prev_diff);
-                    struct PathVertex* vt_star = emitterSubpathTmp->vertex(prev_diff+1);
+                    const Spectrum vsWeight = vs->weight[EImportance] * vs->rrWeight;
+                    PathVertex* vsPred_ = emitterSubpathTmp->vertexOrNull(prev_diff - 1);
+                    PathVertex* vs_ = emitterSubpathTmp->vertexOrNull(prev_diff);
+                    PathVertex* vt_ = emitterSubpathTmp->vertex(prev_diff+1);
                     
-                    Spectrum vsEval = vs->eval(scene, vsPred, vt_star, EImportance);
-                    if (k == 0) vsEvalBase = vsEval;
+                    Spectrum vsEval = vs_->eval(scene, vsPred_, vt_, EImportance);
+                    if (k == 0) vsEvalBase = vsEval+Spectrum(D_EPSILON);
                     
-                    if(vsEvalBase.isZero()) {
-                        value[k] = Spectrum(0.0);
-                        break;
-                    }
-                    
-                    Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vsEval / vsEvalBase * vt->eval(scene, vtPred, vs, ERadiance);
+                    Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : 
+                        vsWeight * vsEval / (vsEvalBase) * vt->eval(scene, vtPred, vs, ERadiance);
                     if (k == 0) connectionPartsBase = connectionParts;
                     
                     value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / (M_PI * radius * radius);
