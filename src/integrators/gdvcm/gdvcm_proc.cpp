@@ -21,6 +21,7 @@
 #include <mitsuba/bidir/util.h>
 #include "gdvcm_proc.h"
 #include "mitsuba/bidir/mut_manifold.h"
+#include "mitsuba/bidir/manifold.h"
 
 MTS_NAMESPACE_BEGIN
 
@@ -160,7 +161,7 @@ public:
             }
 
             //if (0) // for debug
-                // connection part
+            // connection part
             {
                 double jx, jy;
                 std::vector<ShiftPathData> pathData(neighborCount + 1, sensorDepth + 3);
@@ -680,7 +681,7 @@ public:
         PathEdge connectionEdge;
 
         Path offsetEmitterSubpath, connectedBasePath;
-        Spectrum geomTermBase, connectionPartsBase, offsetImportanceWeight;
+        Spectrum geomTermBase, connectionPartsBase, offsetImportanceWeight, vsEvalBase;
         PathEdge connectionEdgeBase;
         bool successConnectBase, successOffsetGen, lightpathSuccess, samplePosValid;
         Float offsetImportancePdf, offsetImportanceGeom;
@@ -734,7 +735,9 @@ public:
 
             MutationRecord muRec;
 
-            Spectrum geomTerm = Spectrum(0.0);
+            Spectrum geomTerm = Spectrum(1.0);
+
+            Path emitterSubpathOffset;
 
             do { //this should really go away at some point...
                 if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero()))) {
@@ -755,64 +758,77 @@ public:
                     int remaining = m_config.maxDepth - s - t + 1;
 
                     /* Account for the terms of the measurement contribution function that are coupled to the connection endpoints, i.e. s==0*/
-
-                    {
-                        /*
-                        if (!Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)
-                                || !Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
-                                || vs->getType() == 0 || vt->getType() == 0)
-                         */
-                        if (!Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
-                                || vs->getType() == 0 || vt->getType() == 0) {
-                            valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
-                            break;
-                        }
-
-                        bool success = true;
-                        if (k > 0 && !Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)) {
-                            Path emitterSubpathOffset;
-                            emitterSubpathTmp->clone(emitterSubpathOffset, m_pool);
-                            int prev_diff = m_offsetGenerator->getSpecularChainEndGBDPT(*emitterSubpathTmp, s, -1);
-                            // make emitterSubpathOffset's last vertex vt.
-                            emitterSubpathOffset.replaceVertex(s+1, vt);
-                            success = m_offsetGenerator->manifoldWalk(*emitterSubpathTmp, emitterSubpathOffset, -1, s + 1, prev_diff);
-                            emitterSubpathOffset.release(m_pool);
-                        }
-                        //Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
-                        Spectrum vs_weight = vs->weight[EImportance] * vs->rrWeight * emitterSubpathTmp->edge(s)->weight[EImportance];
-                        Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs_weight * vt->eval(scene, vtPred, vs, ERadiance);
-                        if (k == 0) connectionPartsBase = connectionParts;
-                        value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / (M_PI * radius * radius);
+                    if (!Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
+                            || vs->getType() == 0 || vt->getType() == 0) {
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
-                        vs->measure = vt->measure = EArea;
-                        if(!success) value[k] = Spectrum(0.0);
+                        break;
                     }
 
-                    if (value[k].isZero() || valuePdf[k] == 0) //early exit
-                        break;
-
+                    bool successConnect = true;
                     /* Attempt to connect the two endpoints, which could result in the creation of additional vertices (index-matched boundaries etc.) */
                     //only required when connection segment changed from base to offset path
-                    int interactions = remaining; // backup
-                    bool successConnect = (k > 0 && t > vert_b) ? successConnectBase : connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions);
-                    if (k == 0) successConnectBase = successConnect;
 
+                    bool prev_conn = Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold);
+                    int prev_diff = m_offsetGenerator->getSpecularChainEndGBDPT(*emitterSubpathTmp, s, -1);
+                    
+
+                    if (k > 0 && (t <= vert_b + 1) && !prev_conn) {
+                        emitterSubpathTmp->clone(emitterSubpathOffset, m_pool);
+                        // make emitterSubpathOffset's vertex at s+1 vt.
+                        emitterSubpathOffset.replaceVertex(s + 1, vt);
+                        successConnect = m_offsetGenerator->manifoldWalk(*emitterSubpathTmp, emitterSubpathOffset, -1, s + 1, prev_diff);
+                        emitterSubpathTmp = &emitterSubpathOffset;
+                    }
+
+                    int interactions = remaining; // backup
+                    successConnect = successConnect && ((k > 0 && t > vert_b) ? successConnectBase : 
+                        connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions));
+                    if (k == 0) successConnectBase = successConnect;
+                    
                     if (!successConnect) { //early exit
                         value[k] = Spectrum(0.f);
                         break;
                     }
+                    //Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
+                    vsPred = emitterSubpathTmp->vertexOrNull(prev_diff - 1);
+                    vs = emitterSubpathTmp->vertexOrNull(prev_diff);
+                    struct PathVertex* vt_star = emitterSubpathTmp->vertex(prev_diff+1);
+                    
+                    Spectrum vsEval = vs->eval(scene, vsPred, vt_star, EImportance);
+                    if (k == 0) vsEvalBase = vsEval;
+                    
+                    if(vsEvalBase.isZero()) {
+                        value[k] = Spectrum(0.0);
+                        break;
+                    }
+                    
+                    Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vsEval / vsEvalBase * vt->eval(scene, vtPred, vs, ERadiance);
+                    if (k == 0) connectionPartsBase = connectionParts;
+                    
+                    value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / (M_PI * radius * radius);
+                    valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
+                    
+                    vs->measure = vt->measure = EArea;
+                    
+                    geomTerm = (k > 0 && t > vert_b) ? geomTermBase : 
+                        (prev_conn ? connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm) :
+                        Spectrum(m_offsetGenerator->getSpecularManifold()->multiG(*emitterSubpathTmp, prev_diff, s + 1)));
+
+
+                    if (value[k].isZero() || valuePdf[k] == 0) //early exit
+                        break;
 
                     //this is the missing geometry factor in c_{s,t} of f_j mentioned in veach thesis equation 10.8
-                    geomTerm = (k > 0 && t > vert_b) ? geomTermBase : connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
 
-                    if (k > 0 && geomTermBase[0] == 0.0) break;
+
+                    if (k > 0 && geomTermBase.isZero()) break;
                     value[k] *= k == 0 ? Spectrum(1.0) : geomTerm / geomTermBase;
+                    
 
                     valuePdf[k] *= (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]);
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
                         break;
-
 
                     if (k == 0) {
                         connectionEdgeBase = connectionEdge;
@@ -839,6 +855,8 @@ public:
                 }
             } while (false);
 
+            emitterSubpathOffset.release(m_pool);
+
             /* release offset emitter path for light path if needed */
             if (t == 1 && k > 0 && pathSuccess[k] && !value[0].isZero())
                 offsetEmitterSubpath.release(muRec.l, muRec.m + 1, m_pool);
@@ -851,10 +869,6 @@ public:
                 valuePdf[k] = valuePdf[0];
             }
         }
-
-        if (t == 1)
-            connectedBasePath.release(memPointer, memPointer + 2, m_pool);
-
 
         if (value[0].isZero()) //if basepath is zero everything is zero!
             return;
