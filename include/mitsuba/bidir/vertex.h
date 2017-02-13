@@ -413,7 +413,7 @@ struct MTS_EXPORT_BIDIR PathVertex {
 	 *
 	 * The main difference is that it only works for specular interactions,
 	 * where the requested type of interaction (reflection/refraction) is
-	 * additionally specified, which makese the sampling process completely
+	 * additionally specified, which makes the sampling process completely
 	 * deterministic. This is useful for implementing path-space
 	 * perturbation strategies. For now, it is only used by the perturbations
 	 * of Veach and Guibas.
@@ -486,7 +486,7 @@ struct MTS_EXPORT_BIDIR PathVertex {
 	 * \return The contribution weighting factor
 	 */
 	Spectrum eval(const Scene *scene, const PathVertex *pred,
-		const PathVertex *succ, ETransportMode mode, EMeasure measure = EArea) const;
+		const PathVertex *succ, ETransportMode mode, EMeasure measure = EArea, bool ignore_light_leak = false) const;
 
 	/**
 	 * \brief Compute the density of a successor node

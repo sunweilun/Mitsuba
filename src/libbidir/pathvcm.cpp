@@ -4,15 +4,13 @@
 
 MTS_NAMESPACE_BEGIN
 
-//#define MERGE_ONLY
-
 Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
-        Float radius, size_t nEmitterPaths, bool merge) {
+        Float radius, size_t nEmitterPaths, bool merge, bool merge_only) {
     int k = s + t + 1, n = k + 1;
     // for vcm
     Float mergeArea = M_PI * radius * radius;
@@ -156,9 +154,6 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         if (mergable) {
             accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
             if (!connectable[i - 1]) accProb[i] = pdfImp[i];
-#if defined(MERGE_ONLY)
-            accProb[i] = 1e5;
-#endif
         }
     }
 
@@ -176,7 +171,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
 
         int tPrime = k - p - 1;
-        Float p_conn_merge = ((connectable[p] || isNull[p]) ? 1.0 : 0.0) +
+        Float p_conn_merge = ((connectable[p] || isNull[p]) && !merge_only ? 1.0 : 0.0) +
                 std::pow(accProb[p+1], exponent) * nEmitterPaths; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
         bool allowedToConnect = connectable[p + 1];
@@ -188,7 +183,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
     }
     double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = (connectable[s] ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
+    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
     
     if(sum_p == 0.0) return 0.0;
     
@@ -202,7 +197,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
-        Float radius, size_t nEmitterPaths, bool merge) {
+        Float radius, size_t nEmitterPaths, bool merge, bool merge_only) {
     int k = s + t + 1, n = k + 1;
     // for vcm
     Float mergeArea = M_PI * radius * radius;
@@ -386,9 +381,6 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             oAccProb[i] = std::min(Float(1.f), offsetPdfImp[i] * mergeArea);
             if (!connectable[i - 1]) accProb[i] = pdfImp[i];
             if (!connectable[i - 1]) oAccProb[i] = offsetPdfImp[i];
-#if defined(MERGE_ONLY)
-            accProb[i] = oAccProb[i] = 1e5; // for debug
-#endif
         }
     }
 
@@ -410,10 +402,10 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             oValue *= offsetPdfRad[i];
         }
         
-        Float p_conn_merge = ((connectable[p] || isNull[p]) ? 1.0 : 0.0) +
+        Float p_conn_merge = ((connectable[p] || isNull[p]) && !merge_only ? 1.0 : 0.0) +
                 std::pow(accProb[p+1], exponent) * nEmitterPaths; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
         
-        Float op_conn_merge = ((connectable[p] || isNull[p]) ? 1.0 : 0.0) +
+        Float op_conn_merge = ((connectable[p] || isNull[p]) && !merge_only ? 1.0 : 0.0) +
                 std::pow(oAccProb[p+1], exponent) * nEmitterPaths;
 
         int tPrime = k - p - 1;
@@ -426,7 +418,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     }
 
     double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = (connectable[s] ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
+    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
     
     if(sum_p == 0.0) return 0.0;
     

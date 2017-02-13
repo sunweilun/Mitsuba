@@ -76,12 +76,10 @@ MTS_NAMESPACE_BEGIN
  * chosen if G-BDPT is selected.
  *
  */
-class GDVCMIntegrator : public VCMIntegratorBase
-{
+class GDVCMIntegrator : public VCMIntegratorBase {
 public:
 
-    GDVCMIntegrator(const Properties &props) : VCMIntegratorBase(props)
-    {
+    GDVCMIntegrator(const Properties &props) : VCMIntegratorBase(props) {
         /* Load the parameters / defaults */
         m_config.maxDepth = props.getInteger("maxDepth", -1);
         m_config.rrDepth = props.getInteger("rrDepth", 5);
@@ -94,6 +92,7 @@ public:
         m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
         m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
         m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
+        m_config.m_mergeOnly = props.getBoolean("mergeOnly", true);
 
         if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
             Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
@@ -108,26 +107,28 @@ public:
 
         if (m_config.maxDepth <= 0 && m_config.maxDepth != -1)
             Log(EError, "'maxDepth' must be set to -1 (infinite) or a value greater than zero!");
+
+        if (m_config.maxDepth == -1) {
+            Log(EWarn, "maxDepth is unlimited, set to 12!");
+            m_config.maxDepth = 12;
+        }
     }
 
     /// Unserialize from a binary data stream
 
     GDVCMIntegrator(Stream *stream, InstanceManager *manager)
-    : VCMIntegratorBase(stream, manager)
-    {
+    : VCMIntegratorBase(stream, manager) {
         m_config = GDVCMConfiguration(stream);
     }
 
-    void serialize(Stream *stream, InstanceManager *manager) const
-    {
+    void serialize(Stream *stream, InstanceManager *manager) const {
         Integrator::serialize(stream, manager);
         m_config.serialize(stream);
     }
 
     bool preprocess(const Scene *scene, RenderQueue *queue,
             const RenderJob *job, int sceneResID, int sensorResID,
-            int samplerResID)
-    {
+            int samplerResID) {
         Integrator::preprocess(scene, queue, job, sceneResID,
                 sensorResID, samplerResID);
 
@@ -142,25 +143,22 @@ public:
 
             m_config.initialRadius = std::min(rad / filmSize.x, rad / filmSize.y) * 5;
         }
-        
+
         return true;
     }
 
-    void cancel()
-    {
+    void cancel() {
         m_cancelled = true;
         Scheduler::getInstance()->cancel(m_process);
     }
 
-    void configureSampler(const Scene *scene, Sampler *sampler)
-    {
+    void configureSampler(const Scene *scene, Sampler *sampler) {
         /* Prepare the sampler for tile-based rendering */
         sampler->setFilmResolution(scene->getFilm()->getCropSize(), true);
     }
 
     bool render(Scene *scene, RenderQueue *queue, const RenderJob *job,
-            int sceneResID, int sensorResID, int samplerResID)
-    {
+            int sceneResID, int sensorResID, int samplerResID) {
 
         ref<Scheduler> scheduler = Scheduler::getInstance();
         ref<Sensor> sensor = scene->getSensor();
@@ -190,8 +188,7 @@ public:
         outNames.push_back("-gradientPosY");
         outNames.push_back(m_config.m_reconstructL1 ? "-L2" : "-L1");
         outNames.push_back("-primal");
-        if (!film->setBuffers(outNames))
-        {
+        if (!film->setBuffers(outNames)) {
             Log(EError, "Cannot render image! G-BDPT has been called without MultiFilm.");
             return false;
         }
@@ -213,8 +210,7 @@ public:
         //scheduler->schedule(process);
         //scheduler->wait(process);
         m_cancelled = false;
-        for (size_t i = 0; i < sampleCount; i++)
-        {
+        for (size_t i = 0; i < sampleCount; i++) {
             if (iterateVCM(process, sensorResID, i) == false) break;
         }
 
@@ -242,8 +238,7 @@ public:
         imgBaseBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
         recBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
         errBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
-        for (int j = 0; j < m_config.nNeighbours; j++)
-        {
+        for (int j = 0; j < m_config.nNeighbours; j++) {
             gradBuff.push_back(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
         }
 
@@ -315,47 +310,40 @@ public:
         float alpha = (Float) m_config.m_reconstructAlpha;
         float alpha_sqr = alpha * alpha;
 
-        for (int iter = 0; iter < n_iters; iter++)
-        {
+        for (int iter = 0; iter < n_iters; iter++) {
             int src = iter % 2;
             int dst = 1 - src;
 
 #if defined(MTS_OPENMP)
 #pragma omp parallel for schedule(dynamic, chunk_size)
 #endif
-            for (int i = 0; i < w * h; i++)
-            {
+            for (int i = 0; i < w * h; i++) {
                 int x = i % w;
                 int y = i / w;
                 if (x >= w || y >= h) continue;
 
-                for (int channel = 0; channel < 3; channel++)
-                {
+                for (int channel = 0; channel < 3; channel++) {
                     float color = 0.f;
                     float weight = 0.f;
                     const float& prim = imgf[(y * w + x)*3 + channel];
                     color += prim*alpha_sqr;
                     weight += alpha_sqr;
-                    if (x > 0)
-                    {
+                    if (x > 0) {
                         color += dxf[(y * w + x - 1)*3 + channel];
                         color += rec[src][(y * w + x - 1)*3 + channel];
                         weight += 1.f;
                     }
-                    if (x + 1 < w)
-                    {
+                    if (x + 1 < w) {
                         color -= dxf[(y * w + x)*3 + channel];
                         color += rec[src][(y * w + x + 1)*3 + channel];
                         weight += 1.f;
                     }
-                    if (y > 0)
-                    {
+                    if (y > 0) {
                         color += dyf[((y - 1) * w + x)*3 + channel];
                         color += rec[src][((y - 1) * w + x)*3 + channel];
                         weight += 1.f;
                     }
-                    if (y + 1 < h)
-                    {
+                    if (y + 1 < h) {
                         color -= dyf[(y * w + x)*3 + channel];
                         color += rec[src][((y + 1) * w + x)*3 + channel];
                         weight += 1.f;
@@ -380,21 +368,17 @@ public:
         return true;
     }
 
-    void prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2, int offset)
-    {
+    void prepareDataForSolver(float w, float* out, Float * data, int len, Float *data2, int offset) {
 
         for (int i = 0; i < len; i++)
             out[i] = w * float(data[i]);
 
         //used to merge inverse directions into one buffer
-        if (data2 != NULL)
-        {
+        if (data2 != NULL) {
             int io;
-            for (int i = 0; i < len; i++)
-            {
+            for (int i = 0; i < len; i++) {
                 io = i + 3 * offset;
-                if (io >= 0 && io < len)
-                {
+                if (io >= 0 && io < len) {
                     out[i] *= 0.5;
                     out[i] -= 0.5 * w * float(data2[io]);
                 }
@@ -402,12 +386,10 @@ public:
         }
     }
 
-    void setBitmapFromArray(ref<Bitmap> &bitmap, float *img)
-    {
+    void setBitmapFromArray(ref<Bitmap> &bitmap, float *img) {
         int x, y;
         Float tmp[3];
-        for (int i = 0; i < bitmap->getSize().x * bitmap->getSize().y; i++)
-        {
+        for (int i = 0; i < bitmap->getSize().x * bitmap->getSize().y; i++) {
             y = i / bitmap->getSize().x;
             x = i - y * bitmap->getSize().x;
             tmp[0] = Float(img[3 * i]);

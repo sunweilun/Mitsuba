@@ -213,7 +213,7 @@ public:
             const Path &offsetSensorSubpath,
             int s, int t, bool sampleDirect, bool lightImage, Float jDet,
             Float exponent, double geomTermX, double geomTermY, int maxT, float th,
-            Float radius, size_t nEmitterPaths, bool merge);
+            Float radius, size_t nEmitterPaths, bool merge, bool merge_only);
 
     /// Computes the MIS weights for offset paths for G-BDPT. Could be done more efficiently with a linear sweep. 
     static Float miWeightBaseNoSweep_GBDPT(const Scene *scene,
@@ -233,7 +233,7 @@ public:
             const Path &offsetSensorSubpath,
             int s, int t, bool sampleDirect, bool lightImage, Float jDet,
             Float exponent, double geomTermX, double geomTermY, int maxT, float th,
-            Float radius, size_t nEmitterPaths, bool merge);
+            Float radius, size_t nEmitterPaths, bool merge, bool merge_only);
 
     /// Jacobian of full perturbation.
     double halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator);
