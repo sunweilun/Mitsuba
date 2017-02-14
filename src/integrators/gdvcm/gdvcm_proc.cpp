@@ -26,8 +26,9 @@
 MTS_NAMESPACE_BEGIN
 
 #define POWER_EXPONENT 2
-        const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
-#define USE_RECONNECT
+
+const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
+
 
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
@@ -105,6 +106,8 @@ public:
         result->clear();
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
+        //if(rect->getOffset().x != 256 || rect->getOffset().y != 256) return; // for debug
+
         /*shift direction is hard-coded. future releases should support arbitrary kernels. */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
 
@@ -158,8 +161,7 @@ public:
                 gradient[k] = Spectrum(0.f);
             }
 
-            if (0) // for debug
-                // connection part
+            // connection part
             {
                 double jx, jy;
                 std::vector<ShiftPathData> pathData(neighborCount + 1, sensorDepth + 3);
@@ -403,6 +405,8 @@ public:
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess
             , Spectrum& primal, Spectrum * gradient) {
+        
+        if(m_config.m_mergeOnly) return;
 
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
@@ -458,7 +462,7 @@ public:
 
                 /* if light path can be computed: recalculate pixel position and neighbours*/
                 if (t == 1) {
-                    if (sensorSubpath[0].vertex(t)->isSensorSample()&& !sensorSubpath[0].vertex(t)->getSamplePosition(emitterSubpath.vertex(s), samplePos)
+                    if (sensorSubpath[0].vertex(t)->isSensorSample() && !sensorSubpath[0].vertex(t)->getSamplePosition(emitterSubpath.vertex(s), samplePos)
                             || !Path::isConnectable_GBDPT(emitterSubpath.vertex(s), m_config.m_shiftThreshold))
                         continue;
                 }
@@ -726,13 +730,24 @@ public:
         if (!prev_conn) {
             // make emitterSubpathOffset's vertex at s+1 vt.
             emitterBaseSubpath.replaceVertex(s + 1, vt_base);
-            successConnect = m_offsetGenerator->manifoldWalk(emitterSubpath, emitterBaseSubpath, -1, s + 1, prev_diff);
+            successConnect = m_offsetGenerator->manifoldWalk(emitterSubpath, emitterBaseSubpath, -1, s + 1, prev_diff, true);
         }
 
         if (!successConnect) {
             emitterBaseSubpath.release(m_pool);
             return;
         }
+
+        PathVertex* vsPred_conn = emitterSubpath.vertexOrNull(prev_diff - 1);
+        PathVertex* vs_conn = emitterSubpath.vertexOrNull(prev_diff);
+        PathVertex* vt_conn = emitterSubpath.vertex(prev_diff + 1);
+
+        Spectrum vsEvalOrig = vs_conn->eval(scene, vsPred_conn, vt_conn, EImportance);
+        for (int i = prev_diff + 1; i < s; i++) {
+            PathVertex* specVert = emitterSubpath.vertex(i);
+            vsEvalOrig *= specVert->weight[EImportance] * specVert->pdf[EImportance];
+        }
+        Spectrum geomTermOrig = Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterSubpath, prev_diff, s + 1));
 
         Float p_acc = 1.0; // acceptance probability of the main path
         if (prev_conn) { // s and t can be connected directly
@@ -748,10 +763,10 @@ public:
             valuePdf[k] = 0.f;
 
             /* for radiance make sure that offset light paths have the correct value */
-            const Spectrum *importanceWeightTmp = &importanceWeights[s],
+            const Spectrum *importanceWeightTmp = &importanceWeights[prev_diff],
                     *radianceWeightTmp = &radianceWeights[t == 1 ? 0 : k][t];
 
-            const Float *importancePdfTmp = &importancePdf[s],
+            const Float *importancePdfTmp = &importancePdf[prev_diff],
                     *radiancePdfTmp = &radiancePdf[t == 1 ? 0 : k][t];
 
             const Path *sensorSubpathTmp = &sensorSubpath[k];
@@ -791,11 +806,11 @@ public:
                     //only required when connection segment changed from base to offset path
 
 
-
                     if (k > 0 && (t <= vert_b + 1) && !prev_conn) {
+
                         // make emitterOffsetSubpath's vertex at s+1 vt.
                         emitterOffsetSubpath.replaceVertex(s + 1, vt);
-                        successConnect = m_offsetGenerator->manifoldWalk(emitterBaseSubpath, emitterOffsetSubpath, -1, s + 1, prev_diff);
+                        successConnect = m_offsetGenerator->manifoldWalk(emitterBaseSubpath, emitterOffsetSubpath, -1, s + 1, prev_diff, true);
                     }
 
                     int interactions = remaining; // backup
@@ -806,13 +821,12 @@ public:
                         value[k] = Spectrum(0.f);
                         break;
                     }
-                    
-                    
-                    PathVertex* vsPred_ = emitterOffsetSubpath.vertexOrNull(prev_diff - 1);
-                    PathVertex* vs_ = emitterOffsetSubpath.vertexOrNull(prev_diff);
-                    PathVertex* vt_ = prev_conn ? vt : emitterOffsetSubpath.vertex(prev_diff + 1);
 
-                    Spectrum vsEval = vs_->eval(scene, vsPred_, vt_, EImportance);
+
+                    vsPred_conn = emitterOffsetSubpath.vertexOrNull(prev_diff - 1);
+                    vs_conn = emitterOffsetSubpath.vertexOrNull(prev_diff);
+                    vt_conn = prev_conn ? vt : emitterOffsetSubpath.vertex(prev_diff + 1);
+                    Spectrum vsEval = vs_conn->eval(scene, vsPred_conn, vt_conn, EImportance);
                     Spectrum vtEval = vt->eval(scene, vtPred, vs, ERadiance, EArea);
                     Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase :
                             vsEval * vtEval;
@@ -821,20 +835,27 @@ public:
 
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase :
                             (prev_conn ? connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm) :
-                            Spectrum(m_offsetGenerator->getSpecularManifold()->multiG(emitterOffsetSubpath, prev_diff, s + 1)));
+                            Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterOffsetSubpath, prev_diff, s + 1)));
 
-                    if(prev_conn) {
+                    if (prev_conn) {
                         // prefix-suffix weights + connection bsdfs
                         value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         // geometry term contribution and acceptance probability
                         value[k] *= geomTerm / p_acc;
-                    }
-                    else {
+                    } else {
                         // prefix-suffix weights + connection bsdfs
-                        Spectrum vsWeight = vs->weight[EImportance] * vs->rrWeight;
-                        value[k] = *importanceWeightTmp * *radianceWeightTmp * vtEval * vsWeight / (M_PI * radius * radius);
+                        value[k] = *importanceWeightTmp * *radianceWeightTmp * vtEval / (M_PI * radius * radius);
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
+
+                        for (int i = prev_diff + 1; i < s; i++) {
+                            PathVertex* specVert = emitterOffsetSubpath.vertex(i);
+                            vsEval *= specVert->weight[EImportance] * specVert->pdf[EImportance];
+                        }
+
+                        Spectrum geoRatio = geomTerm / (geomTermOrig + Spectrum(D_EPSILON));
+                        Spectrum evalRatio = vsEval / (vsEvalOrig + Spectrum(D_EPSILON));
+                        value[k] *= geoRatio * evalRatio;
                     }
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit

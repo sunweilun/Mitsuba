@@ -1149,7 +1149,7 @@ bool ManifoldPerturbation::propagatePerturbation(Path &source, Path &proposal, i
 	return true;
 }
 
-bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int step, int b, int c)
+bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int step, int b, int c, bool updateAll)
 {
 
 	/* Choose a local parameterization of the specular manifold using
@@ -1207,10 +1207,18 @@ bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int 
 		++statsMWFailMove;
 		return false; 
 	}
-	if (!m_manifold->update(proposal, c, b)){
-		++statsMWFailUpdate;
-		return false; 
-	}
+        if(updateAll) {
+            if (!m_manifold->updateAll(proposal, c, b)){
+                    ++statsMWFailUpdate;
+                    return false; 
+            }
+        }
+        else {
+            if (!m_manifold->update(proposal, c, b)){
+                    ++statsMWFailUpdate;
+                    return false; 
+            }
+        }
 	if (!m_manifold->move(vb_old->getPosition(), n)) {
 		++statsMWFailReversible;
 		return false; 

@@ -48,6 +48,8 @@ public:
 	 * specular manifold configuration
 	 */
 	bool update(Path &path, int start, int end);
+        
+        bool updateAll(Path &path, int start, int end);
 
 	/// Attempt to move the movable endpoint vertex to position \c target
 	bool move(const Point &target, const Normal &normal);

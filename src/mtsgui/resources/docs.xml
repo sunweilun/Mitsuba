@@ -644,7 +644,10 @@
 			Higher value makes the reconstruction trust the noisy color image more, giving less weight to the usually lower-noise gradients. The optimal value tends to be around 0.2, but for scenes with much geometric detail at sub-pixel level a slightly higher value such as 0.3 or 0.4 may be tried.
 		</param>	
                 <param name="initialRadius" readableName="Initial Merging Radius" type="float" default="0.0">
-			Specifies initial merging radius of VCM.
+			Specifies initial merging radius of GDVCM.
+		</param>
+                <param name="mergeOnly" readableName="Only use GPM?" type="boolean" default="false">
+			Only use GPM?
 		</param>
 	</plugin>
   

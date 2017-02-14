@@ -756,6 +756,128 @@ bool SpecularManifold::update(Path &path, int start, int end) {
 	return true;
 }
 
+bool SpecularManifold::updateAll(Path &path, int start, int end) {
+	int step;
+	ETransportMode mode;
+
+	if (start < end) {
+		step = 1; mode = EImportance;
+	} else {
+		step = -1; mode = ERadiance;
+	}
+
+	int last = (int) m_vertices.size() - 2;
+	if (m_vertices[0].type == EPinnedDirection)
+		last = std::max(last, 1);
+
+	for (int j=0, i=start; j <= last; ++j, i += step) {
+		const SimpleVertex
+			&v = m_vertices[j],
+			&vn = m_vertices[j+1];
+
+		PathVertex
+			*pred   = path.vertexOrNull(i-step),
+			*vertex = path.vertex(i),
+			*succ   = path.vertex(i+step);
+
+		int predEdgeIdx = (mode == EImportance) ? i-step : i-step-1;
+		PathEdge *predEdge = path.edgeOrNull(predEdgeIdx),
+		         *succEdge = path.edge(predEdgeIdx + step);
+
+		Vector d = vn.p - v.p;
+		Float length = d.length();
+		d /= length;
+		PathVertex::EVertexType desiredType = vn.type == EMedium ?
+			PathVertex::EMediumInteraction : PathVertex::ESurfaceInteraction;
+
+		if (v.type == EPinnedDirection) {
+			/* Create a fake vertex and use it to call sampleDirect(). This is
+			   kind of terrible -- a nicer API is needed to cleanly support this */
+			PathVertex temp;
+			temp.type = PathVertex::EMediumInteraction;
+			temp.degenerate = false;
+			temp.measure = EArea;
+			MediumSamplingRecord &mRec = temp.getMediumSamplingRecord();
+			mRec.time = m_time;
+			mRec.p = vn.p;
+
+			if (temp.sampleDirect(m_scene, NULL, vertex, succEdge, succ, mode).isZero()) {
+				#if MTS_MANIFOLD_DEBUG == 1
+					cout << "update(): failed in sampleDirect()!" << endl;
+				#endif
+				++statsUpdateFailed;
+				return false;
+			}
+
+			if (m_vertices.size() >= 3) {
+				PathVertex *succ2 = path.vertex(i+2*step);
+				PathEdge *succ2Edge = path.edge(predEdgeIdx + 2*step);
+				if (!succ->sampleNext(m_scene, NULL, vertex, succEdge, succ2Edge, succ2, mode)) {
+					#if MTS_MANIFOLD_DEBUG == 1
+						cout << "update(): failed in sampleNext() / pinned direction!" << endl;
+					#endif
+					++statsUpdateFailed;
+					return false;
+				}
+			}
+			i += step;
+		} else if (!v.degenerate) {
+			if (!vertex->perturbDirection(m_scene,
+					pred, predEdge, succEdge, succ, d,
+					length, desiredType, mode)) {
+				#if MTS_MANIFOLD_DEBUG == 1
+					cout << "update(): failed in perturbDirection()" << endl;
+				#endif
+				++statsUpdateFailed;
+				return false;
+			}
+
+			Float relerr = (vn.p - succ->getPosition()).length() /
+				std::max(std::max(std::abs(vn.p.x),
+					std::abs(vn.p.y)), std::abs(vn.p.z));
+
+			if (relerr > 1e-3f) {
+				// be extra-cautious
+				#if MTS_MANIFOLD_DEBUG == 1
+					cout << "update(): failed, relative error of perturbDirection() too high:" << relerr << endl;
+				#endif
+				++statsUpdateFailed;
+				return false;
+			}
+		} else {
+			unsigned int compType;
+			if (v.type == ERefraction)
+				compType = v.eta != 1 ? BSDF::EDeltaTransmission : (BSDF::ENull | BSDF::EDeltaTransmission);
+			else
+				compType = BSDF::EDeltaReflection;
+
+			if (!vertex->propagatePerturbation(m_scene,
+					pred, predEdge, succEdge, succ, compType,
+					length, desiredType, mode)) {
+				#if MTS_MANIFOLD_DEBUG == 1
+					cout << "update(): failed in propagatePerturbation()" << endl;
+				#endif
+				++statsUpdateFailed;
+				return false;
+			}
+
+			Float relerr = (vn.p - succ->getPosition()).length() /
+				std::max(std::max(std::abs(vn.p.x),
+					std::abs(vn.p.y)), std::abs(vn.p.z));
+			if (relerr > 1e-3f) {
+				// be extra-cautious
+				#if MTS_MANIFOLD_DEBUG == 1
+					cout << "update(): failed, relative error of propagatePerturbation() too high:" << relerr << endl;
+				#endif
+				++statsUpdateFailed;
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
 Float SpecularManifold::det(const Path &path, int a, int b, int c) {
 	int k = path.length();
 

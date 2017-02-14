@@ -4,6 +4,8 @@
 
 MTS_NAMESPACE_BEGIN
 
+const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
+
 Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
@@ -183,7 +185,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
     }
     double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
+    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight + D_EPSILON;
     
     if(sum_p == 0.0) return 0.0;
     
@@ -418,7 +420,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     }
 
     double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight;
+    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight + D_EPSILON;
     
     if(sum_p == 0.0) return 0.0;
     
