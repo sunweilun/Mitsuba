@@ -742,10 +742,11 @@ public:
         PathVertex* vs_conn = emitterSubpath.vertexOrNull(prev_diff);
         PathVertex* vt_conn = emitterSubpath.vertex(prev_diff + 1);
 
-        Spectrum vsEvalOrig = vs_conn->eval(scene, vsPred_conn, vt_conn, EImportance);
-        for (int i = prev_diff + 1; i < s; i++) {
+        Float vs_pdfOrig = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
+        vs_pdfOrig /= absDot(vs_conn->getShadingNormal(), emitterSubpath.edge(prev_diff)->d);
+        for (int i = prev_diff + 1; i <= s; i++) {
             PathVertex* specVert = emitterSubpath.vertex(i);
-            vsEvalOrig *= specVert->weight[EImportance] * specVert->pdf[EImportance];
+            vs_pdfOrig *= specVert->pdf[EImportance];
         }
         Spectrum geomTermOrig = Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterSubpath, prev_diff, s + 1));
 
@@ -844,18 +845,23 @@ public:
                         // geometry term contribution and acceptance probability
                         value[k] *= geomTerm / p_acc;
                     } else {
+                        Spectrum vsWeight = vs->weight[EImportance];
                         // prefix-suffix weights + connection bsdfs
-                        value[k] = *importanceWeightTmp * *radianceWeightTmp * vtEval / (M_PI * radius * radius);
+                        value[k] = *importanceWeightTmp * *radianceWeightTmp * vsWeight * vtEval / (M_PI * radius * radius);
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
 
-                        for (int i = prev_diff + 1; i < s; i++) {
+                        Float vs_pdf = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
+                        vs_pdf /= absDot(vs_conn->getShadingNormal(), emitterOffsetSubpath.edge(prev_diff)->d);
+
+                        for (int i = prev_diff + 1; i <= s; i++) {
                             PathVertex* specVert = emitterOffsetSubpath.vertex(i);
-                            vsEval *= specVert->weight[EImportance] * specVert->pdf[EImportance];
+                            value[k] *= specVert->weight[EImportance];
+                            vs_pdf *= specVert->pdf[EImportance];
                         }
 
-                        Spectrum geoRatio = geomTerm / (geomTermOrig + Spectrum(D_EPSILON));
-                        Spectrum evalRatio = vsEval / (vsEvalOrig + Spectrum(D_EPSILON));
-                        value[k] *= geoRatio * evalRatio;
+                        Spectrum geomRatio = geomTerm / (geomTermOrig + Spectrum(D_EPSILON));
+                        Float pdfRatio = vs_pdf / (vs_pdfOrig + D_EPSILON);
+                        value[k] *= geomRatio * pdfRatio;
                     }
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
