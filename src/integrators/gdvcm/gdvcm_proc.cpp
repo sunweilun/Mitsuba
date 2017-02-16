@@ -25,10 +25,9 @@
 
 MTS_NAMESPACE_BEGIN
 
-#define POWER_EXPONENT 2
+        const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
 
-const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
-
+#define USE_PERTURBED_PDF
 
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
@@ -405,8 +404,8 @@ public:
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess
             , Spectrum& primal, Spectrum * gradient) {
-        
-        if(m_config.m_mergeOnly) return;
+
+        if (m_config.m_mergeOnly) return;
 
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
@@ -608,7 +607,7 @@ public:
                                 //	miWeight[0] = Path::miWeight(scene, emitterSubpath, &connectionEdge, sensorSubpath[0], s, t, m_config.sampleDirect, m_config.lightImage) / valuePdf[0];
                                 miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                         *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                        1.0, POWER_EXPONENT, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
+                                        1.0, m_config.phExponent, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
                                         radius, nEmitterPaths, false, m_config.m_mergeOnly) / valuePdf[0];
                             } else {
                                 /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
@@ -616,7 +615,7 @@ public:
                                 // some smarter computation should be done at some point to handle this
                                 miWeight[k] = Path::miWeightGradNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                         *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                        (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), POWER_EXPONENT,
+                                        (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), m_config.phExponent,
                                         (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
                                         vert_b, m_config.m_shiftThreshold,
                                         radius, nEmitterPaths, false, m_config.m_mergeOnly) / valuePdf[0];
@@ -718,6 +717,8 @@ public:
         PathVertex *vs = emitterSubpath.vertex(s); //connecting vertex from emitter side
         PathVertex *vt_photon = emitterSubpath.vertex(s + 1);
         PathVertex *vt_base = sensorSubpath[0].vertex(t); //connecting vertex from emitter side
+        
+        if(!vt_photon->isConnectable()) return;
 
         bool prev_conn = Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold);
         int prev_diff = m_offsetGenerator->getSpecularChainEndGBDPT(emitterSubpath, s, -1);
@@ -733,11 +734,26 @@ public:
             successConnect = m_offsetGenerator->manifoldWalk(emitterSubpath, emitterBaseSubpath, -1, s + 1, prev_diff, true);
         }
 
-        if (!successConnect) {
+        if (!successConnect || !emitterBaseSubpath.vertex(s+1)->isConnectable()) {
             emitterBaseSubpath.release(m_pool);
             return;
         }
 
+
+#if defined(USE_PERTURBED_PDF)
+        PathVertex* vsPred_conn = emitterBaseSubpath.vertexOrNull(prev_diff - 1);
+        PathVertex* vs_conn = emitterBaseSubpath.vertexOrNull(prev_diff);
+        PathVertex* vt_conn = emitterBaseSubpath.vertex(prev_diff + 1);
+
+        Float vs_pdfOrig = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
+        vs_pdfOrig /= absDot(vs_conn->getShadingNormal(), emitterBaseSubpath.edge(prev_diff)->d);
+        for (int i = prev_diff + 1; i <= s; i++) {
+            PathVertex* specVert = emitterBaseSubpath.vertex(i);
+            vs_pdfOrig *= specVert->pdf[EImportance];
+        }
+        Spectrum geomTermOrig = Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterBaseSubpath, prev_diff, s + 1));
+        Spectrum p_acc(Float(1.f));
+#else
         PathVertex* vsPred_conn = emitterSubpath.vertexOrNull(prev_diff - 1);
         PathVertex* vs_conn = emitterSubpath.vertexOrNull(prev_diff);
         PathVertex* vt_conn = emitterSubpath.vertex(prev_diff + 1);
@@ -756,7 +772,7 @@ public:
         } else { // perturb photon path to get physical emitter path
             p_acc = 1;
         }
-
+#endif
         for (int k = 0; k <= neighbourCount; k++) {
             miWeight[k] = 1.f / (s + t + 1);
             pathSuccess[k] = pathData[k].success;
@@ -807,7 +823,7 @@ public:
                     //only required when connection segment changed from base to offset path
 
 
-                    if (k > 0 && (t <= vert_b + 1) && !prev_conn) {
+                    if (k > 0 && (t <= vert_b) && !prev_conn) {
 
                         // make emitterOffsetSubpath's vertex at s+1 vt.
                         emitterOffsetSubpath.replaceVertex(s + 1, vt);
@@ -818,7 +834,7 @@ public:
                     successConnect = successConnect && ((k > 0 && t > vert_b) ? successConnectBase :
                             connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions));
 
-                    if (!successConnect) { //early exit
+                    if (!successConnect || !emitterOffsetSubpath.vertex(s+1)->isConnectable()) { //early exit
                         value[k] = Spectrum(0.f);
                         break;
                     }
@@ -837,6 +853,12 @@ public:
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase :
                             (prev_conn ? connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm) :
                             Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterOffsetSubpath, prev_diff, s + 1)));
+
+#if defined(USE_PERTURBED_PDF)
+                    if(k == 0) {
+                        p_acc = vs_pdfOrig * geomTermOrig * M_PI * radius * radius + Spectrum(D_EPSILON);
+                    }
+#endif
 
                     if (prev_conn) {
                         // prefix-suffix weights + connection bsdfs
@@ -895,7 +917,7 @@ public:
                         //	miWeight[0] = Path::miWeight(scene, emitterSubpath, &connectionEdge, sensorSubpath[0], s, t, m_config.sampleDirect, m_config.lightImage) / valuePdf[0];
                         miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                 emitterOffsetSubpath, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                1.0, POWER_EXPONENT, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
+                                1.0, m_config.phExponent, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
                                 radius, nEmitterPaths, true, m_config.m_mergeOnly) / valuePdf[0];
                     } else {
                         /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
@@ -903,7 +925,7 @@ public:
                         // some smarter computation should be done at some point to handle this
                         miWeight[k] = Path::miWeightGradNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                 emitterOffsetSubpath, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
-                                (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), POWER_EXPONENT,
+                                (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), m_config.phExponent,
                                 (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
                                 vert_b, m_config.m_shiftThreshold,
                                 radius, nEmitterPaths, true, m_config.m_mergeOnly) / valuePdf[0];

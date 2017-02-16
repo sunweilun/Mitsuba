@@ -202,6 +202,7 @@ struct VCMConfigBase
 {
     int maxDepth;
     int rrDepth;
+    Float phExponent;
 };
 
 class VCMRendererBase : public WorkProcessor

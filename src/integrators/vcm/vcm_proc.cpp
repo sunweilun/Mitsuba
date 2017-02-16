@@ -297,7 +297,7 @@ public:
                 size_t nEmitterPaths = image_size.x * image_size.y;
                 /* Compute the multiple importance sampling weight */
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage,
+                        sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, m_config.phExponent,
                         m_process->m_mergeRadius, nEmitterPaths, false);
 
                 if (sampleDirect) {
@@ -466,7 +466,7 @@ public:
                 
                 /* Compute the multiple importance sampling weight */
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, false, m_config.lightImage,
+                        sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
                         radius, nEmitterPaths, true);
                 
                 //miWeight = 1.0 / nEmitterPaths; // for debug

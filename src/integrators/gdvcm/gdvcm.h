@@ -70,6 +70,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 		m_reconstructL2 = stream->readBool();
 		m_reconstructAlpha = stream->readFloat();
                 m_mergeOnly = stream->readBool();
+                phExponent = stream->readFloat();
 	}
 
 	inline void serialize(Stream *stream) const {
@@ -90,7 +91,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 		stream->writeBool(m_reconstructL2);
 		stream->writeFloat(m_reconstructAlpha);
                 stream->writeBool(m_mergeOnly);
-		
+		stream->writeFloat(phExponent);
 	}
 
 	void dump() const {

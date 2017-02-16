@@ -521,7 +521,7 @@ public:
             const Path &emitterSubpath,
             const PathEdge *connectionEdge,
             const Path &sensorSubpath, int s, int t,
-            bool direct, bool lightImage,
+            bool direct, bool lightImage, Float exponent,
             Float radius, size_t nEmitterPaths, bool merge);
 
     /**

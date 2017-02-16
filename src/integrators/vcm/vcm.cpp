@@ -143,6 +143,7 @@ public:
         /* Load the parameters / defaults */
         m_config.maxDepth = props.getInteger("maxDepth", -1);
         m_config.rrDepth = props.getInteger("rrDepth", 5);
+        m_config.phExponent = props.getFloat("phExponent", 1.0);
         m_config.lightImage = props.getBoolean("lightImage", true);
         m_config.sampleDirect = props.getBoolean("sampleDirect", true);
         m_config.showWeighted = props.getBoolean("showWeighted", false);

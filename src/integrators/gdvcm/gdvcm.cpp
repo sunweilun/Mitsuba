@@ -85,7 +85,7 @@ public:
         m_config.rrDepth = props.getInteger("rrDepth", 5);
         m_config.initialRadius = props.getFloat("initialRadius", 0.f);
         m_config.lightImage = props.getBoolean("lightImage", true);
-
+        m_config.phExponent = props.getFloat("phExponent", 1.0);
         m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
 
         m_config.m_reconstructL1 = props.getBoolean("reconstructL1", true); //no matter what is chosen, both reconstructions are written to disc. this only changes which one is shown in the GUI

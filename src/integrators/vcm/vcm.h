@@ -61,6 +61,7 @@ struct VCMConfiguration : public VCMConfigBase {
 		cropSize = Vector2i(stream);
 		rrDepth = stream->readInt();
                 initialRadius = stream->readFloat();
+                phExponent = stream->readFloat();
 	}
 
 	inline void serialize(Stream *stream) const {
@@ -73,6 +74,7 @@ struct VCMConfiguration : public VCMConfigBase {
 		cropSize.serialize(stream);
 		stream->writeInt(rrDepth);
                 stream->writeFloat(initialRadius);
+                stream->writeFloat(phExponent);
 	}
 
 	void dump() const {
