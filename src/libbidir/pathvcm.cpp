@@ -449,7 +449,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
 
     /* No linear sweep */
-    double p_i, p_st;
+    double p_i, p_st = 0.0;
     for (int p = 0; p < s + t + 1; ++p) {
         p_i = 1.f;
 
@@ -494,28 +494,8 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     Float *accProb = (Float *) alloca(n * sizeof (Float));
     Float *oAccProb = (Float *) alloca(n * sizeof (Float));
 
-    const PathVertex
-            *vsPred = emitterSubpath.vertexOrNull(s - 1),
-            *vtPred = sensorSubpath.vertexOrNull(t - 1),
-            *vs = emitterSubpath.vertex(s),
-            *vt = sensorSubpath.vertex(t);
-
-    const PathVertex
-            *o_vsPred = offsetEmitterSubpath.vertexOrNull(s - 1),
-            *o_vtPred = offsetSensorSubpath.vertexOrNull(t - 1),
-            *o_vs = offsetEmitterSubpath.vertex(s),
-            *o_vt = offsetSensorSubpath.vertex(t);
-
-    /* pdfImp[i] and pdfRad[i] store the area/volume density of vertex
-    'i' when sampled from the adjacent vertex in the emitter
-    and sensor direction, respectively. */
-
-    Float ratioEmitterDirect = 0.0f;
-    Float ratioSensorDirect = 0.0f;
     Float *pdfImp = (Float *) alloca(n * sizeof (Float));
     Float *pdfRad = (Float *) alloca(n * sizeof (Float));
-    Float ratioOffsetEmitterDirect = 0.0f;
-    Float ratioOffsetSensorDirect = 0.0f;
     Float *offsetPdfImp = (Float *) alloca(n * sizeof (Float));
     Float *offsetPdfRad = (Float *) alloca(n * sizeof (Float));
     bool *connectable = (bool *)alloca(n * sizeof (bool));

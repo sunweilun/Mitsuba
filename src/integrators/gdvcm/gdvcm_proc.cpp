@@ -681,8 +681,6 @@ public:
 
             const Path *sensorSubpathTmp = &sensorSubpath[k];
 
-            MutationRecord muRec;
-
             Spectrum geomTerm = Spectrum(1.0);
 
             do { //this should really go away at some point...
@@ -749,7 +747,7 @@ public:
 
 #if defined(USE_PERTURBED_PDF)
                     if (k == 0) {
-                        p_acc = vs_pdfOrig * geomTermOrig * M_PI * radius * radius + Spectrum(D_EPSILON);
+                        p_acc = vs_pdfOrig * geomTerm * M_PI * radius * radius + Spectrum(D_EPSILON);
                     }
 #endif
 
@@ -773,8 +771,10 @@ public:
                             value[k] *= specVert->weight[EImportance];
                             vs_pdf *= specVert->pdf[EImportance];
                         }
-
+                        
                         Spectrum geomRatio = geomTerm / (geomTermOrig + Spectrum(D_EPSILON));
+                        
+                        
                         Float pdfRatio = vs_pdf / (vs_pdfOrig + D_EPSILON);
                         value[k] *= geomRatio * pdfRatio;
                     }
@@ -816,7 +816,7 @@ public:
                         /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
                         // Note: we use the balance heuristic, not the power heuristic! The latter may cause numerical errors with long paths (since we compute the pdf explicitly)
                         // some smarter computation should be done at some point to handle this
-                        miWeight[k] = Path::miWeightGradNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
+                        miWeight[k] = Path::miWeightGradNoSweep_GDVCM(scene, emitterBaseSubpath, &connectionEdgeBase, sensorSubpath[0],
                                 emitterOffsetSubpath, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
                                 (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), m_config.phExponent,
                                 (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
