@@ -149,7 +149,6 @@ void ParticleTracer::process(const WorkUnit *workUnit, WorkResult *workResult,
 		} else {
 			/* Sample both components together, which is potentially
 			   faster / uses a better sampling strategy */
-
 			power = m_scene->sampleEmitterRay(ray, emitter,
 				m_sampler->next2D(), m_sampler->next2D(), pRec.time);
 			medium = emitter->getMedium();

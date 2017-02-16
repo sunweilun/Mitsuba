@@ -340,7 +340,7 @@ public:
 		dRec.d = trafo(d);
 		dRec.measure = ESolidAngle;
 		dRec.pdf = m_normalization / (d.z * d.z * d.z);
-
+                
 		return Spectrum(1.0f);
 	}
 

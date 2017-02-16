@@ -19,6 +19,7 @@
 #if !defined(__VCM_BASICS_H)
 #define __VCM_BASICS_H
 
+#include <mitsuba/core/plugin.h>
 #include <mitsuba/render/renderproc.h>
 #include <mitsuba/render/renderjob.h>
 #include <mitsuba/core/bitmap.h>
@@ -182,13 +183,15 @@ public:
         return photons;
     }
 
-    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath, bool clone = false)
+    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath, MemoryPool* pool = NULL)
     {
-        if (!clone)
-        {
+        if(!pool) {
             m_emitterPathPool[photon.blockID].extractPathItem(emitterPath, photon.pointID);
             return;
         }
+        Path ep;
+        m_emitterPathPool[photon.blockID].extractPathItem(ep, photon.pointID);
+        ep.clone(emitterPath, *pool);
     }
 
     void processResultSample(const VCMWorkResultBase *result)
@@ -298,10 +301,10 @@ protected:
             sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
             emitterPathPool.addPathItem(emitterSubpath); // cache path into emitter Path Pool
             // add photons to local photon map
-            for (size_t k = 1; k < emitterSubpath.m_vertices.size(); k++)
+            for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++)
             {
                 PathVertex* vertex = emitterSubpath.m_vertices[k];
-                if (!vertex->isSurfaceInteraction()) continue;
+                //if (!vertex->isSurfaceInteraction()) continue;
                 if (!vertex->isConnectable()) continue;
                 // add a new photon
                 VCMPhoton photon;
@@ -310,6 +313,13 @@ protected:
                 photon.pointID = i;
                 photon.vertexID = k;
                 result->putPhoton(photon);
+                /*
+                if(photon.blockID == 0) {
+                    FILE* file = fopen("photons.txt", "a");
+                    fprintf(file, "%d %f %f\n", photon.pointID, photon.pos.x, photon.pos.y);
+                    fclose(file);
+                }
+                */
             }
             emitterSubpath.release(m_pool);
             sensorSubpath.release(m_pool);

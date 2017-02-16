@@ -397,7 +397,8 @@
 			"russian roulette" path termination criterion when tracing photons (set to <tt>-1</tt> to disable).
 		</param>
 		<param name="alpha" readableName="Size reduction parameter" type="float" default="0.7" importance="1">Alpha parameter from the paper (influences the speed, at which the photon radius is reduced)</param>
-	</plugin>
+                <param name="maxPasses" readableName="Number of passes" type="integer" default="-1">Number of passes</param>
+        </plugin>
 
 	<plugin type="integrator" name="sppm" readableName="Stochastic progressive photon mapper"
 			show="true" className="StochasticProgressivePhotonMapIntegrator" extends="Integrator">

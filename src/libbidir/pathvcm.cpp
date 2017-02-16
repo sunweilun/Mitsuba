@@ -6,7 +6,7 @@ MTS_NAMESPACE_BEGIN
 
         const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
 
-//#define USE_GENERALIZED_PDF
+#define USE_GENERALIZED_PDF
 
 void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sensorSubpath, const PathEdge *connectionEdge, int s, int t,
         EMeasure vsMeasure, EMeasure vtMeasure,
@@ -324,11 +324,15 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        an incremental scheme can be used that only finds the densities relative
        to the (s,t) strategy, which can be done using a linear sweep. For
        details, refer to the Veach thesis, p.306. */
+    
+    auto num_conn_shemes = [&connectable, &nEmitterPaths, &k](int i) {
+        return Float(connectable[i] ? 1 : 0);
+    };
 
-    double base_prob_exp = (connectable[s] ? 1.0 : 0.0) + pow(accProb[s + 1], exponent) * nEmitterPaths;
+    double base_prob_exp = num_conn_shemes(s) + pow(accProb[s + 1], exponent) * nEmitterPaths;
 
     for (int i = s + 1; i < k; ++i) {
-        double prob_exp = (connectable[i] ? 1.0 : 0.0) + pow(accProb[i + 1], exponent) * nEmitterPaths;
+        double prob_exp = num_conn_shemes(i) + pow(accProb[i + 1], exponent) * nEmitterPaths;
         double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
                 value = next;
 
@@ -352,7 +356,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        evaluating the inverse of the previous expressions). */
     pdf = initial;
     for (int i = s - 1; i >= 0; --i) {
-        double prob_exp = (connectable[i] ? 1.0 : 0.0) + pow(accProb[i + 1], exponent) * nEmitterPaths;
+        double prob_exp = num_conn_shemes(i) + pow(accProb[i + 1], exponent) * nEmitterPaths;
         double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1],
                 value = next;
 
@@ -366,7 +370,6 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         int tPrime = k - i - 1;
         if ((connectable[i + 1] || isNull[i + 1]) && (lightImage || tPrime > 1)) {
             weight += pow(value, exponent) * prob_exp / base_prob_exp;
-
         }
 
         pdf = next;
@@ -374,9 +377,9 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
     Float total_weight = 1.0 / weight;
     Float w_merge = pow(accProb[s + 1], exponent) / base_prob_exp;
-
+    
     if (merge) return total_weight * w_merge;
-    return total_weight * 1.0 / base_prob_exp;
+    return total_weight * num_conn_shemes(s) / base_prob_exp;
 }
 
 Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
@@ -436,9 +439,14 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
             connectable, merge, pdfImp, pdfRad, isNull, accProb, radius);
 
-    double initial = 1.0f;
-
-    double sum_p = 0.f, pdf = initial, oPdf = initial;
+    double sum_p = 0.f;
+    
+    auto num_conn_shemes = [&connectable, &isNull, &nEmitterPaths, &k, &merge_only](int i) {
+        if((connectable[i] || isNull[i]) && !merge_only) {
+            return Float(1);
+        }
+        return Float(0);
+    };
 
     /* No linear sweep */
     double p_i, p_st;
@@ -454,7 +462,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
 
         int tPrime = k - p - 1;
-        Float p_conn_merge = ((connectable[p] || isNull[p]) && !merge_only ? 1.0 : 0.0) +
+        Float p_conn_merge = num_conn_shemes(p) +
                 std::pow(accProb[p + 1], exponent) * nEmitterPaths; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
         bool allowedToConnect = connectable[p + 1];
@@ -466,12 +474,12 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
     }
     double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight + D_EPSILON;
+    double totalWeight = num_conn_shemes(s) + nEmitterPaths * mergeWeight + D_EPSILON;
 
     if (sum_p == 0.0) return 0.0;
 
     if (merge) return (Float) mergeWeight > 0.0 ? (mergeWeight * p_st / sum_p / totalWeight) : 0;
-    return (Float) (p_st / sum_p) / totalWeight;
+    return (Float) (p_st / sum_p) / totalWeight * num_conn_shemes(s);
 }
 
 Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
@@ -483,7 +491,6 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         Float radius, size_t nEmitterPaths, bool merge, bool merge_only) {
     int k = s + t + 1, n = k + 1;
     // for vcm
-    Float mergeArea = M_PI * radius * radius;
     Float *accProb = (Float *) alloca(n * sizeof (Float));
     Float *oAccProb = (Float *) alloca(n * sizeof (Float));
 
@@ -546,6 +553,13 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             connectable, merge, offsetPdfImp, offsetPdfRad, isNull, oAccProb, radius);
 
     double sum_p = 0.f, p_st = 0.f;
+    
+    auto num_conn_shemes = [&connectable, &isNull, &nEmitterPaths, &k, &merge_only](int i) {
+        if((connectable[i] || isNull[i]) && !merge_only) {
+            return Float(1);
+        }
+        return Float(0);
+    };
 
     /* No linear sweep */
     double value, oValue;
@@ -563,10 +577,10 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             oValue *= offsetPdfRad[i];
         }
 
-        Float p_conn_merge = ((connectable[p] || isNull[p]) && !merge_only ? 1.0 : 0.0) +
+        Float p_conn_merge = num_conn_shemes(p) +
                 std::pow(accProb[p + 1], exponent) * nEmitterPaths; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
-        Float op_conn_merge = ((connectable[p] || isNull[p]) && !merge_only ? 1.0 : 0.0) +
+        Float op_conn_merge = num_conn_shemes(p) +
                 std::pow(oAccProb[p + 1], exponent) * nEmitterPaths;
 
         int tPrime = k - p - 1;
@@ -579,13 +593,13 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     }
 
     double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = (connectable[s] && !merge_only ? 1.0 : 0.0) + nEmitterPaths * mergeWeight + D_EPSILON;
+    double totalWeight = num_conn_shemes(s) + nEmitterPaths * mergeWeight + D_EPSILON;
 
     if (sum_p == 0.0) return 0.0;
 
     if (merge)
         return (Float) (mergeWeight > 0.0 ? (mergeWeight * p_st / sum_p / totalWeight) : 0.0);
-    return (Float) (p_st / sum_p / totalWeight);
+    return (Float) (p_st * num_conn_shemes(s) / sum_p / totalWeight);
 }
 
 MTS_NAMESPACE_END

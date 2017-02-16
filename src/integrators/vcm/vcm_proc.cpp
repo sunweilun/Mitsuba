@@ -128,7 +128,7 @@ public:
 
             Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             Spectrum color(Float(0.f));
-            color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+            //color += evaluateConnection(result, emitterSubpath, sensorSubpath);
             color += evaluateMerging(result, sensorSubpath);
             result->putSample(initialSamplePos, color, 1.f);
             m_sampler->advance();
@@ -362,9 +362,6 @@ public:
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
                 
-                
-                //if(!emitterSubpath.vertex(s-1)->isConnectable()) continue; // for debug
-                
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
                 Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
@@ -494,6 +491,7 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
+                miWeight = 1.0 / nEmitterPaths;
                 sampleValue += value * Spectrum(miWeight) / p_acc;
             }
             //break; // for debug
