@@ -298,12 +298,12 @@ protected:
     }
 
     Float estimateSensorMergingRadius(const Path& sensorSubpath) {
-        PathVertex* v = sensorSubpath.vertexOrNull(2);
+        PathVertex* v = sensorSubpath.vertexOrNull(1);
         if(!v) return Float(0.f);
         const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
         size_t nPixels = image_size.x * image_size.y;
         Float surface_pdf = v->pdf[ERadiance] * nPixels;
-        Float r = 10.f * sqrt(Float(1.f) / surface_pdf);
+        Float r = sqrt(Float(1.f) / surface_pdf * M_1_PI);
         return r;
     }
 
