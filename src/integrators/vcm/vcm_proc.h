@@ -53,7 +53,7 @@ public:
     void develop();
     
     void updateRadius(int n) {
-        m_mergeRadius = m_config.initialRadius / pow(n, 1.0/3.0);
+        m_mergeRadius = m_config.initialRadius / pow(n, 1.0 - m_config.radiusReductionAlpha);
     }
 
     /* ParallelProcess impl. */

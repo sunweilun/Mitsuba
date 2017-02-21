@@ -42,25 +42,21 @@ MTS_NAMESPACE_BEGIN
  * bidirectional path tracing
  */
 
-struct VCMPhoton
-{
+struct VCMPhoton {
     size_t blockID;
     size_t pointID;
     size_t vertexID;
     Point3 pos;
 };
 
-struct VCMPhotonMap
-{
+struct VCMPhotonMap {
     std::vector<VCMPhoton> photons;
 
-    inline size_t kdtree_get_point_count() const
-    {
+    inline size_t kdtree_get_point_count() const {
         return photons.size();
     }
 
-    inline Float kdtree_distance(const Float* p1, const size_t idx_p2, size_t) const
-    {
+    inline Float kdtree_distance(const Float* p1, const size_t idx_p2, size_t) const {
         const Float d0 = p1[0] - photons[idx_p2].pos[0];
         const Float d1 = p1[1] - photons[idx_p2].pos[1];
         const Float d2 = p1[2] - photons[idx_p2].pos[2];
@@ -68,45 +64,37 @@ struct VCMPhotonMap
         return sqr_dist;
     }
 
-    inline Float kdtree_get_pt(const size_t idx, int dim) const
-    {
+    inline Float kdtree_get_pt(const size_t idx, int dim) const {
         return photons[idx].pos[dim];
     }
 
-    inline VCMPhoton& kdtree_get_data(const size_t idx)
-    {
+    inline VCMPhoton& kdtree_get_data(const size_t idx) {
         return photons[idx];
     }
 
     template <class BBOX>
-    bool kdtree_get_bbox(BBOX& /* bb */) const
-    {
+    bool kdtree_get_bbox(BBOX& /* bb */) const {
         return false;
     }
 };
 
-inline size_t ceil_div(size_t a, size_t b)
-{
+inline size_t ceil_div(size_t a, size_t b) {
     return (a + b - 1) / b;
 }
 
-class VCMWorkResultBase : public WorkResult
-{
+class VCMWorkResultBase : public WorkResult {
     using WorkResult::WorkResult;
 public:
 
-    inline void clearPhotons()
-    {
+    inline void clearPhotons() {
         m_photonMap.clear();
     }
 
-    inline void putPhoton(const VCMPhoton& photon)
-    {
+    inline void putPhoton(const VCMPhoton& photon) {
         m_photonMap.push_back(photon);
     }
 
-    inline const std::vector<VCMPhoton>& getPhotons() const
-    {
+    inline const std::vector<VCMPhoton>& getPhotons() const {
         return m_photonMap;
     }
     virtual void setSize(const Vector2i &size) = 0;
@@ -118,18 +106,14 @@ protected:
     std::vector<VCMPhoton> m_photonMap;
 };
 
-class VCMProcessBase : public BlockedRenderProcess
-{
+class VCMProcessBase : public BlockedRenderProcess {
 public:
     using BlockedRenderProcess::BlockedRenderProcess;
 
-    void bindResource(const std::string &name, int id)
-    {
+    void bindResource(const std::string &name, int id) {
         BlockedRenderProcess::bindResource(name, id);
-        if (name == "sensor")
-        {
-            if (!m_sensorPathPool.size())
-            {
+        if (name == "sensor") {
+            if (!m_sensorPathPool.size()) {
                 nbx = ceil_div(m_film->getCropSize().x, m_blockSize);
                 nby = ceil_div(m_film->getCropSize().y, m_blockSize);
                 m_sensorPathPool.resize(nbx * nby);
@@ -142,8 +126,7 @@ public:
     nanoflann::L2_Simple_Adaptor<Float, VCMPhotonMap>,
     VCMPhotonMap, 3 /* dim */ > kd_tree_t;
 
-    enum Phase
-    {
+    enum Phase {
         SAMPLE, EVAL
     } phase;
     size_t nbx, nby; // number of blocks to render
@@ -153,39 +136,33 @@ public:
     std::shared_ptr<kd_tree_t> m_photonKDTree;
     Float m_mergeRadius;
 
-    void buildPhotonLookupStructure()
-    {
+    void buildPhotonLookupStructure() {
         m_photonKDTree.reset(new kd_tree_t(3, m_photonMap, nanoflann::KDTreeSingleIndexAdaptorParams()));
         m_photonKDTree->buildIndex(true);
     }
 
-    virtual void updateRadius(int n)
-    {
+    virtual void updateRadius(int n) {
     }
 
-    void clearPhotons()
-    {
+    void clearPhotons() {
         m_photonMap.photons.clear();
     }
 
-    std::vector<VCMPhoton> lookupPhotons(const PathVertex* vertex, float radius)
-    {
+    std::vector<VCMPhoton> lookupPhotons(const PathVertex* vertex, float radius) {
         std::vector<VCMPhoton> photons;
         if (!vertex->isConnectable()) return photons;
         const Point &position = vertex->getPosition();
         std::vector<std::pair<size_t, Float> > indices_dists;
         nanoflann::RadiusResultSet<Float> resultSet(radius*radius, indices_dists); // we square here because we used squared distance metric
         m_photonKDTree->findNeighbors(resultSet, (Float*) & position, nanoflann::SearchParams());
-        for (const std::pair<size_t, Float>& index_dist : indices_dists)
-        {
+        for (const std::pair<size_t, Float>& index_dist : indices_dists) {
             photons.push_back(m_photonMap.photons[index_dist.first]);
         }
         return photons;
     }
 
-    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath, MemoryPool* pool = NULL)
-    {
-        if(!pool) {
+    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath, MemoryPool* pool = NULL) {
+        if (!pool) {
             m_emitterPathPool[photon.blockID].extractPathItem(emitterPath, photon.pointID);
             return;
         }
@@ -194,27 +171,23 @@ public:
         ep.clone(emitterPath, *pool);
     }
 
-    void processResultSample(const VCMWorkResultBase *result)
-    {
+    void processResultSample(const VCMWorkResultBase *result) {
         const std::vector<VCMPhoton>& photons = result->getPhotons();
         m_photonMap.photons.insert(m_photonMap.photons.end(), photons.begin(), photons.end());
     }
 };
 
-struct VCMConfigBase
-{
+struct VCMConfigBase {
     int maxDepth;
     int rrDepth;
     Float phExponent;
 };
 
-class VCMRendererBase : public WorkProcessor
-{
+class VCMRendererBase : public WorkProcessor {
     using WorkProcessor::WorkProcessor;
 protected:
 
-    void extractPathPair(VCMProcessBase* process, Path& emitterSubpath, Path& sensorSubpath, const RectangularWorkUnit *rect, int pointID, bool clone = false)
-    {
+    void extractPathPair(VCMProcessBase* process, Path& emitterSubpath, Path& sensorSubpath, const RectangularWorkUnit *rect, int pointID, bool clone = false) {
         size_t blockSize = m_scene->getBlockSize();
         size_t nbx = process->nbx;
         size_t blockID = (rect->getOffset().y / blockSize) * nbx +
@@ -222,8 +195,7 @@ protected:
         CompactBlockPathPool& sensorPathPool = process->m_sensorPathPool[blockID];
         CompactBlockPathPool& emitterPathPool = process->m_emitterPathPool[blockID];
 
-        if (!clone)
-        {
+        if (!clone) {
             sensorPathPool.extractPathItem(sensorSubpath, pointID);
             emitterPathPool.extractPathItem(emitterSubpath, pointID);
             return;
@@ -236,8 +208,7 @@ protected:
         e.clone(emitterSubpath, m_pool);
     }
 
-    void processSampling(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop, VCMProcessBase* m_process, VCMConfigBase* config)
-    {
+    void processSampling(const WorkUnit *workUnit, WorkResult *workResult, const bool &stop, VCMProcessBase* m_process, VCMConfigBase* config) {
         VCMConfigBase& m_config = *config;
         const RectangularWorkUnit *rect = static_cast<const RectangularWorkUnit *> (workUnit);
         VCMWorkResultBase *result = static_cast<VCMWorkResultBase *> (workResult);
@@ -281,8 +252,7 @@ protected:
         emitterPathPool.clear();
         result->clearPhotons();
 
-        for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i)
-        {
+        for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i) {
             Point2i offset = Point2i(m_hilbertCurve[i]) + Vector2i(rect->getOffset());
             m_sampler->generate(offset);
             if (stop)
@@ -301,8 +271,7 @@ protected:
             sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
             emitterPathPool.addPathItem(emitterSubpath); // cache path into emitter Path Pool
             // add photons to local photon map
-            for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++)
-            {
+            for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++) {
                 PathVertex* vertex = emitterSubpath.m_vertices[k];
                 //if (!vertex->isSurfaceInteraction()) continue;
                 if (!vertex->isConnectable()) continue;
@@ -319,13 +288,23 @@ protected:
                     fprintf(file, "%d %f %f\n", photon.pointID, photon.pos.x, photon.pos.y);
                     fclose(file);
                 }
-                */
+                 */
             }
             emitterSubpath.release(m_pool);
             sensorSubpath.release(m_pool);
         }
         sensorPathPool.buildIndex();
         emitterPathPool.buildIndex();
+    }
+
+    Float estimateSensorMergingRadius(const Path& sensorSubpath) {
+        PathVertex* v = sensorSubpath.vertexOrNull(2);
+        if(!v) return Float(0.f);
+        const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
+        size_t nPixels = image_size.x * image_size.y;
+        Float surface_pdf = v->pdf[ERadiance] * nPixels;
+        Float r = 10.f * sqrt(Float(1.f) / surface_pdf);
+        return r;
     }
 
     ref<Scene> m_scene;
@@ -335,15 +314,13 @@ protected:
     MemoryPool m_pool;
 };
 
-class VCMIntegratorBase : public Integrator
-{
+class VCMIntegratorBase : public Integrator {
 protected:
     bool m_cancelled;
     using Integrator::Integrator;
 public:
 
-    bool iterateVCM(VCMProcessBase* process, int sensorResID, int iter)
-    {
+    bool iterateVCM(VCMProcessBase* process, int sensorResID, int iter) {
         ref<Scheduler> scheduler = Scheduler::getInstance();
         process->updateRadius(iter + 1);
         process->clearPhotons();

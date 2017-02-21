@@ -105,8 +105,6 @@ public:
         result->clear();
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
-        //if(rect->getOffset().x != 256 || rect->getOffset().y != 256) return; // for debug
-
         /*shift direction is hard-coded. future releases should support arbitrary kernels. */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
 
@@ -244,6 +242,7 @@ public:
             for (int t = maxT; t >= minT; --t) {
                 PathVertex *vt = sp.vertex(t); // the vertex we are looking at
                 Float radius = m_process->m_mergeRadius;
+                if(radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath[0]));
                 // look up photons
                 std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
                 for (const VCMPhoton& photon : photons) { // inspect every photon in range
@@ -489,6 +488,8 @@ public:
                                 break;
 
                             Float radius = m_process->m_mergeRadius;
+                            if(radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath[0]));
+                            
                             const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                             size_t nEmitterPaths = image_size.x * image_size.y;
 

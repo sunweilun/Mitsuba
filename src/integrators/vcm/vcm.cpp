@@ -148,6 +148,7 @@ public:
         m_config.sampleDirect = props.getBoolean("sampleDirect", true);
         m_config.showWeighted = props.getBoolean("showWeighted", false);
         m_config.initialRadius = props.getFloat("initialRadius", 0.f);
+        m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.666f);
 
 #if VCM_DEBUG == 1
         if (m_config.maxDepth == -1 || m_config.maxDepth > 6) {

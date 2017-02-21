@@ -128,7 +128,7 @@ public:
 
             Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             Spectrum color(Float(0.f));
-            //color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+            color += evaluateConnection(result, emitterSubpath, sensorSubpath);
             color += evaluateMerging(result, sensorSubpath);
             result->putSample(initialSamplePos, color, 1.f);
             m_sampler->advance();
@@ -296,9 +296,11 @@ public:
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
                 /* Compute the multiple importance sampling weight */
+                Float radius = m_process->m_mergeRadius;
+                if (radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath));
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, m_config.phExponent,
-                        m_process->m_mergeRadius, nEmitterPaths, false);
+                        radius, nEmitterPaths, false);
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -337,23 +339,24 @@ public:
         PathEdge connectionEdge;
 
         Spectrum sampleValue(0.0f);
-        
+
         int minT = 2;
         int maxT = (int) sensorSubpath.vertexCount() - 1;
         if (m_config.maxDepth != -1)
             maxT = std::min(maxT, m_config.maxDepth + 1);
-        
+
         for (int t = minT; t <= maxT; ++t) {
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
             Float radius = m_process->m_mergeRadius;
+            if (radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath));
 
-            if(!vt->isConnectable()) continue;
-            
+            if (!vt->isConnectable()) continue;
+
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
 
             for (const VCMPhoton& photon : photons) { // inspect every photon in range
-                
+
                 int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
                 if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
                 m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
@@ -361,7 +364,7 @@ public:
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
                 const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
                 size_t nEmitterPaths = image_size.x * image_size.y;
-                
+
                 /* Compute the combined weights along the two subpaths */
                 Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
                 Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
@@ -430,7 +433,7 @@ public:
                     /* Can't connect degenerate endpoints */
                     if (vt->isDegenerate()) continue;
                     if (reconnect && vs->isDegenerate()) continue;
-                    
+
                     if (reconnect) {
                         value = importanceWeights[s] * radianceWeights[t] *
                                 vs->eval(scene, vsPred, vt, EImportance) *
@@ -459,16 +462,12 @@ public:
                 if (reconnect)
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
 
-                //if(t != 3) continue;// for debug
-                
                 /* Compute the multiple importance sampling weight */
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
                         radius, nEmitterPaths, true);
-                
-                //miWeight = 1.0 / nEmitterPaths; // for debug
-                
-                
+
+
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -491,12 +490,11 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-                miWeight = 1.0 / nEmitterPaths;
                 sampleValue += value * Spectrum(miWeight) / p_acc;
             }
             //break; // for debug
         }
-        
+
         return sampleValue;
     }
 

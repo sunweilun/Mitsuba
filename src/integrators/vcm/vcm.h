@@ -47,6 +47,7 @@ struct VCMConfiguration : public VCMConfigBase {
 	size_t sampleCount;
 	Vector2i cropSize;
         Float initialRadius;
+        Float radiusReductionAlpha;
         
 
 	inline VCMConfiguration() { }
@@ -61,6 +62,7 @@ struct VCMConfiguration : public VCMConfigBase {
 		cropSize = Vector2i(stream);
 		rrDepth = stream->readInt();
                 initialRadius = stream->readFloat();
+                radiusReductionAlpha = stream->readFloat();
                 phExponent = stream->readFloat();
 	}
 
@@ -74,6 +76,7 @@ struct VCMConfiguration : public VCMConfigBase {
 		cropSize.serialize(stream);
 		stream->writeInt(rrDepth);
                 stream->writeFloat(initialRadius);
+                stream->writeFloat(radiusReductionAlpha);
                 stream->writeFloat(phExponent);
 	}
 
