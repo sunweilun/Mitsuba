@@ -273,7 +273,7 @@ protected:
             // add photons to local photon map
             for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++) {
                 PathVertex* vertex = emitterSubpath.m_vertices[k];
-                //if (!vertex->isSurfaceInteraction()) continue;
+                if (!vertex->isSurfaceInteraction()) continue;
                 if (!vertex->isConnectable()) continue;
                 // add a new photon
                 VCMPhoton photon;

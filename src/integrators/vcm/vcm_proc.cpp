@@ -90,7 +90,7 @@ public:
         result->clear();
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
-        //if(rect->getOffset().x != 0 || rect->getOffset().y != 128) return; // for debug
+        //if (rect->getOffset().x != 128 * 5 || rect->getOffset().y != 128) return; // for debug
 
 #if defined(MTS_DEBUG_FP)
         enableFPExceptions();
@@ -340,15 +340,28 @@ public:
 
         Spectrum sampleValue(0.0f);
 
+        Float radius = m_process->m_mergeRadius;
+        if (radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath));
+
         int minT = 2;
         int maxT = (int) sensorSubpath.vertexCount() - 1;
         if (m_config.maxDepth != -1)
             maxT = std::min(maxT, m_config.maxDepth + 1);
 
+        Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
+        radianceWeights[0] = Spectrum(1.0f);
+        for (size_t i = 1; i < sensorSubpath.vertexCount(); ++i)
+            radianceWeights[i] = radianceWeights[i - 1] *
+                sensorSubpath.vertex(i - 1)->weight[ERadiance] *
+                sensorSubpath.vertex(i - 1)->rrWeight *
+                sensorSubpath.edge(i - 1)->weight[ERadiance];
+        
+        std::vector<Spectrum> importanceWeights;
+
         for (int t = minT; t <= maxT; ++t) {
+            //if (t != 7) continue; // for debug
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
-            Float radius = m_process->m_mergeRadius;
-            if (radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath));
+
 
             if (!vt->isConnectable()) continue;
 
@@ -360,28 +373,6 @@ public:
                 int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
                 if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
                 m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
-                Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
-                p_acc = std::min(Float(1.f), p_acc); // acceptance probability
-                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
-                size_t nEmitterPaths = image_size.x * image_size.y;
-
-                /* Compute the combined weights along the two subpaths */
-                Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
-                Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
-                importanceWeights[0] = radianceWeights[0] = Spectrum(1.0f);
-
-                for (size_t i = 1; i < emitterSubpath.vertexCount(); ++i)
-                    importanceWeights[i] = importanceWeights[i - 1] *
-                        emitterSubpath.vertex(i - 1)->weight[EImportance] *
-                        emitterSubpath.vertex(i - 1)->rrWeight *
-                        emitterSubpath.edge(i - 1)->weight[EImportance];
-
-                for (size_t i = 1; i < sensorSubpath.vertexCount(); ++i)
-                    radianceWeights[i] = radianceWeights[i - 1] *
-                        sensorSubpath.vertex(i - 1)->weight[ERadiance] *
-                        sensorSubpath.vertex(i - 1)->rrWeight *
-                        sensorSubpath.edge(i - 1)->weight[ERadiance];
-
                 PathVertex
                         *vsPred = emitterSubpath.vertexOrNull(s - 1),
                         *vtPred = sensorSubpath.vertexOrNull(t - 1),
@@ -390,6 +381,32 @@ public:
                 PathEdge
                         *vsEdge = emitterSubpath.edgeOrNull(s - 1),
                         *vtEdge = sensorSubpath.edgeOrNull(t - 1);
+
+                PathVertex *vt_photon = emitterSubpath.vertex(s + 1);
+
+                // Discard photons whose normals are way off.
+                Vector d = normalize(vt->getPosition() - vs->getPosition());
+                Vector photonN = vt_photon->getGeometricNormal();
+                Vector centerN = vt->getGeometricNormal();
+                Float N_ = absDot(photonN, d);
+                if ((dot(photonN, centerN) < 1e-1f) || (N_ < 1e-2f)) continue;
+
+                Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
+                p_acc = std::min(Float(1.f), p_acc); // acceptance probability
+                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
+                size_t nEmitterPaths = image_size.x * image_size.y;
+
+                /* Compute the combined weights along the two subpaths */
+
+                importanceWeights.resize(emitterSubpath.vertexCount());
+
+                importanceWeights[0] = Spectrum(1.0f);
+
+                for (size_t i = 1; i < emitterSubpath.vertexCount(); ++i)
+                    importanceWeights[i] = importanceWeights[i - 1] *
+                        emitterSubpath.vertex(i - 1)->weight[EImportance] *
+                        emitterSubpath.vertex(i - 1)->rrWeight *
+                        emitterSubpath.edge(i - 1)->weight[EImportance];
 
                 RestoreMeasureHelper rmh0(vs), rmh1(vt);
 
@@ -408,52 +425,33 @@ public:
 
                 /* Account for the terms of the measurement contribution
                    function that are coupled to the connection endpoints */
-                if (vs->isEmitterSupernode()) {
-                    /* If possible, convert 'vt' into an emitter sample */
-                    if (!vt->cast(scene, PathVertex::EEmitterSample) || vt->isDegenerate())
-                        continue;
 
-                    value = radianceWeights[t] *
-                            vs->eval(scene, vsPred, vt, EImportance) *
-                            vt->eval(scene, vtPred, vs, ERadiance);
+                /* Can't connect degenerate endpoints */
+                if (vt->isDegenerate()) continue;
+                if (reconnect && vs->isDegenerate()) continue;
 
-                } else if (vt->isSensorSupernode()) {
-                    /* If possible, convert 'vs' into an sensor sample */
-                    if (!vs->cast(scene, PathVertex::ESensorSample) || vs->isDegenerate())
-                        continue;
-
-                    /* Make note of the changed pixel sample position */
-                    if (!vs->getSamplePosition(vsPred, samplePos))
-                        continue;
-
-                    value = importanceWeights[s] *
+                if (reconnect) {
+                    value = importanceWeights[s] * radianceWeights[t] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
                 } else {
-                    /* Can't connect degenerate endpoints */
-                    if (vt->isDegenerate()) continue;
-                    if (reconnect && vs->isDegenerate()) continue;
-
-                    if (reconnect) {
-                        value = importanceWeights[s] * radianceWeights[t] *
-                                vs->eval(scene, vsPred, vt, EImportance) *
-                                vt->eval(scene, vtPred, vs, ERadiance);
-                    } else {
-                        p_acc = 1.0;
-                        value = importanceWeights[s + 1] * radianceWeights[t] *
-                                vt->eval(scene, vtPred, vs, ERadiance) / (M_PI * radius * radius);
-                    }
-
-                    /* Temporarily force vertex measure to EArea. Needed to
-                       handle BSDFs with diffuse + specular components */
-                    vs->measure = vt->measure = EArea;
+                    p_acc = 1.0;
+                    value = importanceWeights[s + 1] * radianceWeights[t] *
+                            vt->eval(scene, vtPred, vs, ERadiance) / (M_PI * radius * radius);
                 }
+
+                /* Temporarily force vertex measure to EArea. Needed to
+                   handle BSDFs with diffuse + specular components */
+                vs->measure = vt->measure = EArea;
 
                 /* Attempt to connect the two endpoints, which could result in
                    the creation of additional vertices (index-matched boundaries etc.) */
                 int interactions = remaining; // backup
+
+
+
                 if (value.isZero() || !connectionEdge.pathConnectAndCollapse(
-                        scene, vsEdge, vs, vt, vtEdge, interactions))
+                        scene, vsEdge, vs, vt, vtEdge, interactions, !reconnect))
                     continue;
 
                 /* Account for the terms of the measurement contribution
@@ -463,11 +461,11 @@ public:
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
 
                 /* Compute the multiple importance sampling weight */
+
+
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
                         radius, nEmitterPaths, true);
-
-
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -494,7 +492,6 @@ public:
             }
             //break; // for debug
         }
-
         return sampleValue;
     }
 

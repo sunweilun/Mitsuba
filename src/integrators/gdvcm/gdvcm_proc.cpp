@@ -240,6 +240,7 @@ public:
             if (m_config.maxDepth != -1)
                 maxT = std::min(maxT, m_config.maxDepth + 1);
             for (int t = maxT; t >= minT; --t) {
+                //if(t != 3) continue; // for debug
                 PathVertex *vt = sp.vertex(t); // the vertex we are looking at
                 Float radius = m_process->m_mergeRadius;
                 if(radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath[0]));

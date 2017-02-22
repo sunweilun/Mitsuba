@@ -45,8 +45,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
         pdfImp[pos++] = vs->pdf[EImportance]
                 * emitterSubpath.edge(s)->pdf[EImportance];
     } else {
-        pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure)
-                * connectionEdge->pdf[EImportance];
+        pdfImp[pos++] = vs->evalPdf(scene, vsPred, vt, EImportance, vsMeasure) * connectionEdge->pdf[EImportance];
     }
 
     if (t > 0) {
