@@ -21,6 +21,7 @@
 
 #include <mitsuba/mitsuba.h>
 
+#define SEPARATE_DIRECT // use separate buffer for LS*E paths
 
 MTS_NAMESPACE_BEGIN
 

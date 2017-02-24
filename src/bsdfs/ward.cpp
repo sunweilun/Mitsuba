@@ -359,8 +359,8 @@ public:
 
 	Float getRoughness(const Intersection &its, int component) const {
 		Assert(component == 0 || component == 1);
-
-		if (component == 0)
+                
+		if (component == 1) // was component == 0, a bug?
 			return 0.5f * (m_alphaU->eval(its).average()
 				+ m_alphaV->eval(its).average());
 		else

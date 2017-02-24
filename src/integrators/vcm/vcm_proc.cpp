@@ -268,6 +268,12 @@ public:
                     vs->measure = vt->measure = EArea;
                 }
 
+
+                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
+                size_t nEmitterPaths = image_size.x * image_size.y;
+                /* Compute the multiple importance sampling weight */
+
+
                 /* Attempt to connect the two endpoints, which could result in
                    the creation of additional vertices (index-matched boundaries etc.) */
                 int interactions = remaining; // backup
@@ -283,6 +289,8 @@ public:
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::ETransmittance |
                         (s == 1 ? PathEdge::ECosineRad : PathEdge::ECosineImp));
 
+
+
                 if (sampleDirect) {
                     /* A direct sampling strategy was used, which generated
                        two new vertices at one of the path ends. Temporarily
@@ -293,14 +301,11 @@ public:
                         emitterSubpath.swapEndpoints(vsPred, vsEdge, vs);
                 }
 
-                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
-                size_t nEmitterPaths = image_size.x * image_size.y;
-                /* Compute the multiple importance sampling weight */
-                Float radius = m_process->m_mergeRadius;
-                if (radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath));
+
+
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, m_config.phExponent,
-                        radius, nEmitterPaths, false);
+                        m_process->m_mergeRadius, nEmitterPaths, false);
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -340,9 +345,6 @@ public:
 
         Spectrum sampleValue(0.0f);
 
-        Float radius = m_process->m_mergeRadius;
-        if (radius < 0) radius = std::min(-radius, estimateSensorMergingRadius(sensorSubpath));
-
         int minT = 2;
         int maxT = (int) sensorSubpath.vertexCount() - 1;
         if (m_config.maxDepth != -1)
@@ -355,16 +357,22 @@ public:
                 sensorSubpath.vertex(i - 1)->weight[ERadiance] *
                 sensorSubpath.vertex(i - 1)->rrWeight *
                 sensorSubpath.edge(i - 1)->weight[ERadiance];
-        
+
         std::vector<Spectrum> importanceWeights;
 
-        for (int t = minT; t <= maxT; ++t) {
-            //if (t != 7) continue; // for debug
-            PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
+        const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
+        size_t nEmitterPaths = image_size.x * image_size.y;
 
+        Float radius = Path::estimateSensorMergingRadius(scene, emitterSubpath, sensorSubpath, 0, 2, nEmitterPaths,
+                m_process->m_mergeRadius);
+
+        for (int t = minT; t <= maxT; ++t) {
+            PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
+            if(t > 2) Path::adjustRadius(sensorSubpath.vertex(t - 1), radius);
+            
+            if(radius == 0.0) break;
 
             if (!vt->isConnectable()) continue;
-
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
 
@@ -373,6 +381,7 @@ public:
                 int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
                 if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
                 m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
+
                 PathVertex
                         *vsPred = emitterSubpath.vertexOrNull(s - 1),
                         *vtPred = sensorSubpath.vertexOrNull(t - 1),
@@ -393,8 +402,6 @@ public:
 
                 Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
-                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
-                size_t nEmitterPaths = image_size.x * image_size.y;
 
                 /* Compute the combined weights along the two subpaths */
 
@@ -465,7 +472,7 @@ public:
 
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
-                        radius, nEmitterPaths, true);
+                        m_process->m_mergeRadius, nEmitterPaths, true);
 
                 if (sampleDirect) {
                     /* Now undo the previous change */

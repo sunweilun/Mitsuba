@@ -323,7 +323,16 @@ public:
             if (m_config.maxDepth != -1)
                 maxT = std::min(maxT, m_config.maxDepth + 1 - s);
 
-            for (int t = maxT; t >= minT; --t) {
+#ifdef SEPARATE_DIRECT
+            bool isDirect = s == 0;
+#endif
+
+            for (int t = minT; t <= maxT; ++t) {
+
+#ifdef SEPARATE_DIRECT
+                if (t >= 3 && Path::isConnectable_GBDPT(sensorSubpath[0].vertex(t-1), m_config.m_shiftThreshold))
+                    isDirect = false;
+#endif
 
                 samplePosValid = true;
 
@@ -416,7 +425,7 @@ public:
 
                                 value[k] = *radianceWeightTmp * connectionParts;
                                 valuePdf[k] = *radiancePdfTmp;
-                            }                                /* Accounts for direct hits of light-subpaths to sensor, i.e t==0. If this happens do not compute gradients but fall back to the T0 mapping */
+                            }/* Accounts for direct hits of light-subpaths to sensor, i.e t==0. If this happens do not compute gradients but fall back to the T0 mapping */
                             else if (vt->isSensorSupernode()) {
                                 if (!vs->cast(scene, PathVertex::ESensorSample) || vs->isDegenerate() || k > 0) //Note the k>0...
                                 {
@@ -512,6 +521,13 @@ public:
 
                 /* store primal paths contribution */
                 Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
+
+#ifdef SEPARATE_DIRECT
+                if (isDirect) {
+                    wr->putSample(samplePos, mainRad, 5);
+                    break;
+                }
+#endif
                 if (t >= 2)
                     primal += mainRad;
                 else
@@ -705,6 +721,10 @@ void GBDPTProcess::develop() {
         m_film->setBitmapMulti(m_result->getImageBlock(i)->getBitmap()->crop(Point2i(m_config.extraBorder), m_film->getCropSize()), Float(1.0), i);
         m_film->addBitmapMulti(m_result->getLightImage(i)->getBitmap(), 1.0f / m_config.sampleCount, i);
     }
+#if defined(SEPARATE_DIRECT)
+    int i = m_config.nNeighbours + 1;
+    m_film->setBitmapMulti(m_result->getImageBlock(i)->getBitmap()->crop(Point2i(m_config.extraBorder), m_film->getCropSize()), Float(1.0), i);
+#endif
 
     m_refreshTimer->reset();
     m_queue->signalRefresh(m_parent);

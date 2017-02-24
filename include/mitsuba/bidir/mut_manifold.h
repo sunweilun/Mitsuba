@@ -82,7 +82,7 @@ public:
 	Float getSpecularThreshold(){ return m_specularThreshold; }
         
         /* helper functions for G-BDPT*/
-        bool manifoldWalk(const Path &source, Path &proposal, int step, int b, int c, bool updateAll = false);
+        bool manifoldWalk(const Path &source, Path &proposal, int step, int b, int c, bool updateAll = false, bool unidir = false);
         int getSpecularChainEndGBDPT(const Path &path, int pos, int step);
 	int getSpecularChainEnd(const Path &path, int pos, int step);
 

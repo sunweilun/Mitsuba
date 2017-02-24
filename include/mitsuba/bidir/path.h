@@ -45,29 +45,25 @@ class ManifoldPerturbation; // Samuli
  * \author Wenzel Jakob
  * \ingroup libbidir
  */
-struct MTS_EXPORT_BIDIR Path
-{
+struct MTS_EXPORT_BIDIR Path {
 public:
     typedef PathEdge * PathEdgePtr;
     typedef PathVertex * PathVertexPtr;
 
     /// Create a new, empty path
 
-    inline Path()
-    {
+    inline Path() {
     }
 
     /// Create a new path of the specified size
 
-    inline Path(size_t size) : m_vertices(size)
-    {
+    inline Path(size_t size) : m_vertices(size) {
     }
 
     /// Copy constructor
 
     inline Path(const Path &path) : m_vertices(path.m_vertices),
-    m_edges(path.m_edges)
-    {
+    m_edges(path.m_edges) {
     }
 
     /**
@@ -281,8 +277,7 @@ public:
      * For a nonempty path, the number of vertices is always equal
      * To \ref edgeCount()+1.
      */
-    inline size_t vertexCount() const
-    {
+    inline size_t vertexCount() const {
         return m_vertices.size();
     }
 
@@ -292,8 +287,7 @@ public:
      * For a nonempty path, the number of vertices is always equal
      * To \ref vertexCount()-1.
      */
-    inline size_t edgeCount() const
-    {
+    inline size_t edgeCount() const {
         return m_edges.size();
     }
 
@@ -301,15 +295,13 @@ public:
      * \brief Return the length of the path. This is just the
      * number of edges.
      */
-    inline int length() const
-    {
+    inline int length() const {
         return (int) m_edges.size();
     }
 
     /// Return an vertex by its index
 
-    inline PathVertexPtr &vertex(size_t index)
-    {
+    inline PathVertexPtr &vertex(size_t index) {
 #if MTS_BD_DEBUG == 1
         if (index >= m_vertices.size())
             SLog(EError, "Path vertex index " SIZE_T_FMT
@@ -321,8 +313,7 @@ public:
 
     /// Return an vertex by its index (const version)
 
-    inline const PathVertexPtr &vertex(size_t index) const
-    {
+    inline const PathVertexPtr &vertex(size_t index) const {
 #if MTS_BD_DEBUG == 1
         if (index >= m_vertices.size())
             SLog(EError, "Path vertex index " SIZE_T_FMT
@@ -334,8 +325,7 @@ public:
 
     /// Return an vertex by its index (or NULL if out of bounds)
 
-    inline PathVertexPtr vertexOrNull(size_t index)
-    {
+    inline PathVertexPtr vertexOrNull(size_t index) {
         if (index >= m_vertices.size())
             return NULL;
         return m_vertices[index];
@@ -343,8 +333,7 @@ public:
 
     /// Return an vertex by its index (or NULL if out of bounds, const version)
 
-    inline PathVertexPtr vertexOrNull(size_t index) const
-    {
+    inline PathVertexPtr vertexOrNull(size_t index) const {
         if (index >= m_vertices.size())
             return NULL;
         return m_vertices[index];
@@ -352,8 +341,7 @@ public:
 
     /// Return an edge by its index
 
-    inline PathEdgePtr &edge(size_t index)
-    {
+    inline PathEdgePtr &edge(size_t index) {
 #if MTS_BD_DEBUG == 1
         if (index >= m_edges.size())
             SLog(EError, "Path edge index " SIZE_T_FMT
@@ -365,8 +353,7 @@ public:
 
     /// Return an edge by its index (const version)
 
-    inline const PathEdgePtr &edge(size_t index) const
-    {
+    inline const PathEdgePtr &edge(size_t index) const {
 #if MTS_BD_DEBUG == 1
         if (index >= m_edges.size())
             SLog(EError, "Path edge index " SIZE_T_FMT
@@ -378,8 +365,7 @@ public:
 
     /// Return an edge by its index (or \c NULL if out of bounds)
 
-    inline PathEdgePtr edgeOrNull(size_t index)
-    {
+    inline PathEdgePtr edgeOrNull(size_t index) {
         if (index >= m_edges.size())
             return NULL;
         return m_edges[index];
@@ -387,8 +373,7 @@ public:
 
     /// Return an edge by its index (or \c NULL if out of bounds, const version)
 
-    inline PathEdgePtr edgeOrNull(size_t index) const
-    {
+    inline PathEdgePtr edgeOrNull(size_t index) const {
         if (index >= m_edges.size())
             return NULL;
         return m_edges[index];
@@ -411,8 +396,7 @@ public:
      * In that case, it is necessary know about the effects of vertices
      * and edges \a outside of the modified range.
      */
-    inline Spectrum getPrefixSuffixWeight(int l, int m) const
-    {
+    inline Spectrum getPrefixSuffixWeight(int l, int m) const {
         Spectrum weight(1.0f);
 
         for (int s = 0; s < l; ++s)
@@ -434,13 +418,11 @@ public:
      * that all vertices are of the same type, and that the paths have
      * identical values of \ref isConnectable() for each vertex.
      */
-    inline bool matchesConfiguration(const Path &p) const
-    {
+    inline bool matchesConfiguration(const Path &p) const {
         if (p.length() != length())
             return false;
 
-        for (size_t i = 0; i < m_vertices.size(); ++i)
-        {
+        for (size_t i = 0; i < m_vertices.size(); ++i) {
             if (m_vertices[i]->type != p.vertex(i)->type ||
                     m_vertices[i]->isConnectable() != p.vertex(i)->isConnectable())
                 return false;
@@ -458,8 +440,7 @@ public:
      * normalized so that it has luminance 1. This quantity is required
      * by the sample splatting implementation in Veach-MLT.
      */
-    inline Spectrum getRelativeWeight() const
-    {
+    inline Spectrum getRelativeWeight() const {
         Spectrum weight(1.0f);
         int k = length();
 
@@ -524,6 +505,46 @@ public:
             bool direct, bool lightImage, Float exponent,
             Float radius, size_t nEmitterPaths, bool merge);
 
+    // decide adaptive radius
+
+    static Float estimateSensorMergingRadius(const Scene *scene,
+            const Path& emitterSubpath, const Path& sensorSubpath,
+            int s, int t, size_t nPixels, Float defaultRadius) {
+        if (defaultRadius > 0.f) return defaultRadius;
+        defaultRadius = -defaultRadius;
+        Float surface_pdf = 0.f;
+        PathVertex* vt = sensorSubpath.vertexOrNull(t);
+        PathVertex* vs = emitterSubpath.vertexOrNull(s);
+        if (t >= 2) {
+            PathVertex* v = sensorSubpath.vertexOrNull(1);
+            if (!v) return Float(0.f);
+            surface_pdf = v->pdf[ERadiance];
+        } else if (vt && vt->isSensorSample()) {
+            surface_pdf = vt->evalPdf(scene, sensorSubpath.vertex(0), vs, ERadiance);
+        }
+        Float r = sqrt(Float(1.f) / (surface_pdf * nPixels) * M_1_PI);
+        return std::min(defaultRadius, r);
+    }
+
+    static Float getRoughness(const PathVertex *va) {
+        if (!va->isConnectable())
+            return Float(0.f);
+
+        //supernodes have no Intersection record and emitter have no BRDF components (why?)
+        if (va->type & (PathVertex::ESupernode | PathVertex::ESensorSample | PathVertex::EEmitterSample))
+            return Float(1.f);
+
+        const Intersection& its = va->getIntersection();
+
+        const BSDF* bsdf = its.getBSDF();
+        Float roughness = std::numeric_limits<Float>::infinity();
+
+        roughness = bsdf->getRoughness(its, va->sampledComponentIndex);
+        return roughness;
+    }
+
+    static void adjustRadius(const PathVertex *va, Float& radius);
+
     /**
      * \brief Collapse a path into an entire edge that summarizes the aggregate
      * transport and sampling densities
@@ -538,8 +559,7 @@ public:
 
     /// Swap the two endpoint vertices of a path with the provided values
 
-    inline void swapEndpoints(PathVertexPtr &supernode, PathEdgePtr &edge, PathVertexPtr &sample)
-    {
+    inline void swapEndpoints(PathVertexPtr &supernode, PathEdgePtr &edge, PathVertexPtr &sample) {
         std::swap(supernode, m_vertices[0]);
         std::swap(sample, m_vertices[1]);
         std::swap(edge, m_edges[0]);
@@ -547,15 +567,13 @@ public:
 
     /// \brief Append a vertex to this path
 
-    inline void append(PathVertex *vertex)
-    {
+    inline void append(PathVertex *vertex) {
         m_vertices.push_back(vertex);
     }
 
     /// \brief Append an edge to this path
 
-    inline void append(PathEdge *edge)
-    {
+    inline void append(PathEdge *edge) {
         m_edges.push_back(edge);
     }
 
@@ -567,8 +585,7 @@ public:
      * \param vertex
      *     A vertex to be appended at the end of the path
      */
-    inline void append(PathEdge *edge, PathVertex *vertex)
-    {
+    inline void append(PathEdge *edge, PathVertex *vertex) {
         m_edges.push_back(edge);
         m_vertices.push_back(vertex);
     }
@@ -596,21 +613,18 @@ public:
 
     /// remove and release last element of the path (needed for G-BDPT only)
 
-    void removeAndReleaseLastElement(MemoryPool &pool)
-    {
+    void removeAndReleaseLastElement(MemoryPool &pool) {
         pool.release(m_vertices.back());
         pool.release(m_edges.back());
         m_vertices.pop_back();
         m_edges.pop_back();
     }
-    
-    void replaceVertex(int i, const PathVertex* v) 
-    {
+
+    void replaceVertex(int i, const PathVertex* v) {
         *m_vertices[i] = *v;
     }
 
-    void removeLastElement()
-    {
+    void removeLastElement() {
         m_vertices.pop_back();
         m_edges.pop_back();
     }
@@ -620,15 +634,13 @@ public:
 
     /// Return the sample position associated with the path
 
-    inline const Point2 &getSamplePosition() const
-    {
+    inline const Point2 &getSamplePosition() const {
         return m_vertices[length() - 1]->getSamplePosition();
     }
 
     /// Clear the path
 
-    inline void clear()
-    {
+    inline void clear() {
         m_vertices.clear();
         m_edges.clear();
     }
@@ -638,8 +650,7 @@ public:
 
     /// Compare this path against another path
 
-    inline bool operator!=(const Path &path) const
-    {
+    inline bool operator!=(const Path &path) const {
         return !operator==(path);
     }
 
@@ -659,18 +670,15 @@ public:
     std::vector<PathEdgePtr> m_edges;
 };
 
-struct MTS_EXPORT_BIDIR CompactBlockPathPool
-{
+struct MTS_EXPORT_BIDIR CompactBlockPathPool {
 
-    struct PathItem
-    {
+    struct PathItem {
         size_t vStartIndex;
         size_t eStartIndex;
         size_t nVertices;
         size_t nEdges;
 
-        PathItem(size_t nv, size_t ne)
-        {
+        PathItem(size_t nv, size_t ne) {
             vStartIndex = eStartIndex = 0;
             nVertices = nv;
             nEdges = ne;
@@ -681,37 +689,30 @@ struct MTS_EXPORT_BIDIR CompactBlockPathPool
     std::vector<PathEdge> edges;
     std::vector<PathItem> pathItems;
 
-    void clear()
-    {
+    void clear() {
         vertices.clear();
         edges.clear();
         pathItems.clear();
     }
 
-    void addPathItem(const Path& path)
-    {
+    void addPathItem(const Path& path) {
         pathItems.push_back(PathItem(path.m_vertices.size(), path.m_edges.size()));
-        for (size_t i = 0; i < path.m_vertices.size(); i++)
-        {
+        for (size_t i = 0; i < path.m_vertices.size(); i++) {
             vertices.push_back(*path.m_vertices[i]);
         }
-        for (size_t i = 0; i < path.m_edges.size(); i++)
-        {
+        for (size_t i = 0; i < path.m_edges.size(); i++) {
             edges.push_back(*path.m_edges[i]);
         }
     }
 
-    void buildIndex()
-    {
-        for (size_t i = 1; i < pathItems.size(); i++)
-        {
+    void buildIndex() {
+        for (size_t i = 1; i < pathItems.size(); i++) {
             pathItems[i].vStartIndex = pathItems[i - 1].vStartIndex + pathItems[i - 1].nVertices;
             pathItems[i].eStartIndex = pathItems[i - 1].eStartIndex + pathItems[i - 1].nEdges;
         }
     }
 
-    void extractPathItem(Path& path, size_t index)
-    {
+    void extractPathItem(Path& path, size_t index) {
         PathItem &item = pathItems[index];
         path.m_vertices.clear();
         for (size_t i = 0; i < item.nVertices; i++)

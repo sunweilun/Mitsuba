@@ -297,16 +297,6 @@ protected:
         emitterPathPool.buildIndex();
     }
 
-    Float estimateSensorMergingRadius(const Path& sensorSubpath) {
-        PathVertex* v = sensorSubpath.vertexOrNull(1);
-        if(!v) return Float(0.f);
-        const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
-        size_t nPixels = image_size.x * image_size.y;
-        Float surface_pdf = v->pdf[ERadiance] * nPixels;
-        Float r = sqrt(Float(1.f) / surface_pdf * M_1_PI);
-        return r;
-    }
-
     ref<Scene> m_scene;
     ref<Sensor> m_sensor;
     ref<Sampler> m_sampler;

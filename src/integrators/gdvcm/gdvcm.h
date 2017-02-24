@@ -22,6 +22,8 @@
 #include <mitsuba/mitsuba.h>
 #include "../vcm/vcm_basics.h"
 
+#define SEPARATE_DIRECT // use separate buffer for LS*E paths
+
 MTS_NAMESPACE_BEGIN
 
 /* ==================================================================== */

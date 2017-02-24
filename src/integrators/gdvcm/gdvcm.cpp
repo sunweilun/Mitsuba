@@ -182,13 +182,19 @@ public:
 
         /* setup MultiFilm */
         std::vector<std::string> outNames;
+
         outNames.push_back(m_config.m_reconstructL1 ? "-L1" : "-L2");
         outNames.push_back("-gradientNegY");
         outNames.push_back("-gradientNegX");
         outNames.push_back("-gradientPosX");
         outNames.push_back("-gradientPosY");
+#if defined(SEPARATE_DIRECT)
+        outNames.push_back("-direct");
+#else
         outNames.push_back(m_config.m_reconstructL1 ? "-L2" : "-L1");
+#endif
         outNames.push_back("-primal");
+        
         if (!film->setBuffers(outNames)) {
             Log(EError, "Cannot render image! G-BDPT has been called without MultiFilm.");
             return false;
@@ -242,7 +248,7 @@ public:
         for (int j = 0; j < m_config.nNeighbours; j++) {
             gradBuff.push_back(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
         }
-
+        
         /* develop primal and gradient data into bitmaps */
         film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), imgBaseBuff, 0);
         for (int j = 1; j <= m_config.nNeighbours; j++)
@@ -357,7 +363,12 @@ public:
         setBitmapFromArray(recBuff, &rec[0][0]);
         film->setBitmapMulti(recBuff, 1, 0);
 #endif
-
+#if defined(SEPARATE_DIRECT)
+        ref<Bitmap> imgDirectBuff;
+        imgDirectBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
+        film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), imgDirectBuff, 5);
+        film->addBitmapMulti(imgDirectBuff, 1.0, 0);
+#endif
 
         /* need to put primal img back into film such that it can be written to disc */
         film->setBitmapMulti(imgBaseBuff, 1, m_config.nNeighbours + 2);

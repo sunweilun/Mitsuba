@@ -4,14 +4,24 @@
 
 MTS_NAMESPACE_BEGIN
 
-        const Float D_EPSILON = std::numeric_limits<Float>::min(); // to avoid numerical issues
+#define D_EPSILON std::numeric_limits<Float>::min() // to avoid division by 0
 
-#define USE_GENERALIZED_PDF
+#define USE_GENERALIZED_PDF // always turn this on
+#define USE_ROUGHNESS_CORRELATION_HEURISTIC // use correlation kernel shrinkage heuristic if enabled: usually a good idea
+
+void Path::adjustRadius(const PathVertex *va, Float& radius) {
+#if defined(USE_ROUGHNESS_CORRELATION_HEURISTIC)
+    Float roughness = Path::getRoughness(va);
+    Float shrinkage = roughness == std::numeric_limits<Float>::infinity() ?
+            0.0 : pow(0.1, 10*roughness);
+    radius *= shrinkage;
+#endif
+}
 
 void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sensorSubpath, const PathEdge *connectionEdge, int s, int t,
         EMeasure vsMeasure, EMeasure vtMeasure,
         const bool* connectable, bool merge,
-        Float* pdfImp, Float* pdfRad, bool* isNull,
+        Float* pdfImp, Float* pdfRad, bool* isNull, int nEmitterPaths = 0,
         Float* accProb = NULL, const Float& radius = 0.0, int* emitterRefIndirection = NULL, int* sensorRefIndirection = NULL) {
     int k = s + t + 1;
     // emitter: 0, ..., s  sensor: t, ..., 0
@@ -19,16 +29,16 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
     /* Collect importance transfer area/volume densities from vertices */
     int pos = 0;
     pdfImp[pos++] = 1.0;
-    
-    auto getEdge = [&](int i) -> const PathEdge* { 
-        if(i < s) return emitterSubpath.edge(i); 
-        if(i == s) return connectionEdge;
-        return sensorSubpath.edge(s+t-i);
+
+    auto getEdge = [&](int i) -> const PathEdge* {
+        if (i < s) return emitterSubpath.edge(i);
+        if (i == s) return connectionEdge;
+        return sensorSubpath.edge(s + t - i);
     };
-    
-    auto getVertex = [&](int i) -> const PathVertex* { 
-        if(i <= s) return emitterSubpath.vertex(i);
-        return sensorSubpath.vertex(k-i);
+
+    auto getVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return emitterSubpath.vertex(i);
+        return sensorSubpath.vertex(k - i);
     };
 
     const PathVertex
@@ -97,7 +107,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
             continue;
 
         const PathVertex *cur = getVertex(i);
-        const PathVertex *succ = getVertex(i+1);
+        const PathVertex *succ = getVertex(i + 1);
         const PathEdge *edge = getEdge(i);
 
         pdfImp[i + 1] *= edge->length * edge->length / std::abs(
@@ -111,8 +121,8 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
             continue;
 
         const PathVertex *cur = getVertex(i);
-        const PathVertex *succ = getVertex(i-1);
-        const PathEdge *edge = getEdge(i-1);
+        const PathVertex *succ = getVertex(i - 1);
+        const PathEdge *edge = getEdge(i - 1);
 
         pdfRad[i - 1] *= edge->length * edge->length / std::abs(
                 (succ->isOnSurface() ? dot(edge->d, succ->getGeometricNormal()) : 1) *
@@ -138,7 +148,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
         }
 
         const PathVertex *before = getVertex(i);
-        const PathVertex *after = getVertex(end+1);
+        const PathVertex *after = getVertex(end + 1);
 
         Vector d = before->getPosition() - after->getPosition();
         Float lengthSquared = d.lengthSquared();
@@ -176,34 +186,37 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
         } else if (connectable[i] == connectable[i + 1] || chain_start < 0) {
             continue;
         }
-        
+
         Float geoTerm = 1.0;
         // a specular chain (chain_start+1, ..., i, i+1) is found
         if (i <= s) { // chain from emitter path
-            geoTerm = sm->G(emitterSubpath, chain_start, i+1);
+            geoTerm = sm->G(emitterSubpath, chain_start, i + 1);
         } else { // chain from sensor path
-            geoTerm = sm->G(sensorSubpath, k-(i+1), k-chain_start);
+            geoTerm = sm->G(sensorSubpath, k - (i + 1), k - chain_start);
         }
-        pdfImp[i+1] = pdfImp[chain_start+1] * geoTerm;
-        pdfImp[chain_start+1] = Float(1.f);
-        
+        pdfImp[i + 1] = pdfImp[chain_start + 1] * geoTerm;
+        pdfImp[chain_start + 1] = Float(1.f);
+
         pdfRad[chain_start] = pdfRad[i] * geoTerm;
         pdfRad[i] = Float(1.f);
     }
 #endif
-    if(!accProb) return;
-    // for vcm
-    Float mergeArea = M_PI * radius * radius;
-    
+    if (!accProb) return;
+
+    Float mergeRadius = Path::estimateSensorMergingRadius(scene, emitterSubpath, sensorSubpath, s, t, nEmitterPaths,
+            radius);
+
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
-    for (int i = 0; i < k+1; i++) {
+    for (int i = k; i >= 0; i--) {
         accProb[i] = Float(0.f);
         bool mergable = i >= 2 && i <= k - 2 && connectable[i];
         if (mergable) {
+            Float mergeArea = M_PI * mergeRadius * mergeRadius;
             accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
 #if !defined(USE_GENERALIZED_PDF)
             if (!connectable[i - 1]) accProb[i] = pdfImp[i]; // not a special case anymore in generalized pdf.
 #endif
+            Path::adjustRadius(getVertex(i), mergeRadius);
         }
     }
 }
@@ -212,6 +225,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float exponent,
         Float radius, size_t nEmitterPaths, bool merge) {
+
     int k = s + t + 1, n = k + 1;
 
     // if(s != 0 || t != 5) return 0; // for debug
@@ -281,7 +295,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, accProb, radius, 
+            connectable, merge, pdfImp, pdfRad, isNull, nEmitterPaths, accProb, radius,
             &emitterRefIndirection, &sensorRefIndirection);
 
     double initial = 1.0f;
@@ -323,7 +337,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        an incremental scheme can be used that only finds the densities relative
        to the (s,t) strategy, which can be done using a linear sweep. For
        details, refer to the Veach thesis, p.306. */
-    
+
     auto num_conn_shemes = [&connectable, &nEmitterPaths, &k](int i) {
         return Float(connectable[i] ? 1 : 0);
     };
@@ -375,8 +389,8 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     }
 
     Float total_weight = 1.0 / weight;
-    Float w_merge = pow(accProb[s + 1], exponent) / base_prob_exp;
-    
+    Float w_merge = accProb[s + 1] > 0.f ? pow(accProb[s + 1], exponent) / base_prob_exp : 0.f;
+
     if (merge) return total_weight * w_merge;
     return total_weight * num_conn_shemes(s) / base_prob_exp;
 }
@@ -390,7 +404,6 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         Float radius, size_t nEmitterPaths, bool merge, bool merge_only) {
     int k = s + t + 1, n = k + 1;
     // for vcm
-    Float mergeArea = M_PI * radius * radius;
     Float *accProb = (Float *) alloca(n * sizeof (Float));
 
     const PathVertex
@@ -436,12 +449,12 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, accProb, radius);
+            connectable, merge, pdfImp, pdfRad, isNull, nEmitterPaths, accProb, radius);
 
     double sum_p = 0.f;
-    
+
     auto num_conn_shemes = [&connectable, &isNull, &nEmitterPaths, &k, &merge_only](int i) {
-        if((connectable[i] || isNull[i]) && !merge_only) {
+        if ((connectable[i] || isNull[i]) && !merge_only) {
             return Float(1);
         }
         return Float(0);
@@ -477,7 +490,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
 
     if (sum_p == 0.0) return 0.0;
 
-    if (merge) return (Float) mergeWeight > 0.0 ? (mergeWeight * p_st / sum_p / totalWeight) : 0;
+    if (merge) return (Float) mergeWeight > 0.f ? (mergeWeight * p_st / sum_p / totalWeight) : 0.f;
     return (Float) (p_st / sum_p) / totalWeight * num_conn_shemes(s);
 }
 
@@ -526,15 +539,15 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, accProb, radius);
+            connectable, merge, pdfImp, pdfRad, isNull, nEmitterPaths, accProb, radius);
 
     fillPdfList(scene, offsetEmitterSubpath, offsetSensorSubpath, offsetConnectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, offsetPdfImp, offsetPdfRad, isNull, oAccProb, radius);
+            connectable, merge, offsetPdfImp, offsetPdfRad, isNull, nEmitterPaths, oAccProb, radius);
 
     double sum_p = 0.f, p_st = 0.f;
-    
+
     auto num_conn_shemes = [&connectable, &isNull, &nEmitterPaths, &k, &merge_only](int i) {
-        if((connectable[i] || isNull[i]) && !merge_only) {
+        if ((connectable[i] || isNull[i]) && !merge_only) {
             return Float(1);
         }
         return Float(0);
@@ -577,7 +590,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     if (sum_p == 0.0) return 0.0;
 
     if (merge)
-        return (Float) (mergeWeight > 0.0 ? (mergeWeight * p_st / sum_p / totalWeight) : 0.0);
+        return (Float) (mergeWeight > 0.f ? (mergeWeight * p_st / sum_p / totalWeight) : 0.f);
     return (Float) (p_st * num_conn_shemes(s) / sum_p / totalWeight);
 }
 

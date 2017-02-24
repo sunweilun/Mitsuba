@@ -91,7 +91,7 @@ public:
         m_config.m_reconstructL2 = props.getBoolean("reconstructL2", false);
         m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
         m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
-        
+
         if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
             Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
 
@@ -170,7 +170,11 @@ public:
         outNames.push_back("-gradientNegX");
         outNames.push_back("-gradientPosX");
         outNames.push_back("-gradientPosY");
+#if defined(SEPARATE_DIRECT)
+        outNames.push_back("-direct");
+#else
         outNames.push_back(m_config.m_reconstructL1 ? "-L2" : "-L1");
+#endif
         outNames.push_back("-primal");
         if (!film->setBuffers(outNames)) {
             Log(EError, "Cannot render image! G-BDPT has been called without MultiFilm.");
@@ -280,7 +284,7 @@ public:
         const int& n_iters = m_config.m_nJacobiIters;
         float alpha = (Float) m_config.m_reconstructAlpha;
         float alpha_sqr = alpha * alpha;
-        
+
         for (int iter = 0; iter < n_iters; iter++) {
             int src = iter % 2;
             int dst = 1 - src;
@@ -294,35 +298,34 @@ public:
                     int x = index % w;
                     int y = index / w;
                     if (x >= w || y >= h) continue;
-                    
-                    for(int channel = 0; channel < 3; channel ++)
-                    {
+
+                    for (int channel = 0; channel < 3; channel++) {
                         float color = 0.f;
                         float weight = 0.f;
-                        const float& prim = imgf[(y*w+x)*3+channel];
+                        const float& prim = imgf[(y * w + x)*3 + channel];
                         color += prim*alpha_sqr;
                         weight += alpha_sqr;
                         if (x > 0) {
-                            color += dxf[(y*w+x-1)*3+channel];
-                            color += rec[src][(y*w+x-1)*3+channel];
+                            color += dxf[(y * w + x - 1)*3 + channel];
+                            color += rec[src][(y * w + x - 1)*3 + channel];
                             weight += 1.f;
                         }
                         if (x + 1 < w) {
-                            color -= dxf[(y*w+x)*3+channel];
-                            color += rec[src][(y*w+x+1)*3+channel];
+                            color -= dxf[(y * w + x)*3 + channel];
+                            color += rec[src][(y * w + x + 1)*3 + channel];
                             weight += 1.f;
                         }
                         if (y > 0) {
-                            color += dyf[((y-1)*w+x)*3+channel];
-                            color += rec[src][((y-1)*w+x)*3+channel];
+                            color += dyf[((y - 1) * w + x)*3 + channel];
+                            color += rec[src][((y - 1) * w + x)*3 + channel];
                             weight += 1.f;
                         }
                         if (y + 1 < h) {
-                            color -= dyf[(y*w+x)*3+channel];
-                            color += rec[src][((y+1)*w+x)*3+channel];
+                            color -= dyf[(y * w + x)*3 + channel];
+                            color += rec[src][((y + 1) * w + x)*3 + channel];
                             weight += 1.f;
                         }
-                        rec[dst][(y*w+x)*3+channel] = color / weight;
+                        rec[dst][(y * w + x)*3 + channel] = color / weight;
                     }
                 }
             }
@@ -330,7 +333,12 @@ public:
         setBitmapFromArray(recBuff, &rec[0][0]);
         film->setBitmapMulti(recBuff, 1, 0);
 #endif
-        
+#if defined(SEPARATE_DIRECT)
+        ref<Bitmap> imgDirectBuff;
+        imgDirectBuff = new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize());
+        film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), imgDirectBuff, 5);
+        film->addBitmapMulti(imgDirectBuff, 1.0, 0);
+#endif
 
         /* need to put primal img back into film such that it can be written to disc */
         film->setBitmapMulti(imgBaseBuff, 1, m_config.nNeighbours + 2);

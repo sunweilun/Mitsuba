@@ -25,6 +25,8 @@
 
 MTS_NAMESPACE_BEGIN
 
+
+
 /**
  * \brief A collection of powerful support functions that can be used to construct
  * bidirectional rendering algorithms
