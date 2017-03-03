@@ -53,6 +53,9 @@ public:
 
 	/// Attempt to move the movable endpoint vertex to position \c target
 	bool move(const Point &target, const Normal &normal);
+        
+        /// For GDVCM: similar to move, but accept as long as target lands somewhere within radius
+        bool moveInRange(const Point &target, const Normal &normal, Float radius);
 
 	/**
 	 * \brief Compute the generalized geometric term between 'a' and 'b'

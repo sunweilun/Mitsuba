@@ -11,6 +11,7 @@ MTS_NAMESPACE_BEGIN
 
 void Path::adjustRadius(const PathVertex *va, Float& radius) {
 #if defined(USE_ROUGHNESS_CORRELATION_HEURISTIC)
+    if(!va || va->type == PathVertex::EInvalid) return;
     Float roughness = Path::getRoughness(va);
     Float shrinkage = roughness == std::numeric_limits<Float>::infinity() ?
             0.0 : pow(0.1, 10*roughness);
@@ -51,7 +52,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
         pdfImp[pos++] = emitterSubpath.vertex(i)->pdf[EImportance]
             * emitterSubpath.edge(i)->pdf[EImportance];
 
-    if (merge && !vs->isConnectable()) { // use cached pdf
+    if (merge) { // use cached pdf
         pdfImp[pos++] = vs->pdf[EImportance]
                 * emitterSubpath.edge(s)->pdf[EImportance];
     } else {
@@ -74,7 +75,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
             pdfRad[pos++] = emitterSubpath.vertex(i + 1)->pdf[ERadiance]
                 * emitterSubpath.edge(i)->pdf[ERadiance];
 
-        if (merge && !vs->isConnectable()) { // use cached pdf
+        if (merge) { // use cached pdf
             pdfRad[pos++] = vs->pdf[ERadiance]
                     * emitterSubpath.edge(s - 1)->pdf[ERadiance];
         } else {
@@ -446,6 +447,8 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         pos++;
     }
 
+    connectable[s+1] = true; // must force the actual connection to be connectable.
+    if(!merge) connectable[s] = true;
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
@@ -536,6 +539,9 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         pos++;
     }
 
+    connectable[s+1] = true; // must force the actual connection to be connectable.
+    if(!merge) connectable[s] = true;
+    
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,

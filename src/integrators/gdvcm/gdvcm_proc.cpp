@@ -28,6 +28,7 @@ MTS_NAMESPACE_BEGIN
 #define D_EPSILON std::numeric_limits<Float>::min() // to avoid division by 0
 
 //#define RECONNECT // whether reconnect to the base or not: not is usually preferred
+//#define MOVE_IN_RANGE
 
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
@@ -241,16 +242,26 @@ public:
 
             const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
             size_t nEmitterPaths = image_size.x * image_size.y;
-            Float radius = Path::estimateSensorMergingRadius(m_scene, emitterSubpath[0], sp, 0, 2, nEmitterPaths,
-                    m_process->m_mergeRadius);
+
+            Float radius[5];
+            for (int i = 0; i < 5; i++) {
+                radius[i] = Path::estimateSensorMergingRadius(m_scene,
+                        emitterSubpath[0], sensorSubpath[i], 0, 2, nEmitterPaths,
+                        m_process->m_mergeRadius);
+            }
 
             for (int t = minT; t <= maxT; ++t) {
-                PathVertex *vt = sp.vertex(t); // the vertex we are looking at
-                if (t > 2) Path::adjustRadius(sp.vertex(t - 1), radius);
 
-                if (radius == 0.0) break;
+                for (int i = 0; i < 5; i++) {
+                    if (t > 2)
+                        Path::adjustRadius(sensorSubpath[i].vertexOrNull(t - 1), radius[i]);
+                }
+                if (radius[0] == 0.0) break;
+
+
+                PathVertex *vt = sp.vertex(t); // the vertex we are looking at
                 // look up photons
-                std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
+                std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius[0]);
                 for (const VCMPhoton& photon : photons) { // inspect every photon in range
                     pathData[0].success = true;
                     pathData[0].couldConnectAfterB = true;
@@ -342,6 +353,10 @@ public:
         Spectrum visibility = Spectrum(0.f);
         Spectrum light = Spectrum(0.f);
 
+#ifdef SEPARATE_DIRECT
+        Spectrum direct(0.f);
+#endif
+
         for (int s = (int) emitterSubpath.vertexCount() - 1; s >= 0; --s) {
             /* Determine the range of sensor vertices to be traversed, while respecting the specified maximum path length */
             int minT = std::max(2 - s, m_config.lightImage ? 1 : 2), // disable t=0 paths
@@ -356,7 +371,7 @@ public:
             for (int t = minT; t <= maxT; ++t) {
 
 #ifdef SEPARATE_DIRECT
-                if (t >= 3 && Path::isConnectable_GBDPT(sensorSubpath[0].vertex(t-1), m_config.m_shiftThreshold))
+                if (t >= 3 && Path::isConnectable_GBDPT(sensorSubpath[0].vertex(t - 1), m_config.m_shiftThreshold))
                     isDirect = false;
 #endif
 
@@ -466,8 +481,8 @@ public:
                                 value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                                 valuePdf[k] = *importancePdfTmp;
                             } else {
-                                if (!Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold)
-                                        || !Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
+                                if (Path::isDegenerate_GBDPT(vs, m_config.m_shiftThreshold)
+                                        || Path::isDegenerate_GBDPT(vt, m_config.m_shiftThreshold)
                                         || vs->getType() == 0 || vt->getType() == 0) {
                                     valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                                     break;
@@ -551,11 +566,11 @@ public:
 
                 /* store primal paths contribution */
                 Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
-                
+
 #ifdef SEPARATE_DIRECT
                 if (isDirect) {
-                    wr->putSample(samplePos, mainRad, 5);
-                    break;
+                    direct += mainRad;
+                    continue;
                 }
 #endif
 
@@ -576,13 +591,17 @@ public:
                 }
             }
         }
+#ifdef SEPARATE_DIRECT
+        wr->putSample(samplePos, direct, 5);
+#endif
     }
 
     void evaluateMerging(GDVCMWorkResult *wr,
             Path &emitterSubpath, std::vector<Path> &sensorSubpath, std::vector<ShiftPathData> &pathData, int vert_b,
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
-            std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, float radius
+            std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, const Float* radius
             , Spectrum& primal, Spectrum * gradient) {
+        const Float baseRadius = radius[0];
 
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
@@ -663,7 +682,8 @@ public:
         PathVertex* vt_conn = emitterBaseSubpath.vertex(prev_diff + 1);
 
         Float vs_pdfOrig = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
-        vs_pdfOrig /= absDot(vs_conn->getShadingNormal(), emitterBaseSubpath.edge(prev_diff)->d);
+        vs_pdfOrig /= vs_conn->getShadingNormal().isZero() ? 1.0 :
+                absDot(vs_conn->getShadingNormal(), emitterBaseSubpath.edge(prev_diff)->d);
         for (int i = prev_diff + 1; i <= s; i++) {
             PathVertex* specVert = emitterBaseSubpath.vertex(i);
             vs_pdfOrig *= specVert->pdf[EImportance];
@@ -710,13 +730,15 @@ public:
                     /* Allowed remaining number of ENull vertices that can be bridged via pathConnect (negative=arbitrarily many) */
                     int remaining = m_config.maxDepth - s - t + 1;
 
+                    
+                    
                     /* Account for the terms of the measurement contribution function that are coupled to the connection endpoints, i.e. s==0*/
-                    if (!Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
+                    if (Path::isDegenerate_GBDPT(vt, m_config.m_shiftThreshold)
                             || vs->getType() == 0 || vt->getType() == 0) {
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         break;
                     }
-
+                    
                     bool successConnect = true;
                     /* Attempt to connect the two endpoints, which could result in the creation of additional vertices (index-matched boundaries etc.) */
                     //only required when connection segment changed from base to offset path
@@ -726,8 +748,15 @@ public:
 
                         // make emitterOffsetSubpath's vertex at s+1 vt.
                         emitterOffsetSubpath.replaceVertex(s + 1, vt);
+#if defined(MOVE_IN_RANGE)
+                        successConnect = m_offsetGenerator->manifoldWalk(emitterBaseSubpath, emitterOffsetSubpath,
+                                -1, s + 1, prev_diff, true, radius[0], radius[k]);
+#else
                         successConnect = m_offsetGenerator->manifoldWalk(emitterBaseSubpath, emitterOffsetSubpath, -1, s + 1, prev_diff, true);
+#endif
                     }
+                    
+                    
 
                     int interactions = remaining; // backup
                     successConnect = successConnect && ((k > 0 && t > vert_b) ? successConnectBase :
@@ -737,8 +766,8 @@ public:
                         value[k] = Spectrum(0.f);
                         break;
                     }
-
-
+                    
+                    
                     vsPred_conn = emitterOffsetSubpath.vertexOrNull(prev_diff - 1);
                     vs_conn = emitterOffsetSubpath.vertexOrNull(prev_diff);
                     vt_conn = prev_conn ? vt : emitterOffsetSubpath.vertex(prev_diff + 1);
@@ -747,14 +776,14 @@ public:
                     Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase :
                             vsEval * vtEval;
 
-                    vs->measure = vt->measure = EArea;
+                    vt->measure = EArea; // Only force vt to be connectable because for vs, we use whichever component that was chosen.
 
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase :
                             (prev_conn ? connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm) :
                             Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterOffsetSubpath, prev_diff, s + 1)));
 
                     if (k == 0) {
-                        p_acc = vs_pdfOrig * geomTerm * M_PI * radius * radius + Spectrum(D_EPSILON);
+                        p_acc = vs_pdfOrig * geomTerm * M_PI * baseRadius * baseRadius + Spectrum(D_EPSILON);
                     }
 
                     if (prev_conn) {
@@ -766,11 +795,12 @@ public:
                     } else {
                         Spectrum vsWeight = vs_conn->weight[EImportance];
                         // prefix-suffix weights + connection bsdfs
-                        value[k] = *importanceWeightTmp * *radianceWeightTmp * vsWeight * vtEval / (M_PI * radius * radius);
+                        value[k] = *importanceWeightTmp * *radianceWeightTmp * vsWeight * vtEval / (M_PI * baseRadius * baseRadius);
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
 
                         Float vs_pdf = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
-                        vs_pdf /= absDot(vs_conn->getShadingNormal(), emitterOffsetSubpath.edge(prev_diff)->d);
+                        vs_pdf /= vs_conn->getShadingNormal().isZero() ? 1.0 :
+                                absDot(vs_conn->getShadingNormal(), emitterOffsetSubpath.edge(prev_diff)->d);
 
                         for (int i = prev_diff + 1; i <= s; i++) {
                             PathVertex* specVert = emitterOffsetSubpath.vertex(i);
@@ -784,10 +814,12 @@ public:
                         Float pdfRatio = vs_pdf / (vs_pdfOrig + D_EPSILON);
                         value[k] *= geomRatio * pdfRatio;
                     }
-
+                    
+                    
+                    
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
                         break;
-
+                    
                     //this is the missing geometry factor in c_{s,t} of f_j mentioned in veach thesis equation 10.8
 
                     if (k > 0 && geomTermBase.isZero()) break;
@@ -811,7 +843,7 @@ public:
                         connectionEdgeBase = connectionEdge;
                         geomTermBase = geomTerm;
                         successConnectBase = successConnect;
-
+                        
                         // using the original routine Path::miWeight is more efficient, but we use the balance heuristic for numberical stability...
                         //	miWeight[0] = Path::miWeight(scene, emitterSubpath, &connectionEdge, sensorSubpath[0], s, t, m_config.sampleDirect, m_config.lightImage) / valuePdf[0];
                         miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterBaseSubpath, &connectionEdgeBase, sensorSubpath[0],
@@ -931,7 +963,7 @@ private:
         connectedPath.clear();
 
         //make sure we connect across connect able vertices only!
-        while (!Path::isConnectable_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold)) {
+        while (Path::isDegenerate_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold)) {
             t--;
             //the tail of the path can then be removed
             sensorSubpath.removeAndReleaseLastElement(m_pool);

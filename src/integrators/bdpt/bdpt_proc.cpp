@@ -281,7 +281,7 @@ public:
 				/* Compute the multiple importance sampling weight */
 				Float miWeight = Path::miWeight(scene, emitterSubpath, &connectionEdge,
 					sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage);
-
+                                
 				if (sampleDirect) {
 					/* Now undo the previous change */
 					if (t == 1)

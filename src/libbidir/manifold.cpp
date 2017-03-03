@@ -634,6 +634,131 @@ bool SpecularManifold::move(const Point &target, const Normal &n) {
 	return false;
 }
 
+bool SpecularManifold::moveInRange(const Point &target, const Normal &n, Float radius) {
+	SimpleVertex &last = m_vertices[m_vertices.size()-1];
+
+	#if MTS_MANIFOLD_DEBUG == 1
+		cout << "moveTo(" << last.p.toString() << " => " << target.toString() << ", n=" << n.toString() << ")" << endl;
+	#endif
+
+	if (m_vertices.size() == 2 && m_vertices[0].type == EPinnedPosition) {
+		/* Nothing to do */
+		return true;
+	}
+
+	bool medium = false;
+	for (size_t i=0; i<m_vertices.size(); ++i) {
+		if (m_vertices[i].type == EMedium)
+			medium = true;
+	}
+
+	if (medium)
+		statsMediumSuccess.incrementBase();
+
+	statsAvgManifoldSize.incrementBase();
+	statsAvgManifoldSize += m_vertices.size();
+	statsMaxManifold.recordMaximum(m_vertices.size());
+
+	statsSuccessfulWalks.incrementBase();
+
+	Float invScale = 1.0f / std::max(std::max(std::abs(target.x),
+			std::abs(target.y)), std::abs(target.z));
+	Float stepSize = 1;
+
+	BDAssert(last.type == EMovable);
+	coordinateSystem(n, last.dpdu, last.dpdv);
+	last.n = n;
+
+	m_proposal.reserve(m_vertices.size());
+	m_iterations = 0;
+	statsAvgIterations.incrementBase();
+	while (m_iterations < m_maxIterations) {
+		Vector rel = target - m_vertices[m_vertices.size()-1].p;
+		Float dist = rel.length(), newDist;
+		if (dist * invScale < MTS_MANIFOLD_EPSILON || dist < radius) {
+			/* Check for an annoying corner-case where the last
+			   two vertices converge to the same point (this can
+			   happen e.g. on rough planar reflectors) */
+			dist = (m_vertices[m_vertices.size()-1].p
+			      - m_vertices[m_vertices.size()-2].p).length();
+			if (dist * invScale < Epsilon) {
+				return false;
+			}
+
+			/* The manifold walk converged. */
+			++statsSuccessfulWalks;
+			statsAvgIterationsSuccess.incrementBase();
+			statsAvgIterationsSuccess += m_iterations;
+			if (medium)
+				++statsMediumSuccess;
+			#if MTS_MANIFOLD_DEBUG == 1
+				cout << "move(): converged after " << m_iterations << " iterations" << endl;
+				cout << "Final configuration:" << toString() << endl;
+			#endif
+			return true;
+		}
+		m_iterations++;
+		++statsAvgIterations;
+
+		/* Compute the tangent vectors for the current path */
+		statsNonManifold.incrementBase();
+		if (!computeTangents()) {
+			++statsNonManifold;
+			#if MTS_MANIFOLD_DEBUG == 1
+				cout << "move(): unable to compute tangents!" << endl;
+			#endif
+			return false;
+		}
+
+		/* Take a step using the computed tangents and project
+		   back on the manifold */
+		#if MTS_MANIFOLD_DEBUG == 1
+			const SimpleVertex &last = m_vertices[m_vertices.size()-1];
+			Float du = dot(rel, last.dpdu), dv = dot(rel, last.dpdv);
+			cout << "project(du=" << du << ", dv=" << dv << ", stepSize=" << stepSize << ")" << endl;
+		#endif
+
+		if (!project(rel * stepSize)) {
+			#if MTS_MANIFOLD_DEBUG == 1
+				cout << "project failed!" << endl;
+			#endif
+			++statsStepFailed;
+			goto failure;
+		}
+
+		/* Reject if the step increased the distance */
+		newDist = (target - m_proposal[m_proposal.size()-1].p).length();
+		#if MTS_MANIFOLD_DEBUG == 1
+			cout << "Distance: " << dist << " -> " << newDist << endl;
+		#endif
+		if (newDist > dist) {
+			++statsStepTooFar;
+			#if MTS_MANIFOLD_DEBUG == 1
+				cout << "-> Rejecting!" << endl;
+			#endif
+			goto failure;
+		}
+		#if MTS_MANIFOLD_DEBUG == 1
+			cout << "-> Accepting!" << endl;
+		#endif
+		++statsStepSuccess;
+
+		m_proposal.swap(m_vertices);
+
+		/* Increase the step size */
+		stepSize = std::min((Float) 1.0f, stepSize * 2.0f);
+		continue;
+	failure:
+		/* Reduce the step size */
+		stepSize /= 2.0f;
+	}
+	#if MTS_MANIFOLD_DEBUG == 1
+		cout << "Exceeded the max. iteration count!" << endl;
+	#endif
+
+	return false;
+}
+
 bool SpecularManifold::update(Path &path, int start, int end) {
 	int step;
 	ETransportMode mode;

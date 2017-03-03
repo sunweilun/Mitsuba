@@ -46,6 +46,26 @@ bool Path::isConnectable_GBDPT(const PathVertex *va, float threshold) {
     return true;
 }
 
+bool Path::isDegenerate_GBDPT(const PathVertex *va, float threshold) {
+    if (va->isDegenerate())
+        return true;
+
+    //supernodes have no Intersection record and emitter have no BRDF components (why?)
+    if (va->type & (PathVertex::ESupernode | PathVertex::ESensorSample | PathVertex::EEmitterSample))
+        return false;
+
+    const Intersection& its = va->getIntersection();
+
+    const BSDF* bsdf = its.getBSDF();
+    for(int c=0; c<bsdf->getComponentCount(); c++) {
+        Float roughness = std::numeric_limits<Float>::infinity();
+        roughness = bsdf->getRoughness(its, c);
+        if (roughness >= threshold/*SPECULAR_ROUGHNESS_THRESHOLD*/)
+            return false;
+    }
+    return true;
+}
+
 Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
@@ -94,6 +114,8 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         isEmitter[pos] = v->isEmitterSample();
         pos++;
     }
+    
+    connectable[s] = connectable[s+1] = true; // must force the actual connection to be connectable.
 
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
@@ -259,6 +281,8 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         isEmitter[pos] = v->isEmitterSample();
         pos++;
     }
+    
+    connectable[s] = connectable[s+1] = true; // must force the actual connection to be connectable.
 
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
@@ -952,7 +976,6 @@ Float Path::miWeight(const Scene *scene, const Path &emitterSubpath,
 
         pdf = next;
     }
-
     return (Float) (1.0 / weight);
 }
 

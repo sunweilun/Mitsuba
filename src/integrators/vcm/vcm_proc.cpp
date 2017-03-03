@@ -441,15 +441,17 @@ public:
                     value = importanceWeights[s] * radianceWeights[t] *
                             vs->eval(scene, vsPred, vt, EImportance) *
                             vt->eval(scene, vtPred, vs, ERadiance);
+                    /* Temporarily force vertex measure to EArea. Needed to
+                    handle BSDFs with diffuse + specular components */
+                    vs->measure = vt->measure = EArea;
                 } else {
                     p_acc = 1.0;
                     value = importanceWeights[s + 1] * radianceWeights[t] *
                             vt->eval(scene, vtPred, vs, ERadiance) / (M_PI * radius * radius);
+                    /* Temporarily force vertex measure to EArea. Needed to
+                    handle BSDFs with diffuse + specular components */
+                    vt->measure = EArea;
                 }
-
-                /* Temporarily force vertex measure to EArea. Needed to
-                   handle BSDFs with diffuse + specular components */
-                vs->measure = vt->measure = EArea;
 
                 /* Attempt to connect the two endpoints, which could result in
                    the creation of additional vertices (index-matched boundaries etc.) */

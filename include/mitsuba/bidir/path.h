@@ -190,6 +190,7 @@ public:
      * If the materials roughness is below the SPECULAR_ROUGHNESS_THRESHOLD we don't allow it!
      */
     static bool isConnectable_GBDPT(const PathVertex *va, float threshold);
+    static bool isDegenerate_GBDPT(const PathVertex *va, float threshold);
 
     /// Does the same as miWeight, but has some more options.
     static Float miWeightGradNoSweep_GBDPT(const Scene *scene,
