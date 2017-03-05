@@ -338,6 +338,7 @@ public:
     }
 
     Spectrum evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath, bool reconnect = false) {
+
         Path emitterSubpath;
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
@@ -368,16 +369,15 @@ public:
 
         for (int t = minT; t <= maxT; ++t) {
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
-            if(t > 2) Path::adjustRadius(sensorSubpath.vertex(t - 1), radius);
-            
-            if(radius == 0.0) break;
+            if (t > 2) Path::adjustRadius(sensorSubpath.vertex(t - 1), radius);
+            if (radius == 0.0) break;
 
-            if (!vt->isConnectable()) continue;
+            if (vt->isDegenerate()) continue;
+
             // look up photons
             std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
 
             for (const VCMPhoton& photon : photons) { // inspect every photon in range
-
                 int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
                 if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
                 m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
@@ -393,12 +393,15 @@ public:
 
                 PathVertex *vt_photon = emitterSubpath.vertex(s + 1);
 
+
                 // Discard photons whose normals are way off.
                 Vector d = normalize(vt->getPosition() - vs->getPosition());
                 Vector photonN = vt_photon->getGeometricNormal();
                 Vector centerN = vt->getGeometricNormal();
                 Float N_ = absDot(photonN, d);
                 if ((dot(photonN, centerN) < 1e-1f) || (N_ < 1e-2f)) continue;
+
+
 
                 Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
@@ -434,7 +437,6 @@ public:
                    function that are coupled to the connection endpoints */
 
                 /* Can't connect degenerate endpoints */
-                if (vt->isDegenerate()) continue;
                 if (reconnect && vs->isDegenerate()) continue;
 
                 if (reconnect) {
@@ -458,7 +460,6 @@ public:
                 int interactions = remaining; // backup
 
 
-
                 if (value.isZero() || !connectionEdge.pathConnectAndCollapse(
                         scene, vsEdge, vs, vt, vtEdge, interactions, !reconnect))
                     continue;
@@ -470,6 +471,8 @@ public:
                     value *= connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
 
                 /* Compute the multiple importance sampling weight */
+
+
 
 
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,

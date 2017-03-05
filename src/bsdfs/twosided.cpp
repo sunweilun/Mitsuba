@@ -14,7 +14,7 @@
 
     You should have received a copy of the GNU General Public License
     along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #include <mitsuba/render/bsdf.h>
 #include <mitsuba/render/texture.h>
@@ -64,172 +64,190 @@ MTS_NAMESPACE_BEGIN
  */
 class TwoSidedBRDF : public BSDF {
 public:
-	TwoSidedBRDF(const Properties &props)
-		: BSDF(props) { }
 
-	TwoSidedBRDF(Stream *stream, InstanceManager *manager)
-		: BSDF(stream, manager) {
-		m_nestedBRDF[0] = static_cast<BSDF *>(manager->getInstance(stream));
-		m_nestedBRDF[1] = static_cast<BSDF *>(manager->getInstance(stream));
-		configure();
-	}
+    TwoSidedBRDF(const Properties &props)
+    : BSDF(props) {
+    }
 
-	void serialize(Stream *stream, InstanceManager *manager) const {
-		BSDF::serialize(stream, manager);
+    TwoSidedBRDF(Stream *stream, InstanceManager *manager)
+    : BSDF(stream, manager) {
+        m_nestedBRDF[0] = static_cast<BSDF *> (manager->getInstance(stream));
+        m_nestedBRDF[1] = static_cast<BSDF *> (manager->getInstance(stream));
+        configure();
+    }
 
-		manager->serialize(stream, m_nestedBRDF[0].get());
-		manager->serialize(stream, m_nestedBRDF[1].get());
-	}
+    void serialize(Stream *stream, InstanceManager *manager) const {
+        BSDF::serialize(stream, manager);
 
-	void configure() {
-		if (!m_nestedBRDF[0])
-			Log(EError, "A nested one-sided material is required!");
-		if (!m_nestedBRDF[1])
-			m_nestedBRDF[1] = m_nestedBRDF[0];
+        manager->serialize(stream, m_nestedBRDF[0].get());
+        manager->serialize(stream, m_nestedBRDF[1].get());
+    }
+
+    void configure() {
+        if (!m_nestedBRDF[0])
+            Log(EError, "A nested one-sided material is required!");
+        if (!m_nestedBRDF[1])
+            m_nestedBRDF[1] = m_nestedBRDF[0];
 
 
-		m_usesRayDifferentials = m_nestedBRDF[0]->usesRayDifferentials()
-			|| m_nestedBRDF[1]->usesRayDifferentials();
+        m_usesRayDifferentials = m_nestedBRDF[0]->usesRayDifferentials()
+                || m_nestedBRDF[1]->usesRayDifferentials();
 
-		m_components.clear();
+        m_components.clear();
 
-		for (int i=0; i<m_nestedBRDF[0]->getComponentCount(); ++i)
-			m_components.push_back((m_nestedBRDF[0]->getType(i) & ~EBackSide) | EFrontSide);
+        for (int i = 0; i < m_nestedBRDF[0]->getComponentCount(); ++i)
+            m_components.push_back((m_nestedBRDF[0]->getType(i) & ~EBackSide) | EFrontSide);
 
-		for (int i=0; i<m_nestedBRDF[1]->getComponentCount(); ++i)
-			m_components.push_back((m_nestedBRDF[1]->getType(i) & ~EFrontSide) | EBackSide);
+        for (int i = 0; i < m_nestedBRDF[1]->getComponentCount(); ++i)
+            m_components.push_back((m_nestedBRDF[1]->getType(i) & ~EFrontSide) | EBackSide);
 
-		BSDF::configure();
-		if (m_combinedType & BSDF::ETransmission)
-			Log(EError, "Only materials without "
-				"a transmission component can be nested!");
-	}
+        BSDF::configure();
+        if (m_combinedType & BSDF::ETransmission)
+            Log(EError, "Only materials without "
+                "a transmission component can be nested!");
+    }
 
-	Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure) const {
-		BSDFSamplingRecord b(bRec);
+    Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure) const {
+        BSDFSamplingRecord b(bRec);
 
-		if (Frame::cosTheta(b.wi) > 0) {
-			return m_nestedBRDF[0]->eval(b, measure);
-		} else {
-			if (b.component != -1)
-				b.component -= m_nestedBRDF[0]->getComponentCount();
-			b.wi.z *= -1;
-			b.wo.z *= -1;
-			return m_nestedBRDF[1]->eval(b, measure);
-		}
-	}
+        if (Frame::cosTheta(b.wi) > 0) {
+            return m_nestedBRDF[0]->eval(b, measure);
+        } else {
+            if (b.component != -1)
+                b.component -= m_nestedBRDF[0]->getComponentCount();
+            b.wi.z *= -1;
+            b.wo.z *= -1;
+            return m_nestedBRDF[1]->eval(b, measure);
+        }
+    }
 
-	Float pdf(const BSDFSamplingRecord &bRec, EMeasure measure) const {
-		BSDFSamplingRecord b(bRec);
+    Float pdf(const BSDFSamplingRecord &bRec, EMeasure measure) const {
+        BSDFSamplingRecord b(bRec);
 
-		if (b.wi.z > 0) {
-			return m_nestedBRDF[0]->pdf(b, measure);
-		} else {
-			if (b.component != -1)
-				b.component -= m_nestedBRDF[0]->getComponentCount();
-			b.wi.z *= -1;
-			b.wo.z *= -1;
-			return m_nestedBRDF[1]->pdf(b, measure);
-		}
-	}
+        if (b.wi.z > 0) {
+            return m_nestedBRDF[0]->pdf(b, measure);
+        } else {
+            if (b.component != -1)
+                b.component -= m_nestedBRDF[0]->getComponentCount();
+            b.wi.z *= -1;
+            b.wo.z *= -1;
+            return m_nestedBRDF[1]->pdf(b, measure);
+        }
+    }
 
-	Spectrum sample(BSDFSamplingRecord &bRec, const Point2 &sample) const {
-		bool flipped = false;
+    Float selectionProb(const BSDFSamplingRecord &bRec) const {
+        BSDFSamplingRecord b(bRec);
+        if (b.wi.z > 0) {
+            if(b.component >= m_nestedBRDF[0]->getComponentCount()) return 0.f;
+            return m_nestedBRDF[0]->selectionProb(b);
+        } else {
+            if (b.component != -1)
+                b.component -= m_nestedBRDF[0]->getComponentCount();
+            if(b.component < 0 ||
+                    b.component >= m_nestedBRDF[1]->getComponentCount()) return 0.f;
+            b.wi.z *= -1;
+            b.wo.z *= -1;
+            return m_nestedBRDF[1]->selectionProb(b);
+        }
+    }
 
-		if (Frame::cosTheta(bRec.wi) < 0) {
-			bRec.wi.z *= -1;
-			flipped = true;
-			if (bRec.component != -1)
-				bRec.component -= m_nestedBRDF[0]->getComponentCount();
-		}
+    Spectrum sample(BSDFSamplingRecord &bRec, const Point2 &sample) const {
+        bool flipped = false;
 
-		Spectrum result = m_nestedBRDF[flipped ? 1 : 0]->sample(bRec, sample);
+        if (Frame::cosTheta(bRec.wi) < 0) {
+            bRec.wi.z *= -1;
+            flipped = true;
+            if (bRec.component != -1)
+                bRec.component -= m_nestedBRDF[0]->getComponentCount();
+        }
 
-		if (flipped) {
-			bRec.wi.z *= -1;
-			if (bRec.component != -1)
-				bRec.component += m_nestedBRDF[0]->getComponentCount();
-			if (!result.isZero()) {
-				bRec.wo.z *= -1;
-				bRec.sampledComponent += m_nestedBRDF[0]->getComponentCount();
-			}
-		}
+        Spectrum result = m_nestedBRDF[flipped ? 1 : 0]->sample(bRec, sample);
 
-		return result;
-	}
+        if (flipped) {
+            bRec.wi.z *= -1;
+            if (bRec.component != -1)
+                bRec.component += m_nestedBRDF[0]->getComponentCount();
+            if (!result.isZero()) {
+                bRec.wo.z *= -1;
+                bRec.sampledComponent += m_nestedBRDF[0]->getComponentCount();
+            }
+        }
 
-	Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const {
-		bool flipped = false;
-		if (Frame::cosTheta(bRec.wi) < 0) {
-			bRec.wi.z *= -1;
-			flipped = true;
-			if (bRec.component != -1)
-				bRec.component -= m_nestedBRDF[0]->getComponentCount();
-		}
+        return result;
+    }
 
-		Spectrum result = m_nestedBRDF[flipped ? 1 : 0]->sample(bRec, pdf, sample);
+    Spectrum sample(BSDFSamplingRecord &bRec, Float &pdf, const Point2 &sample) const {
+        bool flipped = false;
+        if (Frame::cosTheta(bRec.wi) < 0) {
+            bRec.wi.z *= -1;
+            flipped = true;
+            if (bRec.component != -1)
+                bRec.component -= m_nestedBRDF[0]->getComponentCount();
+        }
 
-		if (flipped) {
-			bRec.wi.z *= -1;
+        Spectrum result = m_nestedBRDF[flipped ? 1 : 0]->sample(bRec, pdf, sample);
 
-			if (bRec.component != -1)
-				bRec.component += m_nestedBRDF[0]->getComponentCount();
-			if (!result.isZero() && pdf != 0) {
-				bRec.wo.z *= -1;
-				bRec.sampledComponent += m_nestedBRDF[0]->getComponentCount();
-			}
-		}
-		return result;
-	}
+        if (flipped) {
+            bRec.wi.z *= -1;
 
-	void addChild(const std::string &name, ConfigurableObject *child) {
-		if (child->getClass()->derivesFrom(BSDF::m_theClass)) {
-			if (m_nestedBRDF[0] == NULL)
-				m_nestedBRDF[0] = static_cast<BSDF *>(child);
-			else if (m_nestedBRDF[1] == NULL)
-				m_nestedBRDF[1] = static_cast<BSDF *>(child);
-			else
-				Log(EError, "No more than two nested BRDFs can be added!");
-		} else {
-			BSDF::addChild(name, child);
-		}
-	}
+            if (bRec.component != -1)
+                bRec.component += m_nestedBRDF[0]->getComponentCount();
+            if (!result.isZero() && pdf != 0) {
+                bRec.wo.z *= -1;
+                bRec.sampledComponent += m_nestedBRDF[0]->getComponentCount();
+            }
+        }
+        return result;
+    }
 
-	Spectrum getDiffuseReflectance(const Intersection &its) const {
-		if (its.wi.z > 0)
-			return m_nestedBRDF[0]->getDiffuseReflectance(its);
-		else
-			return m_nestedBRDF[1]->getDiffuseReflectance(its);
-	}
+    void addChild(const std::string &name, ConfigurableObject *child) {
+        if (child->getClass()->derivesFrom(BSDF::m_theClass)) {
+            if (m_nestedBRDF[0] == NULL)
+                m_nestedBRDF[0] = static_cast<BSDF *> (child);
+            else if (m_nestedBRDF[1] == NULL)
+                m_nestedBRDF[1] = static_cast<BSDF *> (child);
+            else
+                Log(EError, "No more than two nested BRDFs can be added!");
+        } else {
+            BSDF::addChild(name, child);
+        }
+    }
 
-	Float getRoughness(const Intersection &its, int component) const {
-		if (component < m_nestedBRDF[0]->getComponentCount()) {
-			return m_nestedBRDF[0]->getRoughness(its, component);
-		} else {
-			return m_nestedBRDF[1]->getRoughness(its, component
-			      -m_nestedBRDF[0]->getComponentCount());
-		}
-	}
+    Spectrum getDiffuseReflectance(const Intersection &its) const {
+        if (its.wi.z > 0)
+            return m_nestedBRDF[0]->getDiffuseReflectance(its);
+        else
+            return m_nestedBRDF[1]->getDiffuseReflectance(its);
+    }
 
-	Float getEta() const {
-		return 1.0f;
-	}
+    Float getRoughness(const Intersection &its, int component) const {
+        if (component < m_nestedBRDF[0]->getComponentCount()) {
+            return m_nestedBRDF[0]->getRoughness(its, component);
+        } else {
+            return m_nestedBRDF[1]->getRoughness(its, component
+                    - m_nestedBRDF[0]->getComponentCount());
+        }
+    }
 
-	std::string toString() const {
-		std::ostringstream oss;
-		oss << "TwoSided[" << endl
-			<< "  id = \"" << getID() << "\"," << endl
-			<< "  nestedBRDF[0] = " << indent(m_nestedBRDF[0].toString()) << "," << endl
-			<< "  nestedBRDF[1] = " << indent(m_nestedBRDF[1].toString()) << endl
-			<< "]";
-		return oss.str();
-	}
+    Float getEta() const {
+        return 1.0f;
+    }
 
-	Shader *createShader(Renderer *renderer) const;
+    std::string toString() const {
+        std::ostringstream oss;
+        oss << "TwoSided[" << endl
+                << "  id = \"" << getID() << "\"," << endl
+                << "  nestedBRDF[0] = " << indent(m_nestedBRDF[0].toString()) << "," << endl
+                << "  nestedBRDF[1] = " << indent(m_nestedBRDF[1].toString()) << endl
+                << "]";
+        return oss.str();
+    }
 
-	MTS_DECLARE_CLASS()
+    Shader *createShader(Renderer *renderer) const;
+
+    MTS_DECLARE_CLASS()
 protected:
-	ref<BSDF> m_nestedBRDF[2];
+    ref<BSDF> m_nestedBRDF[2];
 };
 
 
@@ -237,64 +255,65 @@ protected:
 
 class TwoSidedShader : public Shader {
 public:
-	TwoSidedShader(Renderer *renderer,
-			const ref<BSDF> *nestedBRDF) : Shader(renderer, EBSDFShader) {
-		m_nestedBRDF[0] = nestedBRDF[0].get();
-		m_nestedBRDF[1] = nestedBRDF[1].get();
 
-		m_nestedBRDFShader[0] = renderer->registerShaderForResource(m_nestedBRDF[0]);
-		if (m_nestedBRDF[0] != m_nestedBRDF[1])
-			m_nestedBRDFShader[1] = renderer->registerShaderForResource(m_nestedBRDF[1]);
-		else
-			m_nestedBRDFShader[1] = NULL;
-	}
+    TwoSidedShader(Renderer *renderer,
+            const ref<BSDF> *nestedBRDF) : Shader(renderer, EBSDFShader) {
+        m_nestedBRDF[0] = nestedBRDF[0].get();
+        m_nestedBRDF[1] = nestedBRDF[1].get();
 
-	bool isComplete() const {
-		return m_nestedBRDFShader[0].get() != NULL &&
-		       (m_nestedBRDF[0] == m_nestedBRDF[1] || m_nestedBRDFShader[1].get() != NULL);
-	}
+        m_nestedBRDFShader[0] = renderer->registerShaderForResource(m_nestedBRDF[0]);
+        if (m_nestedBRDF[0] != m_nestedBRDF[1])
+            m_nestedBRDFShader[1] = renderer->registerShaderForResource(m_nestedBRDF[1]);
+        else
+            m_nestedBRDFShader[1] = NULL;
+    }
 
-	void putDependencies(std::vector<Shader *> &deps) {
-		deps.push_back(m_nestedBRDFShader[0].get());
-		if (m_nestedBRDF[0] != m_nestedBRDF[1])
-			deps.push_back(m_nestedBRDFShader[1].get());
-	}
+    bool isComplete() const {
+        return m_nestedBRDFShader[0].get() != NULL &&
+                (m_nestedBRDF[0] == m_nestedBRDF[1] || m_nestedBRDFShader[1].get() != NULL);
+    }
 
-	void cleanup(Renderer *renderer) {
-		renderer->unregisterShaderForResource(m_nestedBRDF[0]);
-		if (m_nestedBRDF[0] != m_nestedBRDF[1])
-			renderer->unregisterShaderForResource(m_nestedBRDF[1]);
-	}
+    void putDependencies(std::vector<Shader *> &deps) {
+        deps.push_back(m_nestedBRDFShader[0].get());
+        if (m_nestedBRDF[0] != m_nestedBRDF[1])
+            deps.push_back(m_nestedBRDFShader[1].get());
+    }
 
-	void generateCode(std::ostringstream &oss,
-			const std::string &evalName,
-			const std::vector<std::string> &depNames) const {
-		oss << "vec3 " << evalName << "(vec2 uv, vec3 wi, vec3 wo) {" << endl
-			<< "    if (cosTheta(wi) <= 0.0) {" << endl
-			<< "    	wi.z *= -1; wo.z *= -1;" << endl
-			<< "        return " << (depNames.size() == 2 ? depNames[1] : depNames[0]) << "(uv, wi, wo);" << endl
-			<< "    } else {" << endl
-			<< "        return " << depNames[0] << "(uv, wi, wo);" << endl
-			<< "    }" << endl
-			<< "}" << endl
-			<< "vec3 " << evalName << "_diffuse(vec2 uv, vec3 wi, vec3 wo) {" << endl
-			<< "    if (cosTheta(wi) <= 0.0) {" << endl
-			<< "    	wi.z *= -1; wo.z *= -1;" << endl
-			<< "        return " << (depNames.size() == 2 ? depNames[1] : depNames[0]) << "_diffuse(uv, wi, wo);" << endl
-			<< "    } else {" << endl
-			<< "        return " << depNames[0] << "_diffuse(uv, wi, wo);" << endl
-			<< "    }" << endl
-			<< "}" << endl;
-	}
+    void cleanup(Renderer *renderer) {
+        renderer->unregisterShaderForResource(m_nestedBRDF[0]);
+        if (m_nestedBRDF[0] != m_nestedBRDF[1])
+            renderer->unregisterShaderForResource(m_nestedBRDF[1]);
+    }
 
-	MTS_DECLARE_CLASS()
+    void generateCode(std::ostringstream &oss,
+            const std::string &evalName,
+            const std::vector<std::string> &depNames) const {
+        oss << "vec3 " << evalName << "(vec2 uv, vec3 wi, vec3 wo) {" << endl
+                << "    if (cosTheta(wi) <= 0.0) {" << endl
+                << "    	wi.z *= -1; wo.z *= -1;" << endl
+                << "        return " << (depNames.size() == 2 ? depNames[1] : depNames[0]) << "(uv, wi, wo);" << endl
+                << "    } else {" << endl
+                << "        return " << depNames[0] << "(uv, wi, wo);" << endl
+                << "    }" << endl
+                << "}" << endl
+                << "vec3 " << evalName << "_diffuse(vec2 uv, vec3 wi, vec3 wo) {" << endl
+                << "    if (cosTheta(wi) <= 0.0) {" << endl
+                << "    	wi.z *= -1; wo.z *= -1;" << endl
+                << "        return " << (depNames.size() == 2 ? depNames[1] : depNames[0]) << "_diffuse(uv, wi, wo);" << endl
+                << "    } else {" << endl
+                << "        return " << depNames[0] << "_diffuse(uv, wi, wo);" << endl
+                << "    }" << endl
+                << "}" << endl;
+    }
+
+    MTS_DECLARE_CLASS()
 private:
-	const BSDF *m_nestedBRDF[2];
-	ref<Shader> m_nestedBRDFShader[2];
+    const BSDF *m_nestedBRDF[2];
+    ref<Shader> m_nestedBRDFShader[2];
 };
 
 Shader *TwoSidedBRDF::createShader(Renderer *renderer) const {
-	return new TwoSidedShader(renderer, m_nestedBRDF);
+    return new TwoSidedShader(renderer, m_nestedBRDF);
 }
 
 MTS_IMPLEMENT_CLASS(TwoSidedShader, false, Shader)

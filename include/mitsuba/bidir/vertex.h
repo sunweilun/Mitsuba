@@ -486,7 +486,7 @@ struct MTS_EXPORT_BIDIR PathVertex {
 	 * \return The contribution weighting factor
 	 */
 	Spectrum eval(const Scene *scene, const PathVertex *pred,
-		const PathVertex *succ, ETransportMode mode, EMeasure measure = EArea, bool ignore_light_leak = false) const;
+		const PathVertex *succ, ETransportMode mode, EMeasure measure = EArea) const;
 
 	/**
 	 * \brief Compute the density of a successor node
@@ -516,6 +516,12 @@ struct MTS_EXPORT_BIDIR PathVertex {
 	 */
 	Float evalPdf(const Scene *scene, const PathVertex *pred,
 		const PathVertex *succ, ETransportMode mode, EMeasure measure = EArea) const;
+        
+        // evaluate the probability of selecting connectable components
+        Float evalSelectionProb(const Scene *scene, const PathVertex *pred, ETransportMode mode, Float th) const;
+        
+        // randomly pick a component usually needed for the last vertex
+        void pickComponent(Sampler* sampler, const PathVertex *pred, ETransportMode mode);
 
 	/**
 	 * \brief Compute the area density of a provided emitter or sensor

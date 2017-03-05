@@ -195,7 +195,17 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
     double sum_p = 0.f, pdf = initial, oPdf = initial;
 
-
+    auto getVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return emitterSubpath.vertexOrNull(i);
+        return sensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto conn_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(1.f);
+        Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
+        Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
+        return ps * pt;
+    };
 
     /* No linear sweep */
     double p_i, p_st;
@@ -214,10 +224,10 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
         bool allowedToConnect = (connectable[p] || isNull[p]) && connectable[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
-            sum_p += std::pow(p_i * geomTermX, exponent);
+            sum_p += std::pow(p_i * geomTermX * conn_prob(p), exponent);
 
         if (tPrime == t)
-            p_st = std::pow(p_i * geomTermX, exponent);
+            p_st = std::pow(p_i * geomTermX * conn_prob(p), exponent);
     }
 
     return (Float) (p_st / sum_p);
@@ -375,6 +385,30 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
 
     double sum_p_i = 0.f, p_st = 0.f;
+    
+    auto getVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return emitterSubpath.vertexOrNull(i);
+        return sensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto getOffsetVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return offsetEmitterSubpath.vertexOrNull(i);
+        return offsetSensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto conn_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(1.f);
+        Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
+        Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
+        return ps * pt;
+    };
+    
+    auto offset_conn_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(1.f);
+        Float ps = getOffsetVertex(i)->evalSelectionProb(scene, getOffsetVertex(i-1), EImportance, th);
+        Float pt = getOffsetVertex(i+1)->evalSelectionProb(scene, getOffsetVertex(i+2), ERadiance, th);
+        return ps * pt;
+    };
 
     /* No linear sweep */
     double value, oValue;
@@ -395,9 +429,10 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         int tPrime = k - p - 1;
         bool allowedToConnect = (connectable[p] || isNull[p]) && connectable[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
-            sum_p_i += std::pow(value * geomTermX, exponent) + std::pow(oValue * jDet * geomTermY, exponent);
+            sum_p_i += std::pow(value * conn_prob(p) * geomTermX, exponent) + 
+                    std::pow(oValue * offset_conn_prob(p) * jDet * geomTermY, exponent);
         if (tPrime == t)
-            p_st = std::pow(value * geomTermX, exponent);
+            p_st = std::pow(value * conn_prob(p) * geomTermX, exponent);
     }
     return (Float) (p_st / sum_p_i);
 }

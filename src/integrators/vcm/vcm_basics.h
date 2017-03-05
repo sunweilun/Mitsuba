@@ -150,7 +150,7 @@ public:
 
     std::vector<VCMPhoton> lookupPhotons(const PathVertex* vertex, float radius) {
         std::vector<VCMPhoton> photons;
-        if (!vertex->isConnectable()) return photons;
+        if (vertex->isDegenerate()) return photons;
         const Point &position = vertex->getPosition();
         std::vector<std::pair<size_t, Float> > indices_dists;
         nanoflann::RadiusResultSet<Float> resultSet(radius*radius, indices_dists); // we square here because we used squared distance metric
@@ -274,7 +274,7 @@ protected:
             for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++) {
                 PathVertex* vertex = emitterSubpath.m_vertices[k];
                 if (!vertex->isSurfaceInteraction()) continue;
-                if (!vertex->isConnectable()) continue;
+                if (vertex->isDegenerate()) continue;
                 // add a new photon
                 VCMPhoton photon;
                 photon.pos = vertex->getPosition();

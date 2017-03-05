@@ -342,11 +342,25 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     auto num_conn_shemes = [&connectable, &nEmitterPaths, &k](int i) {
         return Float(connectable[i] ? 1 : 0);
     };
+    
+    auto getVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return emitterSubpath.vertexOrNull(i);
+        return sensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto conn_prob = [&](int i) {
+        return num_conn_shemes(i);
+    };
+    
+    auto merge_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(0.f);
+        return std::pow(accProb[i + 1], exponent);
+    };
 
-    double base_prob_exp = num_conn_shemes(s) + pow(accProb[s + 1], exponent) * nEmitterPaths;
+    double base_prob_exp = pow(conn_prob(s), exponent) + pow(merge_prob(s) * nEmitterPaths, exponent);
 
     for (int i = s + 1; i < k; ++i) {
-        double prob_exp = num_conn_shemes(i) + pow(accProb[i + 1], exponent) * nEmitterPaths;
+        double prob_exp = pow(conn_prob(i), exponent) + pow(merge_prob(i) * nEmitterPaths, exponent);
         double next = pdf * (double) pdfImp[i] / (double) pdfRad[i],
                 value = next;
 
@@ -370,7 +384,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        evaluating the inverse of the previous expressions). */
     pdf = initial;
     for (int i = s - 1; i >= 0; --i) {
-        double prob_exp = num_conn_shemes(i) + pow(accProb[i + 1], exponent) * nEmitterPaths;
+        double prob_exp = pow(conn_prob(i), exponent) + pow(merge_prob(i) * nEmitterPaths, exponent);
         double next = pdf * (double) pdfRad[i + 1] / (double) pdfImp[i + 1],
                 value = next;
 
@@ -390,10 +404,11 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     }
 
     Float total_weight = 1.0 / weight;
-    Float w_merge = accProb[s + 1] > 0.f ? pow(accProb[s + 1], exponent) / base_prob_exp : 0.f;
+    Float w_merge = pow(merge_prob(s), exponent) / base_prob_exp;
+    Float w_conn = pow(conn_prob(s), exponent) / base_prob_exp;
 
     if (merge) return total_weight * w_merge;
-    return total_weight * num_conn_shemes(s) / base_prob_exp;
+    return total_weight * w_conn;
 }
 
 Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
@@ -462,6 +477,24 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
         return Float(0);
     };
+    
+    auto getVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return emitterSubpath.vertexOrNull(i);
+        return sensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto conn_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(1.f);
+        Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
+        Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
+        return ps * pt * num_conn_shemes(i);
+    };
+    
+    auto merge_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(0.f);
+        Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
+        return pt * std::pow(accProb[i + 1], exponent);
+    };
 
     /* No linear sweep */
     double p_i, p_st = 0.0;
@@ -477,8 +510,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
 
         int tPrime = k - p - 1;
-        Float p_conn_merge = num_conn_shemes(p) +
-                std::pow(accProb[p + 1], exponent) * nEmitterPaths; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
+        Float p_conn_merge = std::pow(conn_prob(p), exponent) + pow(nEmitterPaths * merge_prob(p), exponent); // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
         bool allowedToConnect = connectable[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
@@ -488,13 +520,15 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             p_st = std::pow(p_i * geomTermX, exponent) * p_conn_merge;
         }
     }
-    double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = num_conn_shemes(s) + nEmitterPaths * mergeWeight + D_EPSILON;
+    Float mergeWeight = std::pow(merge_prob(s), exponent);
+    Float connWeight = std::pow(conn_prob(s), exponent);
+    Float totalWeight = std::pow(conn_prob(s), exponent) + 
+                std::pow(merge_prob(s) * nEmitterPaths, exponent) + D_EPSILON;
 
     if (sum_p == 0.0) return 0.0;
 
-    if (merge) return (Float) mergeWeight > 0.f ? (mergeWeight * p_st / sum_p / totalWeight) : 0.f;
-    return (Float) (p_st / sum_p) / totalWeight * num_conn_shemes(s);
+    if (merge) return (Float) (p_st / sum_p * mergeWeight / totalWeight);
+    return (Float) (p_st / sum_p * connWeight / totalWeight);
 }
 
 Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
@@ -558,6 +592,42 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         }
         return Float(0);
     };
+    
+    auto getVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return emitterSubpath.vertexOrNull(i);
+        return sensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto conn_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(1.f);
+        Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
+        Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
+        return ps * pt * num_conn_shemes(i);
+    };
+    
+    auto merge_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(0.f);
+        Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
+        return pt * std::pow(accProb[i + 1], exponent);
+    };
+    
+    auto getOffsetVertex = [&](int i) -> const PathVertex* {
+        if (i <= s) return offsetEmitterSubpath.vertexOrNull(i);
+        return offsetSensorSubpath.vertexOrNull(k - i);
+    };
+    
+    auto offset_conn_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(1.f);
+        Float ps = getOffsetVertex(i)->evalSelectionProb(scene, getOffsetVertex(i-1), EImportance, th);
+        Float pt = getOffsetVertex(i+1)->evalSelectionProb(scene, getOffsetVertex(i+2), ERadiance, th);
+        return ps * pt * num_conn_shemes(i);
+    };
+    
+    auto offset_merge_prob = [&](int i) {
+        if(i == 0 || i == k) return Float(0.f);
+        Float pt = getOffsetVertex(i+1)->evalSelectionProb(scene, getOffsetVertex(i+2), ERadiance, th);
+        return pt * std::pow(oAccProb[i + 1], exponent);
+    };
 
     /* No linear sweep */
     double value, oValue;
@@ -575,11 +645,11 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             oValue *= offsetPdfRad[i];
         }
 
-        Float p_conn_merge = num_conn_shemes(p) +
-                std::pow(accProb[p + 1], exponent) * nEmitterPaths; // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
+        Float p_conn_merge = std::pow(conn_prob(p), exponent) + 
+                std::pow(merge_prob(p) * nEmitterPaths, exponent); // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
-        Float op_conn_merge = num_conn_shemes(p) +
-                std::pow(oAccProb[p + 1], exponent) * nEmitterPaths;
+        Float op_conn_merge = std::pow(offset_conn_prob(p), exponent) + 
+                std::pow(offset_merge_prob(p) * nEmitterPaths, exponent);
 
         int tPrime = k - p - 1;
         bool allowedToConnect = connectable[p + 1];
@@ -590,14 +660,16 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
             p_st = std::pow(value * geomTermX, exponent) * p_conn_merge;
     }
 
-    double mergeWeight = std::pow(accProb[s + 1], exponent);
-    double totalWeight = num_conn_shemes(s) + nEmitterPaths * mergeWeight + D_EPSILON;
+    Float mergeWeight = std::pow(merge_prob(s), exponent);
+    Float connWeight = std::pow(conn_prob(s), exponent);
+    Float totalWeight = std::pow(conn_prob(s), exponent) + 
+                std::pow(merge_prob(s) * nEmitterPaths, exponent) + D_EPSILON;
 
     if (sum_p == 0.0) return 0.0;
 
     if (merge)
-        return (Float) (mergeWeight > 0.f ? (mergeWeight * p_st / sum_p / totalWeight) : 0.f);
-    return (Float) (p_st * num_conn_shemes(s) / sum_p / totalWeight);
+        return (Float) (p_st / sum_p * mergeWeight / totalWeight);
+    return (Float) (p_st / sum_p * connWeight / totalWeight);
 }
 
 MTS_NAMESPACE_END

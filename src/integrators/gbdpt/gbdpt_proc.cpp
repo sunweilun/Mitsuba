@@ -171,7 +171,13 @@ public:
                 Path::alternatingRandomWalkFromPixel(m_scene, m_sampler,
                         emitterSubpath[0], emitterDepth, sensorSubpath[0],
                         sensorDepth, offset, m_config.rrDepth, m_pool);
-
+                
+                // G-BDPT bug: below is needed for properly handling multilayered materials
+                int ns = emitterSubpath[0].vertexCount();
+                int nt = sensorSubpath[0].vertexCount();
+                if(ns > 2) emitterSubpath[0].vertex(ns-1)->pickComponent(m_sampler, emitterSubpath[0].vertex(ns-2), EImportance);
+                if(nt > 2) sensorSubpath[0].vertex(nt-1)->pickComponent(m_sampler, sensorSubpath[0].vertex(nt-2), ERadiance);
+                
                 
                 samplePos = sensorSubpath[0].vertex(1)->getSamplePosition();
 
@@ -185,11 +191,11 @@ public:
                 }
                 Path connectPath;
                 int ptx;
-                
+
 
                 /* create shift-able path  */
                 bool couldConnect = createShiftablePath(connectPath, emitterSubpath[0], sensorSubpath[0], 1, sensorSubpath[0].vertexCount() - 1, ptx);
-                
+
                 /*  geometry term(s) of base  */
                 m_offsetGenerator->computeMuRec(connectPath, pathData[0].muRec);
                 int idx = 0;
@@ -213,7 +219,6 @@ public:
                         int idx = 0;
                         int a, b, c;
                         for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--) {
-                            if(sensorSubpath[k + 1].vertex(v)->type == PathVertex::EInvalid) break; // added: to be robust under partial offset sensor sub path
                             int idx = connectPath.vertexCount() - 1 - v;
                             if (Path::isConnectable_GBDPT(connectPath.vertex(v), m_config.m_shiftThreshold) && v >= pathData[k + 1].muRec.extra[2]) {
                                 a = pathData[k + 1].muRec.extra[0];
@@ -315,7 +320,7 @@ public:
 
         Spectrum visibility = Spectrum(0.f);
         Spectrum light = Spectrum(0.f);
-        
+
 #ifdef SEPARATE_DIRECT
         Spectrum direct(0.f);
 #endif
@@ -335,10 +340,9 @@ public:
 
             for (int t = minT; t <= maxT; ++t) {
 #ifdef SEPARATE_DIRECT
-                if (t >= 3 && !Path::isDegenerate_GBDPT(sensorSubpath[0].vertex(t-1), m_config.m_shiftThreshold))
+                if (t >= 3 && !Path::isConnectable_GBDPT(sensorSubpath[0].vertex(t - 1), m_config.m_shiftThreshold))
                     isDirect = false;
 #endif
-
                 samplePosValid = true;
 
                 /* neighbour count and sample position for non-light paths */
@@ -346,12 +350,16 @@ public:
 
                 /* if light path can be computed: recalculate pixel position and neighbours*/
                 if (t == 1) {
-                    if (sensorSubpath[0].vertex(t)->isSensorSample()&& !sensorSubpath[0].vertex(t)->getSamplePosition(emitterSubpath.vertex(s), samplePos)
+                    if (sensorSubpath[0].vertex(t)->isSensorSample() && 
+                            !sensorSubpath[0].vertex(t)->getSamplePosition(emitterSubpath.vertex(s), samplePos)
                             || !Path::isConnectable_GBDPT(emitterSubpath.vertex(s), m_config.m_shiftThreshold))
                         continue;
+                    
                 }
-
+                
                 int memPointer;
+                
+                Float connProb = 1.f;
 
                 for (int k = 0; k <= neighbourCount; k++) {
 
@@ -359,8 +367,6 @@ public:
                     pathSuccess[k] = pathData[k].success;
                     value[k] = Spectrum(0.f);
                     valuePdf[k] = 0.f;
-
-                    
                     
                     /* for radiance make sure that offset light paths have the correct value */
                     const Spectrum *importanceWeightTmp = &importanceWeights[s],
@@ -372,16 +378,17 @@ public:
                     const Path *sensorSubpathTmp = &sensorSubpath[k],
                             *emitterSubpathTmp = &emitterSubpath;
 
-                    
-                    
+
+
                     MutationRecord muRec;
 
-
+                    
                     /* create the base path on which the shift is applied. changes for every light tracing path */
                     if (t == 1 && k == 0) {
                         pathSuccess[0] = createShiftablePath(connectedBasePath, emitterSubpath, sensorSubpath[0], s, 1, memPointer);
                         m_offsetGenerator->computeMuRec(connectedBasePath, muRec);
                         genGeomTermLP[0] = connectedBasePath.calcSpecularPDFChange(muRec.extra[2], m_offsetGenerator, true);
+                        
                     }
 
                     /* if we have a light tracing path we need to modify the emitter-sub path */
@@ -402,12 +409,10 @@ public:
 
                     Spectrum geomTerm = Spectrum(0.0);
 
-
+                    
                     do { //this should really go away at some point...
                         if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero()))) {
 
-                            if(sensorSubpathTmp->vertex(t)->getType() == PathVertex::EInvalid) continue;  // added: to be robust under partial offset sensor sub path
-                            
                             if (!pathData[k].couldConnectAfterB && t > vert_b)
                                 break;
 
@@ -430,11 +435,16 @@ public:
                                     valuePdf[k] = *radiancePdfTmp;
                                     break;
                                 }
+                                if (k == 0) {
+                                    Float ps = vs->evalSelectionProb(scene, vsPred, EImportance, m_config.m_shiftThreshold);
+                                    Float pt = vt->evalSelectionProb(scene, vtPred, ERadiance, m_config.m_shiftThreshold);
+                                    connProb = ps * pt;
+                                }
 
                                 Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                                 if (k == 0) connectionPartsBase = connectionParts;
 
-                                value[k] = *radianceWeightTmp * connectionParts;
+                                value[k] = *radianceWeightTmp * connectionParts / connProb;
                                 valuePdf[k] = *radiancePdfTmp;
                             }/* Accounts for direct hits of light-subpaths to sensor, i.e t==0. If this happens do not compute gradients but fall back to the T0 mapping */
                             else if (vt->isSensorSupernode()) {
@@ -448,19 +458,35 @@ public:
                                     valuePdf[k] = *importancePdfTmp;
                                     break;
                                 }
-                                value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
+                                if (k == 0) {
+                                    Float ps = vs->evalSelectionProb(scene, vsPred, EImportance, m_config.m_shiftThreshold);
+                                    Float pt = vt->evalSelectionProb(scene, vtPred, ERadiance, m_config.m_shiftThreshold);
+                                    connProb = ps * pt;
+                                }
+                                
+                                value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) * 
+                                        vt->eval(scene, vtPred, vs, ERadiance) / connProb;
                                 valuePdf[k] = *importancePdfTmp;
                             } else {
-                                if (Path::isDegenerate_GBDPT(vs, m_config.m_shiftThreshold) || 
-                                    Path::isDegenerate_GBDPT(vt, m_config.m_shiftThreshold)
+                                if (!Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold) ||
+                                        !Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
                                         || vs->getType() == 0 || vt->getType() == 0) {
                                     valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                                     break;
                                 }
+                                // G-BDPT bug:
+                                // Note that this is actually a probabilistic connection, 
+                                // we have to consider the Russian Roulette probability of choosing connectable components.
+                                if (k == 0) {
+                                    Float ps = vs->evalSelectionProb(scene, vsPred, EImportance, m_config.m_shiftThreshold);
+                                    Float pt = vt->evalSelectionProb(scene, vtPred, ERadiance, m_config.m_shiftThreshold);
+                                    connProb = ps * pt;
+                                }
                                 
-                                Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
+                                Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : 
+                                    vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                                 if (k == 0) connectionPartsBase = connectionParts;
-                                value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
+                                value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / connProb;
                                 valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                                 vs->measure = vt->measure = EArea;
                             }
@@ -484,8 +510,6 @@ public:
                             value[k] *= geomTerm;
                             valuePdf[k] *= (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]);
 
-                            
-                            
                             if (value[k].isZero() || valuePdf[k] == 0) //early exit
                                 break;
 
@@ -552,7 +576,7 @@ public:
                 for (int n = 0; n < neighbourCount; n++) {
                     Spectrum fy = value[n + 1] * valuePdf[n + 1] * (t < 2 ? jacobianLP[n] : pathData[n + 1].jacobianDet[t]);
                     Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
-                    
+
                     if (t >= 2)
                         gradient[n] += gradVal;
                     else
@@ -560,11 +584,11 @@ public:
                 }
             }
         }
-        
+
 #ifdef SEPARATE_DIRECT
         wr->putSample(samplePos, direct, 5);
 #endif
-        
+
         /* store accumulated primal and gradient samples with t>=2 */
         wr->putSample(initialSamplePos, primal, 0);
         for (int k = 0; k < neighbourCount; ++k)
@@ -640,7 +664,7 @@ private:
         connectedPath.clear();
 
         //make sure we connect across connect able vertices only!
-        while (Path::isDegenerate_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold)) {
+        while (!Path::isConnectable_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold)) {
             t--;
             //the tail of the path can then be removed
             sensorSubpath.removeAndReleaseLastElement(m_pool);

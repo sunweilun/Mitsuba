@@ -826,31 +826,6 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
     int v_start;
     bool walkSuccess;
 
-    if (b == 1) { // special case where everything is unconnectable but not degenerated
-        proposal.clear();
-        source.clone(proposal, m_pool);
-        /* Sample the first vertex */
-
-        if (!perturbDirection(source, proposal, step, a, offset, mode, false/*lightPath*/)) {
-            proposal.release(m_pool); //fails when it misses the scene
-            return false;
-        }
-
-        /* Generate subsequent vertices between a .. b deterministically */
-        for(int i=a+1; i<b; i++)
-            proposal.vertex(i)->type = PathVertex::EInvalid; // initialize them as invalid to be handled later
-        propagatePerturbation(source, proposal, step, a, b+1, mode);
-        l = 0;
-        m = a+1;
-        muRec = MutationRecord(EManifoldPerturbation, l, m, m - l, source.getPrefixSuffixWeight(l, m));
-        muRec.extra[0] = a;
-        muRec.extra[1] = b;
-        muRec.extra[2] = c;
-        muRec.extra[3] = step;
-        muRec.extra[4] = mode;
-        return true;
-    }
-
     //here always l=c ,m=a, q=b-1
     l = std::min(a, c);
     m = std::max(a, c);
@@ -1010,6 +985,22 @@ bool ManifoldPerturbation::perturbDirection(Path &source, Path &proposal, int st
             succEdge_old->length, succ_old->getType(), mode)) {
         return false;
     }
+
+    // To properly support multilayered materials, these below are needed.
+    if(succ->isEmitterSample() || succ_old->isEmitterSample()) {
+        ++statsPROPFailedBRDF;
+        return false;
+    }
+    
+    const Intersection
+            &its_old = succ_old->getIntersection(),
+            &its_new = succ->getIntersection();
+    /// todo: this is perhaps a bit drastic
+    if (its_old.getBSDF() != its_new.getBSDF()) {
+        ++statsPROPFailedBRDF;
+        return false;
+    }
+
     return true;
 }
 
@@ -1017,12 +1008,10 @@ bool ManifoldPerturbation::propagatePerturbation(Path &source, Path &proposal, i
     statsUsedPropagation.incrementBase();
     if (a - b > 1)
         ++statsUsedPropagation;
-
     statsPROPFailedBRDF.incrementBase();
     statsPROPFailedPropagatePerturbation.incrementBase();
     statsPROPwoWorldZero.incrementBase();
     statsPROPFailedPerturbDirection.incrementBase();
-
     for (int i = a + step; i != b; i += step) {
         const PathVertex
                 *pred_old = source.vertex(i - step),

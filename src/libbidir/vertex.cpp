@@ -794,7 +794,7 @@ bool PathVertex::propagatePerturbation(const Scene *scene, const PathVertex *pre
 }
 
 Spectrum PathVertex::eval(const Scene *scene, const PathVertex *pred,
-        const PathVertex *succ, ETransportMode mode, EMeasure measure, bool ignore_light_leak) const {
+        const PathVertex *succ, ETransportMode mode, EMeasure measure) const {
     Spectrum result(0.0f);
     Vector wo(0.0f);
 
@@ -888,10 +888,6 @@ Spectrum PathVertex::eval(const Scene *scene, const PathVertex *pred,
             Float wiDotGeoN = dot(its.geoFrame.n, wi),
                     woDotGeoN = dot(its.geoFrame.n, wo);
 
-            if (ignore_light_leak) {
-                wiDotGeoN = Frame::cosTheta(bRec.wi);
-                woDotGeoN = Frame::cosTheta(bRec.wo);
-            }
 
             if (wiDotGeoN * Frame::cosTheta(bRec.wi) <= 0 ||
                     woDotGeoN * Frame::cosTheta(bRec.wo) <= 0)
@@ -1055,6 +1051,84 @@ Float PathVertex::evalPdf(const Scene *scene, const PathVertex *pred,
     }
 
     return result;
+}
+
+Float PathVertex::evalSelectionProb(const Scene *scene, const PathVertex *pred, ETransportMode mode, Float th) const {
+    Vector wo(0.0f);
+    Float result = 0.0f;
+
+    switch (type) {
+        case EEmitterSupernode:
+        case ESensorSupernode:
+        case EEmitterSample:
+        case ESensorSample:
+            return 1.f;
+
+        case ESurfaceInteraction:
+        {
+            const Intersection &its = getIntersection();
+            const BSDF *bsdf = its.getBSDF();
+
+            Point predP = pred->getPosition();
+            Vector wi = normalize(predP - its.p);
+
+            BSDFSamplingRecord bRec(its, its.toLocal(wi), its.toLocal(wo), mode);
+            int nc = bsdf->getComponentCount();
+            if(nc == 0) return 1.f;
+            for (int c = 0; c < nc; c++) {
+                if (bsdf->getRoughness(its, c) < th)
+                    continue;
+                bRec.component = c;
+                result += bsdf->selectionProb(bRec);
+            }
+        }
+            break;
+
+        case EMediumInteraction:
+            return 1.f;
+
+        default:
+            SLog(EError, "PathVertex::evalPdf(): Encountered an "
+                    "unsupported vertex type (%i)!", type);
+            return 0.0f;
+    }
+
+    return result;
+}
+
+void PathVertex::pickComponent(Sampler* sampler, const PathVertex *pred, ETransportMode mode) {
+    Vector wo(0.0f);
+    
+    if(this->pdf[mode] > 0.f) return; // not needed if a bsdf sample was generated
+    
+    switch (type) {
+        case EEmitterSupernode:
+        case ESensorSupernode:
+        case EEmitterSample:
+        case ESensorSample:
+            return;
+
+        case ESurfaceInteraction:
+        {
+            const Intersection &its = getIntersection();
+            const BSDF *bsdf = its.getBSDF();
+
+            Point predP = pred->getPosition();
+            Vector wi = normalize(predP - its.p);
+
+            BSDFSamplingRecord bRec(its, its.toLocal(wi), its.toLocal(wo), mode);
+            bsdf->sample(bRec, sampler->next2D());
+            sampledComponentIndex = bRec.sampledComponent;
+        }
+            break;
+
+        case EMediumInteraction:
+            return;
+
+        default:
+            SLog(EError, "PathVertex::evalPdf(): Encountered an "
+                    "unsupported vertex type (%i)!", type);
+    }
 }
 
 Spectrum PathVertex::sampleDirect(const Scene *scene, Sampler *sampler,

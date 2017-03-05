@@ -1152,8 +1152,8 @@ Float SpecularManifold::G(const Path &path, int a, int b) {
 			path.vertex(b), PathEdge::EGeometricTerm)[0];
 	}
 
-	Assert(path.vertex(a)->isConnectable());
-	Assert(path.vertex(b)->isConnectable());
+	//Assert(path.vertex(a)->isConnectable());
+	//Assert(path.vertex(b)->isConnectable());
 	int step = b > a ? 1 : -1;
 
 	bool success = init(path, a, b);

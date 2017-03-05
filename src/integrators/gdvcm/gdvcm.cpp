@@ -84,7 +84,7 @@ public:
         m_config.maxDepth = props.getInteger("maxDepth", -1);
         m_config.rrDepth = props.getInteger("rrDepth", 5);
         m_config.initialRadius = props.getFloat("initialRadius", 0.f);
-        m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.666f);
+        m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.9f);
         m_config.lightImage = props.getBoolean("lightImage", true);
         m_config.phExponent = props.getFloat("phExponent", 1.0);
         m_config.m_shiftThreshold = props.getFloat("shiftThreshold", Float(0.001));
