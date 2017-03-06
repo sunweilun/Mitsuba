@@ -1201,6 +1201,7 @@ bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int 
     n = n - dot(rel, n) * rel;
     len = n.length();
     if (len == 0) {
+        if(updateAll) return true;
         ++statsMWZeroLength;
         return false;
     }

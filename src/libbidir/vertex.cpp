@@ -1117,6 +1117,7 @@ void PathVertex::pickComponent(Sampler* sampler, const PathVertex *pred, ETransp
             Vector wi = normalize(predP - its.p);
 
             BSDFSamplingRecord bRec(its, its.toLocal(wi), its.toLocal(wo), mode);
+            bRec.sampler = sampler;
             bsdf->sample(bRec, sampler->next2D());
             sampledComponentIndex = bRec.sampledComponent;
         }

@@ -394,7 +394,7 @@ public:
                 }
 
                 int memPointer;
-                
+
                 Float connProb = 1.f;
 
                 for (int k = 0; k <= neighbourCount; k++) {
@@ -496,8 +496,8 @@ public:
                                     Float pt = vt->evalSelectionProb(scene, vtPred, ERadiance, m_config.m_shiftThreshold);
                                     connProb = ps * pt;
                                 }
-                                
-                                value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) * 
+
+                                value[k] = *importanceWeightTmp * vs->eval(scene, vsPred, vt, EImportance) *
                                         vt->eval(scene, vtPred, vs, ERadiance) / connProb;
                                 valuePdf[k] = *importancePdfTmp;
                             } else {
@@ -510,15 +510,15 @@ public:
                                 // G-BDPT bug:
                                 // Note that this is actually a probabilistic connection, 
                                 // we have to consider the Russian Roulette probability of choosing connectable components.
-                                
+
                                 if (k == 0) {
                                     Float ps = vs->evalSelectionProb(scene, vsPred, EImportance, m_config.m_shiftThreshold);
                                     Float pt = vt->evalSelectionProb(scene, vtPred, ERadiance, m_config.m_shiftThreshold);
                                     connProb = ps * pt;
                                 }
-                                
-                                Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : 
-                                    vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
+
+                                Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase :
+                                        vs->eval(scene, vsPred, vt, EImportance) * vt->eval(scene, vtPred, vs, ERadiance);
                                 if (k == 0) connectionPartsBase = connectionParts;
                                 value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts / connProb;
                                 vs->evalSelectionProb(scene, vsPred, EImportance, m_config.m_shiftThreshold);
@@ -683,9 +683,9 @@ public:
 
         bool prev_conn = Path::isConnectable_GBDPT(vs, m_config.m_shiftThreshold);
         int prev_diff = m_offsetGenerator->getSpecularChainEndGBDPT(emitterSubpath, s, -1);
-        
+
         if (Path::isDegenerate_GBDPT(vt_photon, m_config.m_shiftThreshold)) return;
-       
+
         Path emitterOffsetSubpath;
 #if defined(RECONNECT)
         Path emitterBaseSubpath;
@@ -693,9 +693,9 @@ public:
 #else
         Path& emitterBaseSubpath = emitterSubpath;
 #endif
-        EMeasure originalPhotonMeasure = emitterBaseSubpath.vertex(s+1)->measure;
-        emitterBaseSubpath.vertex(s+1)->measure = EArea; // force photon measure to area to apply ME.
-                
+        EMeasure originalPhotonMeasure = emitterBaseSubpath.vertex(s + 1)->measure;
+        emitterBaseSubpath.vertex(s + 1)->measure = EArea; // force photon measure to area to apply ME.
+
         bool baseConnectionSuccess = true;
 #if defined(RECONNECT)
         if (!prev_conn) {
@@ -705,20 +705,20 @@ public:
             baseConnectionSuccess = m_offsetGenerator->manifoldWalk(emitterSubpath, emitterBaseSubpath, -1, s + 1, prev_diff, true, true);
         }
 #endif
-        
+
         PathVertex* vsPred_conn = emitterBaseSubpath.vertexOrNull(prev_diff - 1);
         PathVertex* vs_conn = emitterBaseSubpath.vertexOrNull(prev_diff);
         PathVertex* vt_conn = emitterBaseSubpath.vertex(prev_diff + 1);
 
         Float vs_pdfOrig = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
-        vs_pdfOrig /= vs_conn->getShadingNormal().isZero() ? 1.0 :
-                absDot(vs_conn->getShadingNormal(), emitterBaseSubpath.edge(prev_diff)->d);
+        vs_pdfOrig /= vs_conn->getGeometricNormal().isZero() ? 1.0 :
+                absDot(vs_conn->getGeometricNormal(), emitterBaseSubpath.edge(prev_diff)->d);
         for (int i = prev_diff + 1; i <= s; i++) {
             PathVertex* specVert = emitterBaseSubpath.vertex(i);
             vs_pdfOrig *= specVert->pdf[EImportance];
         }
         Spectrum geomTermOrig = Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterBaseSubpath, prev_diff, s + 1));
-        Spectrum p_acc(Float(1.f));
+        Float p_acc(1.f);
         Float merge_prob = 1.f;
 
         for (int k = 0; k <= neighbourCount; k++) {
@@ -773,7 +773,7 @@ public:
 
                     if (k > 0 && (t <= vert_b) && !prev_conn) {
                         // make emitterOffsetSubpath's vertex at s+1 vt.
-                        emitterOffsetSubpath.replaceVertex(s+1, vt);
+                        emitterOffsetSubpath.replaceVertex(s + 1, vt);
 #if defined(MOVE_IN_RANGE)
                         successConnect = m_offsetGenerator->manifoldWalk(emitterBaseSubpath, emitterOffsetSubpath,
                                 -1, s + 1, prev_diff, true, radius[0], radius[k]);
@@ -782,21 +782,22 @@ public:
 #endif
                     }
 
-
-
+                    vsPred_conn = emitterOffsetSubpath.vertexOrNull(prev_diff - 1);
+                    vs_conn = emitterOffsetSubpath.vertexOrNull(prev_diff);
+                    vt_conn = prev_conn ? (k == 0 ? emitterBaseSubpath.vertex(s+1) : vt)
+                            : emitterOffsetSubpath.vertex(prev_diff + 1);
+                    
                     int interactions = remaining; // backup
                     successConnect = successConnect && ((k > 0 && t > vert_b) ? successConnectBase :
-                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions));
+                            (prev_conn ? 
+                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs_conn, vt_conn, vtEdge, interactions, k==0) :
+                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt_conn, vtEdge, interactions, true)));
 
                     if (!successConnect) { //early exit
                         value[k] = Spectrum(0.f);
                         break;
                     }
-
-
-                    vsPred_conn = emitterOffsetSubpath.vertexOrNull(prev_diff - 1);
-                    vs_conn = emitterOffsetSubpath.vertexOrNull(prev_diff);
-                    vt_conn = prev_conn ? vt : emitterOffsetSubpath.vertex(prev_diff + 1);
+                    
                     Spectrum vsEval = vs_conn->eval(scene, vsPred_conn, vt_conn, EImportance);
                     Spectrum vtEval = vt->eval(scene, vtPred, vs, ERadiance, EArea);
                     Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase :
@@ -805,20 +806,27 @@ public:
                     vt->measure = EArea; // Only force vt to be connectable because for vs, we use whichever component that was chosen.
 
                     geomTerm = (k > 0 && t > vert_b) ? geomTermBase :
-                            (prev_conn ? connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm) :
+                            (prev_conn ? connectionEdge.evalCached(vs_conn, vt_conn, PathEdge::EGeneralizedGeometricTerm) :
                             Spectrum(m_offsetGenerator->getSpecularManifold()->G(emitterOffsetSubpath, prev_diff, s + 1)));
 
                     if (k == 0) {
-                        p_acc = vs_pdfOrig * geomTerm * M_PI * baseRadius * baseRadius + Spectrum(D_EPSILON);
                         merge_prob = vt->evalSelectionProb(scene, vtPred, ERadiance, m_config.m_shiftThreshold);
                     }
 
                     if (prev_conn) {
+                        if (k == 0) {
+                            p_acc = vs_conn->pdf[EImportance] * M_PI * baseRadius * baseRadius + D_EPSILON;
+                        } else {
+                            // update pdf of vs which will be used in MIS weight computation.
+                            // This is not needed in specular case because these have been updated in manifoldWalk.
+                            vs_conn->pdf[EImportance] = vs_conn->evalPdf(scene, vsPred_conn, vt, EImportance);
+                            vs_conn->pdf[ERadiance] = vs_conn->evalPdf(scene, vt, vsPred_conn, ERadiance);
+                        }
                         // prefix-suffix weights + connection bsdfs
                         value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
-                        valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         // geometry term contribution and acceptance probability
                         value[k] *= geomTerm / p_acc / merge_prob;
+                        valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                     } else {
                         Spectrum vsWeight = vs_conn->weight[EImportance];
                         // prefix-suffix weights + connection bsdfs
@@ -827,8 +835,8 @@ public:
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
 
                         Float vs_pdf = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
-                        vs_pdf /= vs_conn->getShadingNormal().isZero() ? 1.0 :
-                                absDot(vs_conn->getShadingNormal(), emitterOffsetSubpath.edge(prev_diff)->d);
+                        vs_pdf /= vs_conn->getGeometricNormal().isZero() ? 1.0 :
+                                absDot(vs_conn->getGeometricNormal(), emitterOffsetSubpath.edge(prev_diff)->d);
 
                         for (int i = prev_diff + 1; i <= s; i++) {
                             PathVertex* specVert = emitterOffsetSubpath.vertex(i);
@@ -837,7 +845,6 @@ public:
                         }
 
                         Spectrum geomRatio = geomTerm / (geomTermOrig + Spectrum(D_EPSILON));
-
 
                         Float pdfRatio = vs_pdf / (vs_pdfOrig + D_EPSILON);
                         value[k] *= geomRatio * pdfRatio;
@@ -917,8 +924,8 @@ public:
         /* compute and store gradients */
         Spectrum fx = value[0] * valuePdf[0];
         for (int n = 0; n < neighbourCount; n++) {
-
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * pathData[n + 1].jacobianDet[t];
+
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
             gradient[n] += gradVal;
         }
