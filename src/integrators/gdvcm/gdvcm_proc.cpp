@@ -791,7 +791,7 @@ public:
                     successConnect = successConnect && ((k > 0 && t > vert_b) ? successConnectBase :
                             (prev_conn ? 
                             connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs_conn, vt_conn, vtEdge, interactions, k==0) :
-                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt_conn, vtEdge, interactions, true)));
+                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions, true)));
 
                     if (!successConnect) { //early exit
                         value[k] = Spectrum(0.f);
