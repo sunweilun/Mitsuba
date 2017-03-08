@@ -357,7 +357,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         return std::pow(accProb[i + 1], exponent);
     };
 
-    double base_prob_exp = pow(conn_prob(s), exponent) + pow(merge_prob(s) * nEmitterPaths, exponent);
+    double base_prob_exp = pow(conn_prob(s), exponent) + pow(merge_prob(s) * nEmitterPaths, exponent) + D_EPSILON;
 
     for (int i = s + 1; i < k; ++i) {
         double prob_exp = pow(conn_prob(i), exponent) + pow(merge_prob(i) * nEmitterPaths, exponent);
