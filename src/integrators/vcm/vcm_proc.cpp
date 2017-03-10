@@ -128,7 +128,7 @@ public:
 
             Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             Spectrum color(Float(0.f));
-            color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+            if(!m_config.mergeOnly) color += evaluateConnection(result, emitterSubpath, sensorSubpath);
             color += evaluateMerging(result, sensorSubpath);
             result->putSample(initialSamplePos, color, 1.f);
             m_sampler->advance();
@@ -305,7 +305,7 @@ public:
 
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, m_config.phExponent,
-                        m_process->m_mergeRadius, nEmitterPaths, false);
+                        m_process->m_mergeRadius, nEmitterPaths, false, m_config.mergeOnly);
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -338,6 +338,7 @@ public:
     }
 
     Spectrum evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath, bool reconnect = false) {
+        
 
         Path emitterSubpath;
         Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
@@ -400,8 +401,6 @@ public:
                 Vector centerN = vt->getGeometricNormal();
                 Float N_ = absDot(photonN, d);
                 if ((dot(photonN, centerN) < 1e-1f) || (N_ < 1e-2f)) continue;
-
-
 
                 Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
                 p_acc = std::min(Float(1.f), p_acc); // acceptance probability
@@ -472,12 +471,9 @@ public:
 
                 /* Compute the multiple importance sampling weight */
 
-
-
-
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
-                        m_process->m_mergeRadius, nEmitterPaths, true);
+                        m_process->m_mergeRadius, nEmitterPaths, true, m_config.mergeOnly);
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -502,7 +498,6 @@ public:
 #endif
                 sampleValue += value * Spectrum(miWeight) / p_acc;
             }
-            //break; // for debug
         }
         return sampleValue;
     }

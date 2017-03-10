@@ -30,6 +30,8 @@ MTS_NAMESPACE_BEGIN
 //#define RECONNECT // whether reconnect to the base or not: not is usually preferred
 //#define MOVE_IN_RANGE
 
+//#define NO_GRAD // for debug
+
 /* ==================================================================== */
 /*                         Shift Path Data		                        */
 
@@ -187,6 +189,8 @@ public:
 
             Path connectPath;
             int ptx;
+
+#if !defined(NO_GRAD)
             /* create shift-able path  */
             createShiftablePath(connectPath, emitterSubpath[0], sensorSubpath[0], 1, sensorSubpath[0].vertexCount() - 1, ptx);
 
@@ -233,6 +237,9 @@ public:
 
             /*save index of vertex b for evaluation (indexing is reversed)*/
             int v_b = connectPath.vertexCount() - 1 - pathData[0].muRec.extra[1];
+#else
+            int v_b = 0;
+#endif
 
             // connection part
             /* evaluate base and offset paths */
@@ -249,25 +256,20 @@ public:
             const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
             size_t nEmitterPaths = image_size.x * image_size.y;
 
-            Float radius[5];
-            for (int i = 0; i < 5; i++) {
-                radius[i] = Path::estimateSensorMergingRadius(m_scene,
-                        emitterSubpath[0], sensorSubpath[i], 0, 2, nEmitterPaths,
-                        m_process->m_mergeRadius);
-            }
+            Float radius;
+            radius = Path::estimateSensorMergingRadius(m_scene,
+                    emitterSubpath[0], sensorSubpath[0], 0, 2, nEmitterPaths,
+                    m_process->m_mergeRadius);
 
             for (int t = minT; t <= maxT; ++t) {
-
-                for (int i = 0; i < 5; i++) {
-                    if (t > 2)
-                        Path::adjustRadius(sensorSubpath[i].vertexOrNull(t - 1), radius[i]);
-                }
-                if (radius[0] == 0.0) break;
+                if (t > 2)
+                    Path::adjustRadius(sensorSubpath[0].vertexOrNull(t - 1), radius);
+                if (radius == 0.0) break;
 
 
                 PathVertex *vt = sp.vertex(t); // the vertex we are looking at
                 // look up photons
-                std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius[0]);
+                std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
                 for (const VCMPhoton& photon : photons) { // inspect every photon in range
                     pathData[0].success = true;
                     pathData[0].couldConnectAfterB = true;
@@ -280,15 +282,17 @@ public:
                             value, miWeight, valuePdf, jacobianLP, genGeomTermLP, pathSuccess, s, t, radius, primal, gradient);
                 }
             }
-
+#if !defined(NO_GRAD)
             /* clean up memory */
             connectPath.release(ptx, ptx + 2, m_pool);
+
             for (int k = 0; k < neighborCount; k++) {
                 if (pathData[k + 1].success) {
                     sensorSubpath[k + 1].reverse();
                     sensorSubpath[k + 1].release(pathData[k + 1].muRec.l, pathData[k + 1].muRec.m + 1, m_pool);
                 }
             }
+#endif
             emitterSubpath[0].release(m_pool);
             sensorSubpath[0].release(m_pool);
 
@@ -631,9 +635,8 @@ public:
     void evaluateMerging(GDVCMWorkResult *wr,
             Path &emitterSubpath, std::vector<Path> &sensorSubpath, std::vector<ShiftPathData> &pathData, int vert_b,
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
-            std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, const Float* radius
+            std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, Float radius
             , Spectrum& primal, Spectrum * gradient) {
-        const Float baseRadius = radius[0];
 
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
@@ -741,6 +744,10 @@ public:
 
             do { //this should really go away at some point...
 
+#if defined(NO_GRAD)
+                if (k > 0) continue; // for debug
+#endif
+
                 if (pathSuccess[k] && pathSuccess[0] && (k == 0 || (valuePdf[0] > 0 && !value[0].isZero()))) {
 
                     if (!pathData[k].couldConnectAfterB && t > vert_b)
@@ -782,26 +789,28 @@ public:
 #endif
                     }
 
+                    PathVertex *vs = emitterOffsetSubpath.vertex(s);
+
                     vsPred_conn = emitterOffsetSubpath.vertexOrNull(prev_diff - 1);
                     vs_conn = emitterOffsetSubpath.vertexOrNull(prev_diff);
-                    vt_conn = prev_conn ? (k == 0 ? emitterBaseSubpath.vertex(s+1) : vt)
+                    vt_conn = prev_conn ? (k == 0 ? emitterBaseSubpath.vertex(s + 1) : vt)
                             : emitterOffsetSubpath.vertex(prev_diff + 1);
-                    
+
                     int interactions = remaining; // backup
                     successConnect = successConnect && ((k > 0 && t > vert_b) ? successConnectBase :
-                            (prev_conn ? 
-                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs_conn, vt_conn, vtEdge, interactions, k==0) :
+                            (prev_conn ?
+                            connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt_conn, vtEdge, interactions, k == 0) :
                             connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions, true)));
+                    
 
                     if (!successConnect) { //early exit
                         value[k] = Spectrum(0.f);
                         break;
                     }
-                    
-                    Spectrum vsEval = vs_conn->eval(scene, vsPred_conn, vt_conn, EImportance);
+
                     Spectrum vtEval = vt->eval(scene, vtPred, vs, ERadiance, EArea);
-                    Spectrum connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase :
-                            vsEval * vtEval;
+                    Spectrum connectionParts;
+
 
                     vt->measure = EArea; // Only force vt to be connectable because for vs, we use whichever component that was chosen.
 
@@ -814,24 +823,31 @@ public:
                     }
 
                     if (prev_conn) {
+                        Spectrum vsEval = vs_conn->eval(scene, vsPred_conn, vt_conn, EImportance);
+                        connectionParts = (k > 0 && t > vert_b + 1) ? connectionPartsBase : vsEval * vtEval;
+
                         if (k == 0) {
-                            p_acc = vs_conn->pdf[EImportance] * M_PI * baseRadius * baseRadius + D_EPSILON;
+                            p_acc = vs_conn->pdf[EImportance] * M_PI * radius * radius + D_EPSILON;
+                            value[0] = importanceWeights[s + 1] * vtEval *
+                                    *radianceWeightTmp / (M_PI * radius * radius) / merge_prob;
+                            valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         } else {
                             // update pdf of vs which will be used in MIS weight computation.
                             // This is not needed in specular case because these have been updated in manifoldWalk.
                             vs_conn->pdf[EImportance] = vs_conn->evalPdf(scene, vsPred_conn, vt, EImportance);
                             vs_conn->pdf[ERadiance] = vs_conn->evalPdf(scene, vt, vsPred_conn, ERadiance);
+
+                            // prefix-suffix weights + connection bsdfs
+                            value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
+                            // geometry term contribution and acceptance probability
+                            value[k] *= geomTerm / p_acc / merge_prob * vs_conn->rrWeight;
+                            valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         }
-                        // prefix-suffix weights + connection bsdfs
-                        value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
-                        // geometry term contribution and acceptance probability
-                        value[k] *= geomTerm / p_acc / merge_prob;
-                        valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                     } else {
-                        Spectrum vsWeight = vs_conn->weight[EImportance];
+                        Spectrum vsWeight = vs_conn->weight[EImportance] * vs_conn->rrWeight;
                         // prefix-suffix weights + connection bsdfs
                         value[k] = *importanceWeightTmp * *radianceWeightTmp * vsWeight * vtEval
-                                / (M_PI * baseRadius * baseRadius) / merge_prob;
+                                / (M_PI * radius * radius) / merge_prob;
                         valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
 
                         Float vs_pdf = vs_conn->evalPdf(scene, vsPred_conn, vt_conn, EImportance, ESolidAngle);
@@ -842,6 +858,8 @@ public:
                             PathVertex* specVert = emitterOffsetSubpath.vertex(i);
                             value[k] *= specVert->weight[EImportance];
                             vs_pdf *= specVert->pdf[EImportance];
+                            PathVertex* baseSpecVert = emitterBaseSubpath.vertex(i);
+                            value[k] *= baseSpecVert->rrWeight;
                         }
 
                         Spectrum geomRatio = geomTerm / (geomTermOrig + Spectrum(D_EPSILON));
@@ -859,10 +877,11 @@ public:
                     if (k > 0 && geomTermBase.isZero()) break;
 
                     // Discard photons whose normals are way off.
-                    Vector photonN = vt_photon->getShadingNormal();
-                    Vector centerN = vt->getShadingNormal();
-                    Float N_ = absDot(photonN, connectionEdge.d);
-                    if (dot(photonN, centerN) < 1e-1f || N_ < 1e-2) {
+                    Vector d = normalize(vt->getPosition() - vs->getPosition());
+                    Vector photonN = vt_photon->getGeometricNormal();
+                    Vector centerN = vt->getGeometricNormal();
+                    Float N_ = absDot(photonN, d);
+                    if ((dot(photonN, centerN) < 1e-1f) || (N_ < 1e-2)) {
                         value[k] = Spectrum(0.0);
                         break;
                     }
@@ -925,7 +944,6 @@ public:
         Spectrum fx = value[0] * valuePdf[0];
         for (int n = 0; n < neighbourCount; n++) {
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * pathData[n + 1].jacobianDet[t];
-
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
             gradient[n] += gradVal;
         }

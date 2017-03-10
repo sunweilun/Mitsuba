@@ -48,6 +48,7 @@ struct VCMConfiguration : public VCMConfigBase {
 	Vector2i cropSize;
         Float initialRadius;
         Float radiusReductionAlpha;
+        bool mergeOnly;
         
 
 	inline VCMConfiguration() { }
@@ -64,6 +65,7 @@ struct VCMConfiguration : public VCMConfigBase {
                 initialRadius = stream->readFloat();
                 radiusReductionAlpha = stream->readFloat();
                 phExponent = stream->readFloat();
+                mergeOnly = stream->readSize();
 	}
 
 	inline void serialize(Stream *stream) const {
@@ -78,6 +80,7 @@ struct VCMConfiguration : public VCMConfigBase {
                 stream->writeFloat(initialRadius);
                 stream->writeFloat(radiusReductionAlpha);
                 stream->writeFloat(phExponent);
+                stream->writeBool(mergeOnly);
 	}
 
 	void dump() const {

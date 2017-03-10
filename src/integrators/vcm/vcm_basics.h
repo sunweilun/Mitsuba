@@ -282,13 +282,6 @@ protected:
                 photon.pointID = i;
                 photon.vertexID = k;
                 result->putPhoton(photon);
-                /*
-                if(photon.blockID == 0) {
-                    FILE* file = fopen("photons.txt", "a");
-                    fprintf(file, "%d %f %f\n", photon.pointID, photon.pos.x, photon.pos.y);
-                    fclose(file);
-                }
-                 */
             }
             emitterSubpath.release(m_pool);
             sensorSubpath.release(m_pool);

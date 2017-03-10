@@ -225,7 +225,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
 Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float exponent,
-        Float radius, size_t nEmitterPaths, bool merge) {
+        Float radius, size_t nEmitterPaths, bool merge, bool mergeOnly) {
 
     int k = s + t + 1, n = k + 1;
 
@@ -339,8 +339,8 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        to the (s,t) strategy, which can be done using a linear sweep. For
        details, refer to the Veach thesis, p.306. */
 
-    auto num_conn_shemes = [&connectable, &nEmitterPaths, &k](int i) {
-        return Float(connectable[i] ? 1 : 0);
+    auto num_conn_shemes = [&](int i) {
+        return Float(connectable[i] && !mergeOnly ? 1 : 0);
     };
     
     auto getVertex = [&](int i) -> const PathVertex* {
@@ -354,7 +354,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
     
     auto merge_prob = [&](int i) {
         if(i == 0 || i == k) return Float(0.f);
-        return std::pow(accProb[i + 1], exponent);
+        return accProb[i + 1];
     };
 
     double base_prob_exp = pow(conn_prob(s), exponent) + pow(merge_prob(s) * nEmitterPaths, exponent) + D_EPSILON;
@@ -413,7 +413,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
 Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSubpath,
         const PathEdge *connectionEdge, const Path &sensorSubpath,
-        const Path&offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
+        const Path& offsetEmitterSubpath, const PathEdge *offsetConnectionEdge,
         const Path &offsetSensorSubpath,
         int s, int t, bool sampleDirect, bool lightImage, Float jDet,
         Float exponent, double geomTermX, double geomTermY, int maxT, float th,
@@ -484,7 +484,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
     
     auto conn_prob = [&](int i) {
-        if(i == 0 || i == k) return Float(1.f);
+        if(i == 0 || i == k) return num_conn_shemes(i);
         Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
         Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
         return ps * pt * num_conn_shemes(i);
@@ -493,7 +493,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     auto merge_prob = [&](int i) {
         if(i == 0 || i == k) return Float(0.f);
         Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
-        return pt * std::pow(accProb[i + 1], exponent);
+        return pt * accProb[i + 1];
     };
 
     /* No linear sweep */
@@ -513,8 +513,9 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         Float p_conn_merge = std::pow(conn_prob(p), exponent) + pow(nEmitterPaths * merge_prob(p), exponent); // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
         bool allowedToConnect = connectable[p + 1];
-        if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
+        if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage)) {
             sum_p += std::pow(p_i * geomTermX, exponent) * p_conn_merge;
+        }
 
         if (tPrime == t) {
             p_st = std::pow(p_i * geomTermX, exponent) * p_conn_merge;
@@ -599,7 +600,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
     
     auto conn_prob = [&](int i) {
-        if(i == 0 || i == k) return Float(1.f);
+        if(i == 0 || i == k) return num_conn_shemes(i);
         Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
         Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
         return ps * pt * num_conn_shemes(i);
@@ -617,7 +618,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
     
     auto offset_conn_prob = [&](int i) {
-        if(i == 0 || i == k) return Float(1.f);
+        if(i == 0 || i == k) return num_conn_shemes(i);
         Float ps = getOffsetVertex(i)->evalSelectionProb(scene, getOffsetVertex(i-1), EImportance, th);
         Float pt = getOffsetVertex(i+1)->evalSelectionProb(scene, getOffsetVertex(i+2), ERadiance, th);
         return ps * pt * num_conn_shemes(i);
