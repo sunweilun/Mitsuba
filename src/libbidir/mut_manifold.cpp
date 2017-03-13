@@ -801,7 +801,7 @@ void ManifoldPerturbation::accept(const MutationRecord &muRec) {
 
 }
 
-bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightPath) {
+bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightPath, bool merge_only) {
 
     int k = source.length();
 
@@ -883,7 +883,7 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
 
     /*manifold walk between b .. c*/
     if (std::abs(b - c) > 1) {
-        walkSuccess = manifoldWalk(source, proposal, step, b, c);
+        walkSuccess = merge_only ? false : manifoldWalk(source, proposal, step, b, c);
         if (!walkSuccess && lightPath)
             goto fail;
         //in case that the MW fails change state of proposal to as if no MW should have been done in the first place!
@@ -898,7 +898,7 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
 
     //This connects the b vertex to the next one.
     // only needed for connections *after* the vertex B, so accept even if this fails
-    couldConnectBehindB = PathVertex::connect/*NoEarlyExit*/(m_scene,
+    couldConnectBehindB = merge_only ? false : PathVertex::connect/*NoEarlyExit*/(m_scene,
             proposal.vertexOrNull(q - 1),
             proposal.edgeOrNull(q - 1),
             proposal.vertex(q),

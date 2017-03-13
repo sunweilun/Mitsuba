@@ -208,7 +208,9 @@ public:
             /*shift base path if possible*/
             for (int k = 0; k < neighborCount; k++) {
                 //we cannot shift very direct paths!
-                pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 ? false : m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1], pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false);
+                pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 ? false : 
+                    m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1], 
+                        pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false, m_config.m_mergeOnly);
 
                 //if shift successful, compute jacobian and geometry term for each possible connection strategy that affects the shifted sub path
                 //for the manifold exploration shift there are only two connectible vertices in the affected chain (v_b and v_c)
@@ -263,7 +265,7 @@ public:
 
             for (int t = minT; t <= maxT; ++t) {
                 if (t > 2)
-                    Path::adjustRadius(sensorSubpath[0].vertexOrNull(t - 1), radius);
+                    Path::adjustRadius(sensorSubpath[0].vertexOrNull(t - 1), radius, m_config.m_mergeOnly, m_config.m_shiftThreshold);
                 if (radius == 0.0) break;
 
 
@@ -938,6 +940,7 @@ public:
         /* store primal paths contribution */
 
         Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
+        if(mainRad.hasNan()) mainRad = Spectrum(0.f);
         primal += mainRad;
 
         /* compute and store gradients */
@@ -945,6 +948,7 @@ public:
         for (int n = 0; n < neighbourCount; n++) {
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * pathData[n + 1].jacobianDet[t];
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
+            if(gradVal.hasNan()) gradVal = Spectrum(0.f);
             gradient[n] += gradVal;
         }
     }

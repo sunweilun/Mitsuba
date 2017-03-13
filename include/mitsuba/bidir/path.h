@@ -511,19 +511,28 @@ public:
     static Float estimateSensorMergingRadius(const Scene *scene,
             const Path& emitterSubpath, const Path& sensorSubpath,
             int s, int t, size_t nPixels, Float defaultRadius) {
+        const Float D_EPSILON = std::numeric_limits<Float>::min();
         if (defaultRadius > 0.f) return defaultRadius;
         defaultRadius = -defaultRadius;
         Float surface_pdf = 0.f;
+        Float cos_theta = 1.f;
         PathVertex* vt = sensorSubpath.vertexOrNull(t);
         PathVertex* vs = emitterSubpath.vertexOrNull(s);
         if (t >= 2) {
             PathVertex* v = sensorSubpath.vertexOrNull(1);
             if (!v) return Float(0.f);
             surface_pdf = v->pdf[ERadiance];
+            
+            if(sensorSubpath.vertexCount() > 2) {
+                const Vector& d = sensorSubpath.edge(1)->d;
+                cos_theta = absDot(sensorSubpath.vertex(2)->getGeometricNormal(), d);
+            }
         } else if (vt && vt->isSensorSample()) {
             surface_pdf = vt->evalPdf(scene, sensorSubpath.vertex(0), vs, ERadiance);
+            const Vector& d = normalize(vs->getPosition() - vt->getPosition());
+            cos_theta = absDot(vs->getGeometricNormal(), d);
         }
-        Float r = sqrt(Float(1.f) / (surface_pdf * nPixels) * M_1_PI);
+        Float r = cos_theta * sqrt(Float(1.f) / (surface_pdf * nPixels + D_EPSILON) * M_1_PI);
         return std::min(defaultRadius, r);
     }
 
@@ -544,7 +553,7 @@ public:
         return roughness;
     }
 
-    static void adjustRadius(const PathVertex *va, Float& radius);
+    static void adjustRadius(const PathVertex *va, Float& radius, bool first_merge_only = false, Float th = 0.f);
 
     /**
      * \brief Collapse a path into an entire edge that summarizes the aggregate

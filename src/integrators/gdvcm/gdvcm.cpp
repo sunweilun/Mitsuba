@@ -94,6 +94,7 @@ public:
         m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
         m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
         m_config.m_mergeOnly = props.getBoolean("mergeOnly", false);
+        if(m_config.m_mergeOnly) m_config.lightImage = false;
 
         if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
             Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");

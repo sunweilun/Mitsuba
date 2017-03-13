@@ -9,11 +9,12 @@ MTS_NAMESPACE_BEGIN
 #define USE_GENERALIZED_PDF // always turn this on
 #define USE_ROUGHNESS_CORRELATION_HEURISTIC // use correlation kernel shrinkage heuristic if enabled: usually a good idea
 
-void Path::adjustRadius(const PathVertex *va, Float& radius) {
+void Path::adjustRadius(const PathVertex *va, Float& radius, bool first_merge_only, Float th) {
 #if defined(USE_ROUGHNESS_CORRELATION_HEURISTIC)
     if(!va || va->type == PathVertex::EInvalid) return;
     Float roughness = Path::getRoughness(va);
-    Float shrinkage = roughness == std::numeric_limits<Float>::infinity() ?
+    bool killed = roughness > 0.f && roughness >= th;
+    Float shrinkage =  roughness == std::numeric_limits<Float>::infinity() || killed ?
             0.0 : pow(0.1, 10*roughness);
     radius *= shrinkage;
 #endif
@@ -22,7 +23,7 @@ void Path::adjustRadius(const PathVertex *va, Float& radius) {
 void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sensorSubpath, const PathEdge *connectionEdge, int s, int t,
         EMeasure vsMeasure, EMeasure vtMeasure,
         const bool* connectable, bool merge,
-        Float* pdfImp, Float* pdfRad, bool* isNull, int nEmitterPaths = 0,
+        Float* pdfImp, Float* pdfRad, bool* isNull, bool merge_only, Float th, int nEmitterPaths = 0,
         Float* accProb = NULL, const Float& radius = 0.0, int* emitterRefIndirection = NULL, int* sensorRefIndirection = NULL) {
     int k = s + t + 1;
     // emitter: 0, ..., s  sensor: t, ..., 0
@@ -217,7 +218,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
 #if !defined(USE_GENERALIZED_PDF)
             if (!connectable[i - 1]) accProb[i] = pdfImp[i]; // not a special case anymore in generalized pdf.
 #endif
-            Path::adjustRadius(getVertex(i), mergeRadius);
+            Path::adjustRadius(getVertex(i), mergeRadius, merge_only, th);
         }
     }
 }
@@ -296,7 +297,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, nEmitterPaths, accProb, radius,
+            connectable, merge, pdfImp, pdfRad, isNull, mergeOnly, 0.f, nEmitterPaths, accProb, radius,
             &emitterRefIndirection, &sensorRefIndirection);
 
     double initial = 1.0f;
@@ -467,7 +468,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, nEmitterPaths, accProb, radius);
+            connectable, merge, pdfImp, pdfRad, isNull, merge_only, th, nEmitterPaths, accProb, radius);
 
     double sum_p = 0.f;
 
@@ -580,10 +581,10 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, nEmitterPaths, accProb, radius);
+            connectable, merge, pdfImp, pdfRad, isNull, merge_only, th, nEmitterPaths, accProb, radius);
 
     fillPdfList(scene, offsetEmitterSubpath, offsetSensorSubpath, offsetConnectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, offsetPdfImp, offsetPdfRad, isNull, nEmitterPaths, oAccProb, radius);
+            connectable, merge, offsetPdfImp, offsetPdfRad, isNull, merge_only, th, nEmitterPaths, oAccProb, radius);
 
     double sum_p = 0.f, p_st = 0.f;
 

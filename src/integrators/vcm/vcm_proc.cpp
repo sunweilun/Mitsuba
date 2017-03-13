@@ -370,7 +370,7 @@ public:
 
         for (int t = minT; t <= maxT; ++t) {
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
-            if (t > 2) Path::adjustRadius(sensorSubpath.vertex(t - 1), radius);
+            if (t > 2) Path::adjustRadius(sensorSubpath.vertex(t - 1), radius, m_config.mergeOnly);
             if (radius == 0.0) break;
 
             if (vt->isDegenerate()) continue;
@@ -496,9 +496,13 @@ public:
                         ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-                sampleValue += value * Spectrum(miWeight) / p_acc;
+                Spectrum inc = value * Spectrum(miWeight) / p_acc;
+                if(inc.hasNan())
+                    continue;
+                sampleValue += inc;
             }
         }
+        
         return sampleValue;
     }
 

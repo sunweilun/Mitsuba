@@ -145,11 +145,12 @@ public:
         m_config.rrDepth = props.getInteger("rrDepth", 5);
         m_config.phExponent = props.getFloat("phExponent", 1.0);
         m_config.lightImage = props.getBoolean("lightImage", true);
-        m_config.sampleDirect = props.getBoolean("sampleDirect", true);
+        m_config.sampleDirect = props.getBoolean("sampleDirect", false); // Direct sampling is not supported yet.
         m_config.showWeighted = props.getBoolean("showWeighted", false);
         m_config.initialRadius = props.getFloat("initialRadius", 0.f);
         m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.9f);
         m_config.mergeOnly = props.getBoolean("mergeOnly", false);
+        if(m_config.mergeOnly) m_config.lightImage = false;
 
 #if VCM_DEBUG == 1
         if (m_config.maxDepth == -1 || m_config.maxDepth > 6) {

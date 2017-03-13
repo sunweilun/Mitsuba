@@ -73,7 +73,7 @@ public:
 	bool computeMuRec(Path &source, MutationRecord &muRec, bool partialPath = false, bool lightpath = false);
 
 	/// G-BDPT specific offset path generation function. Based on the code taken from the G-MLT team.
-	bool generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightpath = false);
+	bool generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightpath = false, bool merge_only = false);
 
 	/// access to SpecularManifold object for other things as well
 	SpecularManifold* getSpecularManifold(void) { return m_manifold; }
