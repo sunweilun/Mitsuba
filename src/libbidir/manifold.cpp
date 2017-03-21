@@ -1020,7 +1020,7 @@ Float SpecularManifold::det(const Path &path, int a, int b, int c) {
 
 	if (nGlossy <= 1) /* No glossy materials -- we don't need this derivative */
 		return 1.0f;
-
+        
 	bool success = init(path, a, c);
 	BDAssert(success);
 

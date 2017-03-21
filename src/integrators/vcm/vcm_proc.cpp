@@ -23,6 +23,8 @@
 
 MTS_NAMESPACE_BEGIN
 
+#define D_EPSILON std::numeric_limits<Float>::min() // to avoid division by 0
+
 /* ==================================================================== */
 /*                         Worker implementation                        */
 /* ==================================================================== */
@@ -370,7 +372,7 @@ public:
 
         for (int t = minT; t <= maxT; ++t) {
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
-            if (t > 2) Path::adjustRadius(sensorSubpath.vertex(t - 1), radius, m_config.mergeOnly);
+            if (t > 2) Path::adjustRadius(sensorSubpath.vertexOrNull(t - 1), radius, m_config.mergeOnly);
             if (radius == 0.0) break;
 
             if (vt->isDegenerate()) continue;
@@ -497,6 +499,9 @@ public:
                 wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
                 Spectrum inc = value * Spectrum(miWeight) / p_acc;
+                Float normal_correction_factor = absDot(vt_photon->getShadingNormal(), d) / 
+                                (D_EPSILON+absDot(vt_photon->getGeometricNormal(), d));
+                inc *= normal_correction_factor;
                 if(inc.hasNan())
                     continue;
                 sampleValue += inc;

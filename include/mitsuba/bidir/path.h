@@ -527,12 +527,12 @@ public:
                 const Vector& d = sensorSubpath.edge(1)->d;
                 cos_theta = absDot(sensorSubpath.vertex(2)->getGeometricNormal(), d);
             }
-        } else if (vt && vt->isSensorSample()) {
+        } else if (vt && vs && vt->isSensorSample()) {
             surface_pdf = vt->evalPdf(scene, sensorSubpath.vertex(0), vs, ERadiance);
             const Vector& d = normalize(vs->getPosition() - vt->getPosition());
             cos_theta = absDot(vs->getGeometricNormal(), d);
         }
-        Float r = cos_theta * sqrt(Float(1.f) / (surface_pdf * nPixels + D_EPSILON) * M_1_PI);
+        Float r = sqrt(cos_theta) * sqrt(Float(1.f) / (surface_pdf * nPixels + D_EPSILON) * M_1_PI);
         return std::min(defaultRadius, r);
     }
 

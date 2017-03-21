@@ -634,6 +634,8 @@ std::pair<int, int> Path::alternatingRandomWalkFromPixel(const Scene *scene, Sam
     }
 
     Spectrum throughputS(1.0f), throughputT(1.0f);
+    
+    bool diff = false;
 
     int s = 0;
     do {

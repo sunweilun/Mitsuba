@@ -485,7 +485,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
     
     auto conn_prob = [&](int i) {
-        if(i == 0 || i == k) return num_conn_shemes(i);
+        if(i <= 1 || i == k) return num_conn_shemes(i);
         Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
         Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
         return ps * pt * num_conn_shemes(i);
@@ -601,7 +601,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
     
     auto conn_prob = [&](int i) {
-        if(i == 0 || i == k) return num_conn_shemes(i);
+        if(i <= 1 || i == k) return num_conn_shemes(i);
         Float ps = getVertex(i)->evalSelectionProb(scene, getVertex(i-1), EImportance, th);
         Float pt = getVertex(i+1)->evalSelectionProb(scene, getVertex(i+2), ERadiance, th);
         return ps * pt * num_conn_shemes(i);
@@ -619,7 +619,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     };
     
     auto offset_conn_prob = [&](int i) {
-        if(i == 0 || i == k) return num_conn_shemes(i);
+        if(i <= 1 || i == k) return num_conn_shemes(i);
         Float ps = getOffsetVertex(i)->evalSelectionProb(scene, getOffsetVertex(i-1), EImportance, th);
         Float pt = getOffsetVertex(i+1)->evalSelectionProb(scene, getOffsetVertex(i+2), ERadiance, th);
         return ps * pt * num_conn_shemes(i);

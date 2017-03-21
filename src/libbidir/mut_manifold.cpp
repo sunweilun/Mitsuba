@@ -802,7 +802,6 @@ void ManifoldPerturbation::accept(const MutationRecord &muRec) {
 }
 
 bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightPath, bool merge_only) {
-
     int k = source.length();
 
     if (!source.vertex(k - 1)->isConnectable())
@@ -818,7 +817,10 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
     if ((b = getSpecularChainEndGBDPT(source, a + step, step)) == -1) {
         return false;
     }
-    if ((c = getSpecularChainEndGBDPT(source, b + step, step)) == -1) {
+
+    if (merge_only) {
+        c = 0;
+    } else if ((c = getSpecularChainEndGBDPT(source, b + step, step)) == -1) {
         return false;
     }
 
@@ -848,7 +850,7 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
 
     /* Allocate memory for the proposed path */
     proposal.clear();
-    proposal.append(source, 0, l + 1); //path [0...l+1] stays the same
+    proposal.append(source, 0, l + 1); //path [0...l] stays the same
     proposal.append(m_pool.allocEdge()); //for [l+1...m] we allocate memory (num of elements here doesn't change)
     memset(proposal.edge(proposal.edgeCount() - 1), 0, sizeof (PathEdge)); // make sure edges are ALWAYS initialized!
     //}
@@ -859,6 +861,7 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
         memset(proposal.vertex(proposal.vertexCount() - 1), 0, sizeof (PathVertex));
         memset(proposal.edge(proposal.edgeCount() - 1), 0, sizeof (PathEdge)); // make sure edges are ALWAYS initialized!
     }
+
     proposal.append(source, m, k + 1); //[m...k] stays the same
 
     //make deep copy of a and c and 
@@ -873,17 +876,30 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
     }
 
     /* Generate subsequent vertices between a .. b deterministically */
-    if (!propagatePerturbation(source, proposal, step, a, b, mode))
+    if (!propagatePerturbation(source, proposal, step, a, b, mode)) {
         goto fail;
+    }
 
     if (!proposal.vertex(b)->isConnectable())
         goto fail;
-    statsUsedManifold.incrementBase();
 
+    if (merge_only) {
+        if (m >= k - 1) proposal.vertex(k - 1)->updateSamplePosition(proposal.vertex(k - 2));
+        for (int i = 0; i <= proposal.length(); i++) {
+            proposal.vertex(i)->rrWeight = source.vertex(i)->rrWeight;
+            proposal.vertex(i)->sampledComponentIndex = source.vertex(i)->sampledComponentIndex;
+            if (proposal.vertex(i)->getType() == PathVertex::ESurfaceInteraction && proposal.vertex(i)->componentType == 0) //BUG? this looks weird! (look at the second condition...)
+                proposal.vertex(i)->componentType = source.vertex(i)->componentType;
+        }
+        couldConnectBehindB = false;
+        return true;
+    }
+
+    statsUsedManifold.incrementBase();
 
     /*manifold walk between b .. c*/
     if (std::abs(b - c) > 1) {
-        walkSuccess = merge_only ? false : manifoldWalk(source, proposal, step, b, c);
+        walkSuccess = manifoldWalk(source, proposal, step, b, c);
         if (!walkSuccess && lightPath)
             goto fail;
         //in case that the MW fails change state of proposal to as if no MW should have been done in the first place!
@@ -898,7 +914,7 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
 
     //This connects the b vertex to the next one.
     // only needed for connections *after* the vertex B, so accept even if this fails
-    couldConnectBehindB = merge_only ? false : PathVertex::connect/*NoEarlyExit*/(m_scene,
+    couldConnectBehindB = PathVertex::connect/*NoEarlyExit*/(m_scene,
             proposal.vertexOrNull(q - 1),
             proposal.edgeOrNull(q - 1),
             proposal.vertex(q),
@@ -935,7 +951,7 @@ bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal,
 
     /* in case of failure release every vertex that belongs to the proposal path only */
 fail:
-    proposal.release(l, m + 1, m_pool);
+    proposal.release(std::max(0, l), m + 1, m_pool);
     return false;
 }
 
@@ -987,11 +1003,11 @@ bool ManifoldPerturbation::perturbDirection(Path &source, Path &proposal, int st
     }
 
     // To properly support multilayered materials, these below are needed.
-    if(succ->isEmitterSample() || succ_old->isEmitterSample()) {
+    if (succ->isEmitterSample() || succ_old->isEmitterSample()) {
         ++statsPROPFailedBRDF;
         return false;
     }
-    
+
     const Intersection
             &its_old = succ_old->getIntersection(),
             &its_new = succ->getIntersection();
@@ -1201,7 +1217,7 @@ bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int 
     n = n - dot(rel, n) * rel;
     len = n.length();
     if (len == 0) {
-        if(updateAll) return true;
+        if (updateAll) return true;
         ++statsMWZeroLength;
         return false;
     }

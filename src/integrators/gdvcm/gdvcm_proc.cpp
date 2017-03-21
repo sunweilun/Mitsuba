@@ -183,7 +183,7 @@ public:
             int ns = emitterSubpath[0].vertexCount();
             int nt = sensorSubpath[0].vertexCount();
             if (ns > 2) emitterSubpath[0].vertex(ns - 1)->pickComponent(m_sampler, emitterSubpath[0].vertex(ns - 2), EImportance);
-            if (nt > 2) sensorSubpath[0].vertex(nt - 1)->pickComponent(m_sampler, sensorSubpath[0].vertex(nt - 2), ERadiance);
+            //if (nt > 2) sensorSubpath[0].vertex(nt - 1)->pickComponent(m_sampler, sensorSubpath[0].vertex(nt - 2), ERadiance);
 
             samplePos = sensorSubpath[0].vertex(1)->getSamplePosition();
 
@@ -192,10 +192,16 @@ public:
 
 #if !defined(NO_GRAD)
             /* create shift-able path  */
-            createShiftablePath(connectPath, emitterSubpath[0], sensorSubpath[0], 1, sensorSubpath[0].vertexCount() - 1, ptx);
+            createShiftablePath(connectPath, emitterSubpath[0], sensorSubpath[0], 1, sensorSubpath[0].vertexCount() - 1, ptx, m_config.m_mergeOnly);
 
             /*  geometry term(s) of base  */
-            m_offsetGenerator->computeMuRec(connectPath, pathData[0].muRec);
+            if (m_config.m_mergeOnly) {
+                pathData[0].muRec.extra[0] = sensorSubpath[0].vertexCount()-1;
+                pathData[0].muRec.extra[1] = 1;
+                pathData[0].muRec.extra[2] = 0;
+            } else {
+                m_offsetGenerator->computeMuRec(connectPath, pathData[0].muRec);
+            }
             int idx = 0;
             for (int v = pathData[0].muRec.extra[0] - 1; v >= 0; v--) {
                 int idx = connectPath.vertexCount() - 1 - v;
@@ -208,14 +214,14 @@ public:
             /*shift base path if possible*/
             for (int k = 0; k < neighborCount; k++) {
                 //we cannot shift very direct paths!
-                pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 ? false : 
-                    m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1], 
+                pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 && 
+                        (m_config.m_mergeOnly && pathData[0].muRec.extra[0] <= 1) ? false :
+                        m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1],
                         pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false, m_config.m_mergeOnly);
 
                 //if shift successful, compute jacobian and geometry term for each possible connection strategy that affects the shifted sub path
                 //for the manifold exploration shift there are only two connectible vertices in the affected chain (v_b and v_c)
                 if (pathData[k + 1].success) {
-
                     int idx = 0;
                     int a, b, c;
                     for (int v = pathData[k + 1].muRec.extra[0] - 1; v >= 0; v--) {
@@ -224,8 +230,10 @@ public:
                             a = pathData[k + 1].muRec.extra[0];
                             b = v >= pathData[k + 1].muRec.extra[1] ? v : pathData[k + 1].muRec.extra[1];
                             c = v >= pathData[k + 1].muRec.extra[1] ? v - 1 : pathData[k + 1].muRec.extra[2];
+                            
                             jx = connectPath.halfJacobian_GBDPT(a, b, c, m_offsetGenerator);
                             jy = sensorSubpath[k + 1].halfJacobian_GBDPT(a, b, c, m_offsetGenerator);
+                            
                             pathData[k + 1].jacobianDet.at(idx) = jy / jx;
                             pathData[k + 1].genGeomTerm.at(idx) = sensorSubpath[k + 1].calcSpecularPDFChange(v, m_offsetGenerator);
                         } else {
@@ -268,8 +276,8 @@ public:
                     Path::adjustRadius(sensorSubpath[0].vertexOrNull(t - 1), radius, m_config.m_mergeOnly, m_config.m_shiftThreshold);
                 if (radius == 0.0) break;
 
-
                 PathVertex *vt = sp.vertex(t); // the vertex we are looking at
+                
                 // look up photons
                 std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
                 for (const VCMPhoton& photon : photons) { // inspect every photon in range
@@ -280,18 +288,28 @@ public:
                     m_process->extractPhotonPath(photon, emitterSubpath[0], &m_pool); // extract the path that this photon bounded to and replace emitterSubPath.
                     /* evaluate base and offset paths */
                     // (s+1 is the photon)
+                    
                     evaluateMerging(result, emitterSubpath[0], sensorSubpath, pathData, v_b,
                             value, miWeight, valuePdf, jacobianLP, genGeomTermLP, pathSuccess, s, t, radius, primal, gradient);
                 }
             }
 #if !defined(NO_GRAD)
             /* clean up memory */
-            connectPath.release(ptx, ptx + 2, m_pool);
+            if (!m_config.m_mergeOnly)
+                connectPath.release(ptx, ptx + 2, m_pool);
+            else
+                connectPath.release(m_pool);
 
             for (int k = 0; k < neighborCount; k++) {
                 if (pathData[k + 1].success) {
                     sensorSubpath[k + 1].reverse();
-                    sensorSubpath[k + 1].release(pathData[k + 1].muRec.l, pathData[k + 1].muRec.m + 1, m_pool);
+                    int l = std::max(0, pathData[k + 1].muRec.l);
+                    
+                    if(m_config.m_mergeOnly)
+                        sensorSubpath[k + 1].release(0, pathData[k + 1].muRec.m + 1, m_pool);
+                    else
+                        sensorSubpath[k + 1].release(l, pathData[k + 1].muRec.m + 1, m_pool);
+                    
                 }
             }
 #endif
@@ -803,7 +821,7 @@ public:
                             (prev_conn ?
                             connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt_conn, vtEdge, interactions, k == 0) :
                             connectionEdge.pathConnectAndCollapse(scene, vsEdge, vs, vt, vtEdge, interactions, true)));
-                    
+
 
                     if (!successConnect) { //early exit
                         value[k] = Spectrum(0.f);
@@ -832,6 +850,10 @@ public:
                             p_acc = vs_conn->pdf[EImportance] * M_PI * radius * radius + D_EPSILON;
                             value[0] = importanceWeights[s + 1] * vtEval *
                                     *radianceWeightTmp / (M_PI * radius * radius) / merge_prob;
+                            Vector d = normalize(vt->getPosition() - vs->getPosition());
+                            Float normal_correction_factor = absDot(vt_photon->getShadingNormal(), d) /
+                                    (D_EPSILON + absDot(vt_photon->getGeometricNormal(), d));
+                            value[0] *= normal_correction_factor;
                             valuePdf[k] = *importancePdfTmp * *radiancePdfTmp;
                         } else {
                             // update pdf of vs which will be used in MIS weight computation.
@@ -839,6 +861,8 @@ public:
                             vs_conn->pdf[EImportance] = vs_conn->evalPdf(scene, vsPred_conn, vt, EImportance);
                             vs_conn->pdf[ERadiance] = vs_conn->evalPdf(scene, vt, vsPred_conn, ERadiance);
 
+                            
+                            
                             // prefix-suffix weights + connection bsdfs
                             value[k] = *importanceWeightTmp * *radianceWeightTmp * connectionParts;
                             // geometry term contribution and acceptance probability
@@ -869,10 +893,12 @@ public:
                         Float pdfRatio = vs_pdf / (vs_pdfOrig + D_EPSILON);
                         value[k] *= geomRatio * pdfRatio;
                     }
-
+                    
 
                     if (value[k].isZero() || valuePdf[k] == 0) //early exit
                         break;
+                    
+                    
 
                     //this is the missing geometry factor in c_{s,t} of f_j mentioned in veach thesis equation 10.8
 
@@ -915,6 +941,7 @@ public:
                                 (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
                                 vert_b, m_config.m_shiftThreshold,
                                 m_process->m_mergeRadius, nEmitterPaths, true, m_config.m_mergeOnly) / valuePdf[0];
+                        
                     }
 
                 }
@@ -940,7 +967,7 @@ public:
         /* store primal paths contribution */
 
         Spectrum mainRad = valuePdf[0] * miWeight[0] * value[0];
-        if(mainRad.hasNan()) mainRad = Spectrum(0.f);
+        if (mainRad.hasNan()) mainRad = Spectrum(0.f);
         primal += mainRad;
 
         /* compute and store gradients */
@@ -948,7 +975,7 @@ public:
         for (int n = 0; n < neighbourCount; n++) {
             Spectrum fy = value[n + 1] * valuePdf[n + 1] * pathData[n + 1].jacobianDet[t];
             Spectrum gradVal = Float(2.f) * miWeight[n + 1] * (fy - fx);
-            if(gradVal.hasNan()) gradVal = Spectrum(0.f);
+            if (gradVal.hasNan()) gradVal = Spectrum(0.f);
             gradient[n] += gradVal;
         }
     }
@@ -1018,16 +1045,34 @@ private:
      *tracing paths this is needed anyway to ensure that we don't create base paths that are occluded 
      *from the eye. So the overhead is relatively small. 
      **/
-    bool createShiftablePath(Path &connectedPath, Path &emitterSubpath, Path &sensorSubpath, int s, int t, int &memPointer) {
+    bool createShiftablePath(Path &connectedPath, Path &emitterSubpath, Path &sensorSubpath, int s, int t, int &memPointer, bool merge_only = false) {
         connectedPath.clear();
 
+        if (merge_only) {
+            int t1 = std::numeric_limits<int>::max();
+            for (t1 = 2; t1 < sensorSubpath.vertexCount(); t1++) {
+                if (Path::isConnectable_GBDPT(sensorSubpath.vertex(t1), m_config.m_shiftThreshold))
+                    break;
+            }
+            int nv = sensorSubpath.vertexCount();
+            if(t1 == nv) t1 = 0;
+            for(int i = 0; i < nv-t1-1; i++)
+                sensorSubpath.removeAndReleaseLastElement(m_pool);
+            if(sensorSubpath.vertexCount() <= 1) return true;
+            sensorSubpath.clone(connectedPath, m_pool);
+            connectedPath.append(connectedPath.m_vertices.back()->clone(m_pool));
+            connectedPath.append(connectedPath.m_edges.back()->clone(m_pool));
+            connectedPath.reverse();
+            return true;
+        }
+        
         //make sure we connect across connect able vertices only!
         while (!Path::isConnectable_GBDPT(sensorSubpath.vertex(t), m_config.m_shiftThreshold)) {
             t--;
             //the tail of the path can then be removed
             sensorSubpath.removeAndReleaseLastElement(m_pool);
         }
-
+        
         //if the sensor connection vertex is on the lightsource then we must connect to the emitterSuperSample
 
         if (sensorSubpath.vertex(t)->type == PathVertex::ESurfaceInteraction) {
