@@ -49,6 +49,8 @@ static StatsCounter statsUsedPropagation("Manifold perturbation",
 //MW specific stats
 static StatsCounter statsMWFailReversible("Perturbation using manifold walk",
         "failed reversibility", EPercentage);
+static StatsCounter statsMWFailBRDF("Perturbation using manifold walk",
+        "failed bsdf", EPercentage);
 static StatsCounter statsMWFailInit("Perturbation using manifold walk",
         "failed init", EPercentage);
 static StatsCounter statsMWFailMove("Perturbation using manifold walk",
@@ -1011,6 +1013,7 @@ bool ManifoldPerturbation::perturbDirection(Path &source, Path &proposal, int st
     const Intersection
             &its_old = succ_old->getIntersection(),
             &its_new = succ->getIntersection();
+
     /// todo: this is perhaps a bit drastic
     if (its_old.getBSDF() != its_new.getBSDF()) {
         ++statsPROPFailedBRDF;
@@ -1171,6 +1174,15 @@ bool ManifoldPerturbation::propagatePerturbation(Path &source, Path &proposal, i
             Log(EError, "Unsupported vertex type!");
         }
     }
+    
+    bool si = source.vertex(b)->isSurfaceInteraction();
+    si &= proposal.vertex(b)->isSurfaceInteraction();
+    const Intersection& its_old = source.vertex(b)->getIntersection();
+    const Intersection& its_new = proposal.vertex(b)->getIntersection();
+    if (si && its_old.getBSDF() != its_new.getBSDF()) {
+        ++statsPROPFailedBRDF;
+        return false;
+    }
     return true;
 }
 
@@ -1187,6 +1199,7 @@ bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int 
     statsMWFailMove.incrementBase();
     statsMWFailUpdate.incrementBase();
     statsMWFailRobustness.incrementBase();
+    statsMWFailBRDF.incrementBase();
     const PathVertex
             *vb_old = source.vertex(b),
             *vb_new = proposal.vertex(b);
@@ -1242,6 +1255,14 @@ bool ManifoldPerturbation::manifoldWalk(const Path &source, Path &proposal, int 
             ++statsMWFailUpdate;
             return false;
         }
+    }
+
+    auto& its_old = source.vertex(b)->getIntersection();
+    auto& its_new = proposal.vertex(b)->getIntersection();
+
+    if (its_old.getBSDF() != its_new.getBSDF()) {
+        ++statsMWFailBRDF;
+        return false;
     }
 
     if (!m_manifold->moveInRange(vb_old->getPosition(), n, rs)) {

@@ -183,7 +183,7 @@ public:
             int ns = emitterSubpath[0].vertexCount();
             int nt = sensorSubpath[0].vertexCount();
             if (ns > 2) emitterSubpath[0].vertex(ns - 1)->pickComponent(m_sampler, emitterSubpath[0].vertex(ns - 2), EImportance);
-            //if (nt > 2) sensorSubpath[0].vertex(nt - 1)->pickComponent(m_sampler, sensorSubpath[0].vertex(nt - 2), ERadiance);
+            if (nt > 2) sensorSubpath[0].vertex(nt - 1)->pickComponent(m_sampler, sensorSubpath[0].vertex(nt - 2), ERadiance);
 
             samplePos = sensorSubpath[0].vertex(1)->getSamplePosition();
 
@@ -786,6 +786,8 @@ public:
                     /* Allowed remaining number of ENull vertices that can be bridged via pathConnect (negative=arbitrarily many) */
                     int remaining = m_config.maxDepth - s - t + 1;
 
+                    
+                    
                     /* Account for the terms of the measurement contribution function that are coupled to the connection endpoints, i.e. s==0*/
                     if (!Path::isConnectable_GBDPT(vt, m_config.m_shiftThreshold)
                             || vs->getType() == 0 || vt->getType() == 0) {

@@ -15,7 +15,7 @@ void Path::adjustRadius(const PathVertex *va, Float& radius, bool first_merge_on
     Float roughness = Path::getRoughness(va);
     bool killed = roughness > 0.f && roughness >= th;
     Float shrinkage =  roughness == std::numeric_limits<Float>::infinity() || killed ?
-            0.0 : pow(0.1, 10*roughness);
+            0.0 : pow(0.5, 10*roughness);
     radius *= shrinkage;
 #endif
 }
@@ -176,6 +176,7 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
     }
 
 #if defined(USE_GENERALIZED_PDF)
+    
     // convert pdfs to generalized pdfs, stepping through specular chains. This is needed for correct VCM weights.
     ref<SpecularManifold> sm = new SpecularManifold(scene);
 
@@ -331,7 +332,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
             initial /= ratioSensorDirect;
     }
 
-    double weight = 1, pdf = initial;
+    double weight = 1.0, pdf = initial;
 
     /* With all of the above information, the MI weight can now be computed.
        Since the goal is to evaluate the power heuristic, the absolute area
@@ -403,11 +404,11 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
 
         pdf = next;
     }
-
-    Float total_weight = 1.0 / weight;
+    
+    Float total_weight = weight == std::numeric_limits<double>::infinity() ? 0.0 : 1.0 / weight;
     Float w_merge = pow(merge_prob(s), exponent) / base_prob_exp;
     Float w_conn = pow(conn_prob(s), exponent) / base_prob_exp;
-
+    
     if (merge) return total_weight * w_merge;
     return total_weight * w_conn;
 }

@@ -308,6 +308,7 @@ public:
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, m_config.phExponent,
                         m_process->m_mergeRadius, nEmitterPaths, false, m_config.mergeOnly);
+                
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
