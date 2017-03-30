@@ -437,13 +437,15 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
     return (Float) (p_st / sum_p_i);
 }
 
-double Path::halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator) {
+double Path::halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator, bool ignore_ab) {
     //c = std::max(c, 1); // chain extends to emitter supernode => ignore
     double value = 1.0;
-    value /= vertex(a)->pdf[ERadiance];
-
-    // => dxb/dx1 
-    value *= G(a - 1, a, offsetMutator) / G(b, a, offsetMutator);
+    
+    if(!ignore_ab) {
+        value /= vertex(a)->pdf[ERadiance];
+        // => dxb/dx1 
+        value *= G(a - 1, a, offsetMutator) / G(b, a, offsetMutator);
+    }
     // => dxi/dOk
     value *= offsetMutator->getSpecularManifold()->det(*this, a, b, c);
     // Check errors.
@@ -465,7 +467,7 @@ Float Path::calcSpecularPDFChange(int c, ManifoldPerturbation* offsetMutator, bo
     c = std::max(1, c); //ignore sensor super-node
 
     /* Cancel out G() at x(c+1), ..., x(k-1)
-    /  We must do that for all vertices that has measure EArea. But not this also depends on the direction
+    /  We must do that for all vertices that has measure EArea. But note this also depends on the direction
      */
     for (int i = c + 1; i <= k; i++)
         if (vertex(lightpath ? i - 1 : i)->isConnectable())

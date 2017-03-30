@@ -233,7 +233,7 @@ public:
             Float radius, size_t nEmitterPaths, bool merge, bool merge_only);
 
     /// Jacobian of full perturbation.
-    double halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator);
+    double halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator, bool ignore_ab = false);
 
     /// computes the (simple) geometry term between vertex i and i+1.
     Float getGeometryTerm(int i) const;

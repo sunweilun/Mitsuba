@@ -218,6 +218,70 @@ Spectrum PathEdge::evalCached(const PathVertex *pred, const PathVertex *succ,
 	return result;
 }
 
+bool PathEdge::connectIgnoreVisibility(const Scene *scene,
+			const PathEdge *predEdge, const PathVertex *vs,
+			const PathVertex *vt, const PathEdge *succEdge) {
+
+	if (vs->isEmitterSupernode() || vt->isSensorSupernode()) {
+		Float radianceTransport   = vt->isSensorSupernode() ? 1.0f : 0.0f,
+		      importanceTransport = 1-radianceTransport;
+
+		medium = NULL;
+		d = Vector(0.0f);
+		length = 0.0f;
+		pdf[ERadiance]   = radianceTransport;
+		pdf[EImportance] = importanceTransport;
+		weight[ERadiance] = Spectrum(radianceTransport);
+		weight[EImportance] = Spectrum(importanceTransport);
+	} else {
+		Point vsp = vs->getPosition(), vtp = vt->getPosition();
+		d = vsp-vtp;
+		length = d.length();
+		d /= length;
+
+		Ray ray(vtp, d, vt->isOnSurface() ? Epsilon : 0, length *
+			(vs->isOnSurface() ? (1-ShadowEpsilon) : 1), vs->getTime());
+
+		const Medium *vtMedium = vt->getTargetMedium(succEdge, d);
+		const Medium *vsMedium = vs->getTargetMedium(predEdge, -d);
+
+		if (vsMedium != vtMedium) {
+			#if defined(MTS_BD_TRACE)
+				SLog(EWarn, "PathEdge::connect(): attempted two connect "
+					"two vertices that disagree about the medium in between! "
+					"Please check your scene for leaks.");
+			#endif
+			++mediumInconsistencies;
+			return false;
+		}
+
+		medium = vtMedium;
+
+		if (medium) {
+			MediumSamplingRecord mRec;
+			medium->eval(ray, mRec);
+
+			pdf[EImportance] = vt->isMediumInteraction() ? mRec.pdfSuccessRev : mRec.pdfFailure;
+			pdf[ERadiance]   = vs->isMediumInteraction() ? mRec.pdfSuccess    : mRec.pdfFailure;
+
+			/* Fail if there is no throughput */
+			if (mRec.transmittance.isZero() || pdf[EImportance] == 0 || pdf[ERadiance] == 0)
+				return false;
+
+			weight[EImportance] = mRec.transmittance / pdf[EImportance];
+			weight[ERadiance]   = mRec.transmittance / pdf[ERadiance];
+		} else {
+			weight[ERadiance] = weight[EImportance] = Spectrum(1.0f);
+			pdf[ERadiance] = pdf[EImportance] = 1.0f;
+		}
+	}
+
+	/* Direction always points along the light path (from the light source along the path) */
+	d = -d;
+
+	return true;
+}
+
 bool PathEdge::connect(const Scene *scene,
 			const PathEdge *predEdge, const PathVertex *vs,
 			const PathVertex *vt, const PathEdge *succEdge) {

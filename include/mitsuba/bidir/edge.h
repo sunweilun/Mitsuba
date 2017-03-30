@@ -319,6 +319,10 @@ struct MTS_EXPORT_BIDIR PathEdge {
 	bool connect(const Scene *scene, const PathEdge *predEdge,
 		const PathVertex *vs, const PathVertex *vt,
 		const PathEdge *succEdge);
+        
+        bool connectIgnoreVisibility(const Scene *scene, const PathEdge *predEdge,
+		const PathVertex *vs, const PathVertex *vt,
+		const PathEdge *succEdge);
 
 	/**
 	 * \brief Create a connection path between two vertices
