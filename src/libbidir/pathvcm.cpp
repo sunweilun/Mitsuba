@@ -13,8 +13,8 @@ void Path::adjustRadius(const PathVertex *va, Float& radius, bool first_merge_on
 #if defined(USE_ROUGHNESS_CORRELATION_HEURISTIC)
     if(!va || va->type == PathVertex::EInvalid) return;
     Float roughness = Path::getRoughness(va);
-    bool killed = roughness > 0.f && roughness >= th;
-    Float shrinkage =  roughness == std::numeric_limits<Float>::infinity() || killed ?
+    bool killed = roughness > 0.f && roughness >= th && first_merge_only;
+    Float shrinkage = roughness == std::numeric_limits<Float>::infinity() || killed ?
             0.0 : pow(0.5, 10*roughness);
     radius *= shrinkage;
 #endif
@@ -209,17 +209,28 @@ void fillPdfList(const Scene* scene, const Path &emitterSubpath, const Path &sen
     Float mergeRadius = Path::estimateSensorMergingRadius(scene, emitterSubpath, sensorSubpath, s, t, nEmitterPaths,
             radius);
 
+    Float survival_prob = 1.0;
+    
     /* For VCM: Compute acceptance probability of each vertex. The acceptance probability is 0 if the vertex can not be merged. */
     for (int i = k; i >= 0; i--) {
         accProb[i] = Float(0.f);
-        bool mergable = i >= 2 && i <= k - 2 && connectable[i];
+        bool in_range = i >= 2 && i <= k - 2;
+        bool mergable = in_range && connectable[i];
         if (mergable) {
             Float mergeArea = M_PI * mergeRadius * mergeRadius;
-            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea);
+            accProb[i] = std::min(Float(1.f), pdfImp[i] * mergeArea) * survival_prob;
+            if(merge_only) {
+                survival_prob *= 1-getVertex(i)->evalSelectionProb(scene, getVertex(i-1), ERadiance, th);
+                //printf("%f\n", survival_prob);
+            }
 #if !defined(USE_GENERALIZED_PDF)
             if (!connectable[i - 1]) accProb[i] = pdfImp[i]; // not a special case anymore in generalized pdf.
 #endif
-            Path::adjustRadius(getVertex(i), mergeRadius, merge_only, th);
+            
+            //Path::isConnectable_GBDPT(getVertex(i), th)
+        }
+        if(in_range) {
+            Path::adjustRadius(getVertex(i), mergeRadius, false, th);
         }
     }
 }
@@ -342,7 +353,7 @@ Float Path::miWeightVCM(const Scene *scene, const Path &emitterSubpath,
        details, refer to the Veach thesis, p.306. */
 
     auto num_conn_shemes = [&](int i) {
-        return Float(connectable[i] && !mergeOnly ? 1 : 0);
+        return Float(connectable[i] && connectable[i+1] && !mergeOnly ? 1 : 0);
     };
     
     auto getVertex = [&](int i) -> const PathVertex* {
@@ -469,12 +480,12 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, merge_only, th, nEmitterPaths, accProb, radius);
+            connectableStrict, merge, pdfImp, pdfRad, isNull, merge_only, th, nEmitterPaths, accProb, radius);
 
     double sum_p = 0.f;
 
-    auto num_conn_shemes = [&connectable, &isNull, &nEmitterPaths, &k, &merge_only](int i) {
-        if ((connectable[i] || isNull[i]) && !merge_only) {
+    auto num_conn_shemes = [&](int i) {
+        if ((connectableStrict[i] || isNull[i]) && connectableStrict[i+1] && !merge_only) {
             return Float(1);
         }
         return Float(0);
@@ -514,7 +525,7 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
         int tPrime = k - p - 1;
         Float p_conn_merge = std::pow(conn_prob(p), exponent) + pow(nEmitterPaths * merge_prob(p), exponent); // for VCM: Now we have 2 ways to sample this path. 1 is for connection, accProb[i] is for merging
 
-        bool allowedToConnect = connectable[p + 1];
+        bool allowedToConnect = connectableStrict[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage)) {
             sum_p += std::pow(p_i * geomTermX, exponent) * p_conn_merge;
         }
@@ -527,9 +538,8 @@ Float Path::miWeightBaseNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     Float connWeight = std::pow(conn_prob(s), exponent);
     Float totalWeight = std::pow(conn_prob(s), exponent) + 
                 std::pow(merge_prob(s) * nEmitterPaths, exponent) + D_EPSILON;
-
+    
     if (sum_p == 0.0) return 0.0;
-
     if (merge) return (Float) (p_st / sum_p * mergeWeight / totalWeight);
     return (Float) (p_st / sum_p * connWeight / totalWeight);
 }
@@ -582,15 +592,15 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
     EMeasure vsMeasure = EArea, vtMeasure = EArea;
 
     fillPdfList(scene, emitterSubpath, sensorSubpath, connectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, pdfImp, pdfRad, isNull, merge_only, th, nEmitterPaths, accProb, radius);
+            connectableStrict, merge, pdfImp, pdfRad, isNull, merge_only, th, nEmitterPaths, accProb, radius);
 
     fillPdfList(scene, offsetEmitterSubpath, offsetSensorSubpath, offsetConnectionEdge, s, t, vsMeasure, vtMeasure,
-            connectable, merge, offsetPdfImp, offsetPdfRad, isNull, merge_only, th, nEmitterPaths, oAccProb, radius);
+            connectableStrict, merge, offsetPdfImp, offsetPdfRad, isNull, merge_only, th, nEmitterPaths, oAccProb, radius);
 
     double sum_p = 0.f, p_st = 0.f;
 
-    auto num_conn_shemes = [&connectable, &isNull, &nEmitterPaths, &k, &merge_only](int i) {
-        if ((connectable[i] || isNull[i]) && !merge_only) {
+    auto num_conn_shemes = [&](int i) {
+        if ((connectableStrict[i] || isNull[i]) && connectableStrict[i+1] && !merge_only) {
             return Float(1);
         }
         return Float(0);
@@ -655,7 +665,7 @@ Float Path::miWeightGradNoSweep_GDVCM(const Scene *scene, const Path &emitterSub
                 std::pow(offset_merge_prob(p) * nEmitterPaths, exponent);
 
         int tPrime = k - p - 1;
-        bool allowedToConnect = connectable[p + 1];
+        bool allowedToConnect = connectableStrict[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
             sum_p += std::pow(value * geomTermX, exponent) * p_conn_merge +
                 std::pow(oValue * jDet * geomTermY, exponent) * op_conn_merge;

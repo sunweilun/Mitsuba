@@ -161,11 +161,12 @@ bool PathVertex::sampleNext(const Scene *scene, Sampler *sampler,
             BSDFSamplingRecord bRec(its, sampler, mode);
             bRec.wi = its.toLocal(wi);
             weight[mode] = bsdf->sample(bRec, pdf[mode], sampler->next2D());
+            // We changed the order of this and record componentType no matter what happened.
+            // This way, we could know whether a bsdf sample is attempted through componentType.
+            componentType = (uint16_t) (bRec.sampledType & BSDF::EAll);
             if (weight[mode].isZero())
                 return false;
-
             measure = BSDF::getMeasure(bRec.sampledType);
-            componentType = (uint16_t) (bRec.sampledType & BSDF::EAll);
             sampledComponentIndex = bRec.sampledComponent;
 
             wo = its.toWorld(bRec.wo);
@@ -1099,7 +1100,7 @@ Float PathVertex::evalSelectionProb(const Scene *scene, const PathVertex *pred, 
 void PathVertex::pickComponent(Sampler* sampler, const PathVertex *pred, ETransportMode mode) {
     Vector wo(0.0f);
     
-    if(this->pdf[mode] > 0.f) return; // not needed if a bsdf sample was generated
+    if(componentType) return; // not needed if a bsdf sample was generated
     
     switch (type) {
         case EEmitterSupernode:

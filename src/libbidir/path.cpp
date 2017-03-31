@@ -222,14 +222,14 @@ Float Path::miWeightBaseNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
 
         int tPrime = k - p - 1;
 
-        bool allowedToConnect = (connectable[p] || isNull[p]) && connectable[p + 1];
+        bool allowedToConnect = (connectableStrict[p] || isNull[p]) && connectableStrict[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
             sum_p += std::pow(p_i * geomTermX * conn_prob(p), exponent);
 
         if (tPrime == t)
             p_st = std::pow(p_i * geomTermX * conn_prob(p), exponent);
     }
-
+    
     return (Float) (p_st / sum_p);
 }
 
@@ -427,13 +427,14 @@ Float Path::miWeightGradNoSweep_GBDPT(const Scene *scene, const Path &emitterSub
         }
 
         int tPrime = k - p - 1;
-        bool allowedToConnect = (connectable[p] || isNull[p]) && connectable[p + 1];
+        bool allowedToConnect = (connectableStrict[p] || isNull[p]) && connectableStrict[p + 1];
         if (allowedToConnect && MIScond_GBDPT(tPrime, p, lightImage))
             sum_p_i += std::pow(value * conn_prob(p) * geomTermX, exponent) + 
                     std::pow(oValue * offset_conn_prob(p) * jDet * geomTermY, exponent);
         if (tPrime == t)
             p_st = std::pow(value * conn_prob(p) * geomTermX, exponent);
     }
+    
     return (Float) (p_st / sum_p_i);
 }
 

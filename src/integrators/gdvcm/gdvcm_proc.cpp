@@ -662,6 +662,7 @@ public:
             std::vector<Spectrum> &value, std::vector<Float> &miWeight, std::vector<Float> &valuePdf,
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess, int s, int t, Float radius
             , Spectrum& primal, Spectrum * gradient) {
+        
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
         int neighbourCount = 4;
@@ -885,9 +886,7 @@ public:
                         jacobianLP[k] = connectedBasePath.halfJacobian_GBDPT(muRec.extra[0], muRec.extra[1], muRec.extra[2], m_offsetGenerator, true);
                         connectedBasePath.release(memPointer, memPointer + 2, m_pool);
                     }
-
-
-
+                    
                     Spectrum vtEval = vt->eval(scene, vtPred, vs, ERadiance, EArea);
                     Spectrum connectionParts;
 
@@ -992,6 +991,7 @@ public:
                                 emitterOffsetSubpath, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
                                 1.0, m_config.phExponent, pathData[0].genGeomTerm[t], 0.f, vert_b, m_config.m_shiftThreshold,
                                 m_process->m_mergeRadius, nEmitterPaths, true, m_config.m_mergeOnly) / valuePdf[0];
+                        
                     } else {
                         /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
                         // Note: we use the balance heuristic, not the power heuristic! The latter may cause numerical errors with long paths (since we compute the pdf explicitly)
