@@ -453,7 +453,7 @@ public:
                 * m_vertices[k]->weight[ERadiance]
                 * m_vertices[k - 1]->weight[ERadiance]
                 * m_edges[k - 1]->weight[ERadiance];
-
+        
         Float lum = weight.getLuminance();
         return lum != 0.0f ? (weight / lum) : Spectrum(0.0f);
     }

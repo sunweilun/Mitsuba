@@ -304,9 +304,11 @@ public:
 					wr->putDebugSample(s, t, samplePos, splatValue);
 				#endif
 
+                                        //if(value.max() * miWeight > 1.f) value = Spectrum(0.f);
+
 				if (t >= 2)
 					sampleValue += value * miWeight;
-				else
+				else 
 					wr->putLightSample(samplePos, value * miWeight);
 			}
 		}

@@ -256,7 +256,7 @@ void PathSampler::sampleSplats(const Point2i &offset, SplatList &list) {
 						if (vt->isSensorSample() && !vt->getSamplePosition(vs, samplePos))
 							continue;
 
-
+                                                //if(value.max() < 10.f) value = Spectrum(0.f);
 						if (t < 2) {
 							list.append(samplePos, value);
 						} else {

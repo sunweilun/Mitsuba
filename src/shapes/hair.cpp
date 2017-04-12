@@ -948,6 +948,10 @@ Float HairShape::getSurfaceArea() const {
 	return -1;
 }
 
+void HairShape::samplePosition(PositionSamplingRecord &pRec, const Point2 &sample) const {
+        Log(EError, "HairShape::samplePosition(): Not implemented.");
+}
+
 std::string HairShape::toString() const {
 	std::ostringstream oss;
 	oss << "Hair[" << endl

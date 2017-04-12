@@ -78,6 +78,8 @@ public:
 	AABB getAABB() const;
 
 	Float getSurfaceArea() const;
+        
+        void samplePosition(PositionSamplingRecord &pRec, const Point2 &sample) const;
 
 	size_t getPrimitiveCount() const;
 
