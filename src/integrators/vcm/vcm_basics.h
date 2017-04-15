@@ -25,6 +25,7 @@
 #include <mitsuba/core/bitmap.h>
 #include <mitsuba/core/sfcurve.h>
 #include <mitsuba/bidir/path.h>
+#include "../pssmlt/pssmlt_sampler.h"
 
 #if defined(MTS_OPENMP)
 #define NANOFLANN_USE_OMP
@@ -47,6 +48,7 @@ struct VCMPhoton {
     size_t pointID;
     size_t vertexID;
     Point3 pos;
+    float radius;
 };
 
 struct VCMPhotonMap {
@@ -82,6 +84,23 @@ inline size_t ceil_div(size_t a, size_t b) {
     return (a + b - 1) / b;
 }
 
+struct VCMStat {
+    Float value;
+    unsigned count;
+
+    VCMStat() {
+        value = 0.f;
+        count = 0;
+    }
+
+    void accumulate(Float v, unsigned c) {
+        if(c == 0) return;
+        value *= count / Float(c + count);
+        value += v * c / Float(c + count);
+        count += c;
+    }
+};
+
 class VCMWorkResultBase : public WorkResult {
     using WorkResult::WorkResult;
 public:
@@ -102,6 +121,13 @@ public:
     virtual void setOffset(const Point2i &offset) = 0;
 
     virtual void clear() = 0;
+
+    void mergeStats(VCMWorkResultBase* result) {
+        for (int i = 0; i < stats.size(); i++)
+            stats[i].accumulate(result->stats[i].value, result->stats[i].count);
+    }
+
+    std::vector<VCMStat> stats;
 protected:
     std::vector<VCMPhoton> m_photonMap;
 };
@@ -161,14 +187,24 @@ public:
         return photons;
     }
 
-    void extractPhotonPath(const VCMPhoton& photon, Path& emitterPath, MemoryPool* pool = NULL) {
-        if (!pool) {
-            m_emitterPathPool[photon.blockID].extractPathItem(emitterPath, photon.pointID);
-            return;
+    void extractPhotonPath(const VCMPhoton& photon, Path& path, MemoryPool* pool = NULL, bool metropolis = false) {
+        if (!metropolis) {
+            if (!pool) {
+                m_emitterPathPool[photon.blockID].extractPathItem(path, photon.pointID);
+                return;
+            }
+            Path ep;
+            m_emitterPathPool[photon.blockID].extractPathItem(ep, photon.pointID);
+            ep.clone(path, *pool);
+        } else {
+            if (!pool) {
+                m_sensorPathPool[photon.blockID].extractPathItem(path, photon.pointID);
+                return;
+            }
+            Path sp;
+            m_sensorPathPool[photon.blockID].extractPathItem(sp, photon.pointID);
+            sp.clone(path, *pool);
         }
-        Path ep;
-        m_emitterPathPool[photon.blockID].extractPathItem(ep, photon.pointID);
-        ep.clone(emitterPath, *pool);
     }
 
     void processResultSample(const VCMWorkResultBase *result) {
@@ -181,6 +217,9 @@ struct VCMConfigBase {
     int maxDepth;
     int rrDepth;
     Float phExponent;
+    Float initialRadius;
+    bool mergeOnly;
+    bool metropolis;
 };
 
 class VCMRendererBase : public WorkProcessor {
@@ -259,32 +298,67 @@ protected:
                 break;
             if (needsTimeSample)
                 time = m_sensor->sampleTime(m_sampler->next1D());
-            /* Start new emitter and sensor subpaths */
-            emitterSubpath.initialize(m_scene, time, EImportance, m_pool);
-            sensorSubpath.initialize(m_scene, time, ERadiance, m_pool);
 
-            /* Perform a random walk using alternating steps on each path */
-            Path::alternatingRandomWalkFromPixel(m_scene, m_sampler,
-                    emitterSubpath, emitterDepth, sensorSubpath,
-                    sensorDepth, offset, m_config.rrDepth, m_pool);
 
-            sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
-            emitterPathPool.addPathItem(emitterSubpath); // cache path into emitter Path Pool
-            // add photons to local photon map
-            for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++) {
-                PathVertex* vertex = emitterSubpath.m_vertices[k];
-                if (!vertex->isSurfaceInteraction()) continue;
-                if (vertex->isDegenerate()) continue;
-                // add a new photon
-                VCMPhoton photon;
-                photon.pos = vertex->getPosition();
-                photon.blockID = blockID;
-                photon.pointID = i;
-                photon.vertexID = k;
-                result->putPhoton(photon);
+            if (m_config.metropolis) {
+                /* Perform two random walks from the sensor and emitter side */
+                sensorSubpath.initialize(m_scene, time, ERadiance, m_pool);
+                sensorSubpath.randomWalkFromPixel(m_scene, m_sampler, sensorDepth,
+                        offset, m_config.rrDepth, m_pool);
+
+                const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
+                size_t nEmitterPaths = image_size.x * image_size.y;
+
+                Float radius = Path::estimateSensorMergingRadius(m_scene, emitterSubpath, sensorSubpath, 0, 2, nEmitterPaths,
+                        m_process->m_mergeRadius);
+
+                for (size_t k = 2; k < sensorSubpath.m_vertices.size(); k++) {
+                    if (k > 2) Path::adjustRadius(sensorSubpath.vertexOrNull(k - 1), radius, m_config.mergeOnly);
+
+                    if (radius == 0.f) break;
+
+                    PathVertex* vertex = sensorSubpath.m_vertices[k];
+                    if (!vertex->isSurfaceInteraction()) continue;
+                    if (vertex->isDegenerate()) continue;
+                    // add a new photon
+                    VCMPhoton photon;
+                    photon.pos = vertex->getPosition();
+                    photon.blockID = blockID;
+                    photon.pointID = i;
+                    photon.vertexID = k;
+                    photon.radius = radius;
+                    result->putPhoton(photon);
+                }
+
+                sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
+                sensorSubpath.release(m_pool);
+            } else {
+                /* Start new emitter and sensor subpaths */
+                emitterSubpath.initialize(m_scene, time, EImportance, m_pool);
+                sensorSubpath.initialize(m_scene, time, ERadiance, m_pool);
+                /* Perform a random walk using alternating steps on each path */
+                Path::alternatingRandomWalkFromPixel(m_scene, m_sampler,
+                        emitterSubpath, emitterDepth, sensorSubpath,
+                        sensorDepth, offset, m_config.rrDepth, m_pool);
+
+                for (size_t k = 2; k < emitterSubpath.m_vertices.size(); k++) {
+                    PathVertex* vertex = emitterSubpath.m_vertices[k];
+                    if (!vertex->isSurfaceInteraction()) continue;
+                    if (vertex->isDegenerate()) continue;
+                    // add a new photon
+                    VCMPhoton photon;
+                    photon.pos = vertex->getPosition();
+                    photon.blockID = blockID;
+                    photon.pointID = i;
+                    photon.vertexID = k;
+                    result->putPhoton(photon);
+                }
+
+                sensorPathPool.addPathItem(sensorSubpath); // cache path into sensor Path Pool
+                emitterPathPool.addPathItem(emitterSubpath); // cache path into emitter Path Pool
+                emitterSubpath.release(m_pool);
+                sensorSubpath.release(m_pool);
             }
-            emitterSubpath.release(m_pool);
-            sensorSubpath.release(m_pool);
         }
         sensorPathPool.buildIndex();
         emitterPathPool.buildIndex();
@@ -293,6 +367,7 @@ protected:
     ref<Scene> m_scene;
     ref<Sensor> m_sensor;
     ref<Sampler> m_sampler;
+    ref<PSSMLTSamplerBase> m_pssmltSampler;
     HilbertCurve2D<uint8_t> m_hilbertCurve;
     MemoryPool m_pool;
 };

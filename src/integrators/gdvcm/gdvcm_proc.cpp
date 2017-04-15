@@ -192,10 +192,10 @@ public:
 
 #if !defined(NO_GRAD)
             /* create shift-able path  */
-            createShiftablePath(connectPath, emitterSubpath[0], sensorSubpath[0], 1, sensorSubpath[0].vertexCount() - 1, ptx, m_config.m_mergeOnly);
+            createShiftablePath(connectPath, emitterSubpath[0], sensorSubpath[0], 1, sensorSubpath[0].vertexCount() - 1, ptx, m_config.mergeOnly);
 
             /*  geometry term(s) of base  */
-            if (m_config.m_mergeOnly) {
+            if (m_config.mergeOnly) {
                 pathData[0].muRec.extra[0] = sensorSubpath[0].vertexCount() - 1;
                 pathData[0].muRec.extra[1] = 1;
                 pathData[0].muRec.extra[2] = 0;
@@ -215,9 +215,9 @@ public:
             for (int k = 0; k < neighborCount; k++) {
                 //we cannot shift very direct paths!
                 pathData[k + 1].success = pathData[0].muRec.extra[0] <= 2 &&
-                        (m_config.m_mergeOnly && pathData[0].muRec.extra[0] <= 1) ? false :
+                        (m_config.mergeOnly && pathData[0].muRec.extra[0] <= 1) ? false :
                         m_offsetGenerator->generateOffsetPathGBDPT(connectPath, sensorSubpath[k + 1],
-                        pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false, m_config.m_mergeOnly);
+                        pathData[k + 1].muRec, shifts[k], pathData[k + 1].couldConnectAfterB, false, m_config.mergeOnly);
 
                 //if shift successful, compute jacobian and geometry term for each possible connection strategy that affects the shifted sub path
                 //for the manifold exploration shift there are only two connectible vertices in the affected chain (v_b and v_c)
@@ -274,7 +274,7 @@ public:
 
             for (int t = minT; t <= maxT; ++t) {
                 if (t > 2)
-                    Path::adjustRadius(sensorSubpath[0].vertexOrNull(t - 1), radius, m_config.m_mergeOnly, m_config.m_shiftThreshold);
+                    Path::adjustRadius(sensorSubpath[0].vertexOrNull(t - 1), radius, m_config.mergeOnly, m_config.m_shiftThreshold);
                 if (radius == 0.0) break;
 
                 PathVertex *vt = sp.vertex(t); // the vertex we are looking at
@@ -298,7 +298,7 @@ public:
             }
 #if !defined(NO_GRAD)
             /* clean up memory */
-            if (!m_config.m_mergeOnly)
+            if (!m_config.mergeOnly)
                 connectPath.release(ptx, ptx + 2, m_pool);
             else
                 connectPath.release(m_pool);
@@ -308,7 +308,7 @@ public:
                     sensorSubpath[k + 1].reverse();
                     int l = std::max(0, pathData[k + 1].muRec.l);
 
-                    if (m_config.m_mergeOnly)
+                    if (m_config.mergeOnly)
                         sensorSubpath[k + 1].release(0, pathData[k + 1].muRec.m + 1, m_pool);
                     else
                         sensorSubpath[k + 1].release(l, pathData[k + 1].muRec.m + 1, m_pool);
@@ -347,7 +347,7 @@ public:
             std::vector<double> &jacobianLP, std::vector<double> &genGeomTermLP, bool *pathSuccess
             , Spectrum& primal, Spectrum * gradient) {
 
-        if (m_config.m_mergeOnly) return;
+        if (m_config.mergeOnly) return;
 
         /* we use fixed neighborhood kernel! Future work will be to extend this to structurally-adaptive neighbours!!! */
         Vector2 shifts[4] = {Vector2(0, -1), Vector2(-1, 0), Vector2(1, 0), Vector2(0, 1)};
@@ -587,7 +587,7 @@ public:
                                 miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterSubpath, &connectionEdgeBase, sensorSubpath[0],
                                         *emitterSubpathTmp, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
                                         1.0, m_config.phExponent, (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), 0.f, vert_b, m_config.m_shiftThreshold,
-                                        m_process->m_mergeRadius, nEmitterPaths, false, m_config.m_mergeOnly) / valuePdf[0];
+                                        m_process->m_mergeRadius, nEmitterPaths, false, m_config.mergeOnly) / valuePdf[0];
                             } else {
                                 /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
                                 // Note: we use the balance heuristic, not the power heuristic! The latter may cause numerical errors with long paths (since we compute the pdf explicitly)
@@ -597,7 +597,7 @@ public:
                                         (t < 2 ? jacobianLP[k - 1] : pathData[k].jacobianDet[t]), m_config.phExponent,
                                         (t < 2 ? genGeomTermLP[0] : pathData[0].genGeomTerm[t]), (t < 2 ? genGeomTermLP[k] : pathData[k].genGeomTerm[t]),
                                         vert_b, m_config.m_shiftThreshold,
-                                        m_process->m_mergeRadius, nEmitterPaths, false, m_config.m_mergeOnly) / valuePdf[0];
+                                        m_process->m_mergeRadius, nEmitterPaths, false, m_config.mergeOnly) / valuePdf[0];
                             }
 
                         }
@@ -990,7 +990,7 @@ public:
                         miWeight[0] = Path::miWeightBaseNoSweep_GDVCM(scene, emitterBaseSubpath, &connectionEdgeBase, sensorSubpath[0],
                                 emitterOffsetSubpath, &connectionEdge, *sensorSubpathTmp, s, t, m_config.sampleDirect, m_config.lightImage,
                                 1.0, m_config.phExponent, pathData[0].genGeomTerm[t], 0.f, vert_b, m_config.m_shiftThreshold,
-                                m_process->m_mergeRadius, nEmitterPaths, true, m_config.m_mergeOnly) / valuePdf[0];
+                                m_process->m_mergeRadius, nEmitterPaths, true, m_config.mergeOnly) / valuePdf[0];
                         
                     } else {
                         /* compute MIS weight for gradients: 1/sum(p_st(x)^n+p_st(y)^n)*/
@@ -1001,7 +1001,7 @@ public:
                                 (jacobianLP[k] / jacobianLP[0] * pathData[k].jacobianDet[t]), m_config.phExponent,
                                 (genGeomTermLP[0] * pathData[0].genGeomTerm[t]), (genGeomTermLP[k] * pathData[k].genGeomTerm[t]),
                                 vert_b, m_config.m_shiftThreshold,
-                                m_process->m_mergeRadius, nEmitterPaths, true, m_config.m_mergeOnly) / valuePdf[0];
+                                m_process->m_mergeRadius, nEmitterPaths, true, m_config.mergeOnly) / valuePdf[0];
 
                     }
 

@@ -723,6 +723,7 @@ struct MTS_EXPORT_BIDIR CompactBlockPathPool {
     }
 
     void extractPathItem(Path& path, size_t index) {
+        if(index >= pathItems.size()) return;
         PathItem &item = pathItems[index];
         path.m_vertices.clear();
         for (size_t i = 0; i < item.nVertices; i++)

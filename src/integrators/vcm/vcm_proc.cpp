@@ -19,6 +19,8 @@
 #include <mitsuba/core/statistics.h>
 #include <mitsuba/core/sfcurve.h>
 #include <mitsuba/bidir/util.h>
+#include <stdbool.h>
+#include <mitsuba/core/plugin.h>
 #include "vcm_proc.h"
 
 MTS_NAMESPACE_BEGIN
@@ -65,6 +67,13 @@ public:
         m_sampler = static_cast<Sampler *> (getResource("sampler"));
         m_sensor = static_cast<Sensor *> (getResource("sensor"));
         m_rfilter = m_sensor->getFilm()->getReconstructionFilter();
+
+        m_pssmltSampler = static_cast<PSSMLTSamplerBase *> (getResource("mltSampler"));
+        m_pssmltSampler->reset();
+        m_pssmltSampler->accept();
+        
+        m_current.reset(new SplatList());
+        m_proposed.reset(new SplatList());
         /*
         m_scene = new Scene(scene);
         m_scene->removeSensor(scene->getSensor());
@@ -92,8 +101,6 @@ public:
         result->clear();
         m_hilbertCurve.initialize(TVector2<uint8_t>(rect->getSize()));
 
-        //if (rect->getOffset().x != 128 * 5 || rect->getOffset().y != 128) return; // for debug
-
 #if defined(MTS_DEBUG_FP)
         enableFPExceptions();
 #endif
@@ -117,23 +124,59 @@ public:
 
 
         for (size_t i = 0; i < m_hilbertCurve.getPointCount(); ++i) {
-            Point2i offset = Point2i(m_hilbertCurve[i]) + Vector2i(rect->getOffset());
-            m_sampler->generate(offset);
 
             if (stop)
                 break;
 
             extractPathPair(m_process, emitterSubpath, sensorSubpath, rect, i); // extract cached paths from sampling phase
 
-            if (needsTimeSample)
-                time = m_sensor->sampleTime(m_sampler->next1D());
+            if (m_config.metropolis) {
+                bool large = m_pssmltSampler->getRandom()->nextFloat() < 0.3;
+                m_pssmltSampler->setLargeStep(large);
+
+                if (needsTimeSample)
+                    time = m_sensor->sampleTime(m_pssmltSampler->next1D());
+                emitterSubpath.initialize(m_scene, time, EImportance, m_pool);
+                emitterSubpath.randomWalk(m_scene, m_pssmltSampler, emitterDepth, m_config.rrDepth, EImportance, m_pool);
+                m_proposed->clear();
+            }
 
             Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             Spectrum color(Float(0.f));
-            if(!m_config.mergeOnly) color += evaluateConnection(result, emitterSubpath, sensorSubpath);
-            color += evaluateMerging(result, sensorSubpath);
+            if (!m_config.mergeOnly) color += evaluateConnection(result, emitterSubpath, sensorSubpath);
+
+            Float weight = 0.f;
+            color += evaluateMerging(result, emitterSubpath, sensorSubpath, weight);
             result->putSample(initialSamplePos, color, 1.f);
-            m_sampler->advance();
+
+            if (m_config.metropolis) {
+                if (m_pssmltSampler->isLargeStep()) {
+                    result->stats[0].accumulate(weight, 1); // total normalization
+                }
+                
+                if(result->stats[1].count >= 100) {
+                    Float acc_rate = result->stats[1].value;
+                    Float strength = m_pssmltSampler->getStrength();
+                    strength = strength + (acc_rate - 0.234f) / result->stats[1].count;
+                    strength = std::min(Float(5.f), std::max(Float(1e-4f), strength));
+                    m_pssmltSampler->updateStrength(strength);
+                }
+                
+                if (weight > 0.5f) {
+                    m_pssmltSampler->accept();
+                    m_current.swap(m_proposed);
+                    result->stats[1].accumulate(weight, 1); // acceptance rate
+                } else {
+                    m_pssmltSampler->reject();
+                    result->stats[1].accumulate(0.0, 1);
+                }
+                emitterSubpath.release(m_pool);
+                
+                // render current splats
+                for(int i=0; i<m_current->size(); i++)
+                    result->putLightSample(m_current->getPosition(i), m_current->getValue(i));
+            }
+
         }
 
 #if defined(MTS_DEBUG_FP)
@@ -308,7 +351,7 @@ public:
                 Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
                         sensorSubpath, s, t, m_config.sampleDirect, m_config.lightImage, m_config.phExponent,
                         m_process->m_mergeRadius, nEmitterPaths, false, m_config.mergeOnly);
-                
+
 
                 if (sampleDirect) {
                     /* Now undo the previous change */
@@ -340,30 +383,12 @@ public:
         return sampleValue;
     }
 
-    Spectrum evaluateMerging(VCMWorkResult *wr, Path &sensorSubpath, bool reconnect = false) {
-        
+    Spectrum evaluateMerging(VCMWorkResult *wr, Path& emitterSubpath, Path &sensorSubpath, Float& weight) {
+        weight = 0.f;
 
-        Path emitterSubpath;
-        Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
         const Scene *scene = m_scene;
         PathEdge connectionEdge;
-
         Spectrum sampleValue(0.0f);
-
-        int minT = 2;
-        int maxT = (int) sensorSubpath.vertexCount() - 1;
-        if (m_config.maxDepth != -1)
-            maxT = std::min(maxT, m_config.maxDepth + 1);
-
-        Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
-        radianceWeights[0] = Spectrum(1.0f);
-        for (size_t i = 1; i < sensorSubpath.vertexCount(); ++i)
-            radianceWeights[i] = radianceWeights[i - 1] *
-                sensorSubpath.vertex(i - 1)->weight[ERadiance] *
-                sensorSubpath.vertex(i - 1)->rrWeight *
-                sensorSubpath.edge(i - 1)->weight[ERadiance];
-
-        std::vector<Spectrum> importanceWeights;
 
         const Vector2i& image_size = m_sensor->getFilm()->getCropSize();
         size_t nEmitterPaths = image_size.x * image_size.y;
@@ -371,144 +396,191 @@ public:
         Float radius = Path::estimateSensorMergingRadius(scene, emitterSubpath, sensorSubpath, 0, 2, nEmitterPaths,
                 m_process->m_mergeRadius);
 
-        for (int t = minT; t <= maxT; ++t) {
+        auto merge = [&](const Path& emitterSubpath, const Path& sensorSubpath, int s, int t, const Spectrum& wsp1, const Spectrum & wt) {
+            Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
-            if (t > 2) Path::adjustRadius(sensorSubpath.vertexOrNull(t - 1), radius, m_config.mergeOnly);
-            if (radius == 0.0) break;
+            PathVertex
+                    *vsPred = emitterSubpath.vertexOrNull(s - 1),
+                    *vtPred = sensorSubpath.vertexOrNull(t - 1),
+                    *vs = emitterSubpath.vertex(s);
 
-            if (vt->isDegenerate()) continue;
+            PathEdge
+                    *vsEdge = emitterSubpath.edgeOrNull(s - 1),
+                    *vtEdge = sensorSubpath.edgeOrNull(t - 1);
 
-            // look up photons
-            std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
-
-            for (const VCMPhoton& photon : photons) { // inspect every photon in range
-                int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
-                if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
-                m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
-
-                PathVertex
-                        *vsPred = emitterSubpath.vertexOrNull(s - 1),
-                        *vtPred = sensorSubpath.vertexOrNull(t - 1),
-                        *vs = emitterSubpath.vertex(s);
-
-                PathEdge
-                        *vsEdge = emitterSubpath.edgeOrNull(s - 1),
-                        *vtEdge = sensorSubpath.edgeOrNull(t - 1);
-
-                PathVertex *vt_photon = emitterSubpath.vertex(s + 1);
+            PathVertex *vt_photon = emitterSubpath.vertex(s + 1);
 
 
-                // Discard photons whose normals are way off.
-                Vector d = normalize(vt->getPosition() - vs->getPosition());
-                Vector photonN = vt_photon->getGeometricNormal();
-                Vector centerN = vt->getGeometricNormal();
-                Float N_ = absDot(photonN, d);
-                if ((dot(photonN, centerN) < 1e-1f) || (N_ < 1e-2f)) continue;
+            // Discard photons whose normals are way off.
+            Vector d = normalize(vt->getPosition() - vs->getPosition());
+            Vector photonN = vt_photon->getGeometricNormal();
+            Vector centerN = vt->getGeometricNormal();
+            Float N_ = absDot(photonN, d);
+            if ((dot(photonN, centerN) < 1e-1f) || (N_ < 1e-2f)) return;
 
-                Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
-                p_acc = std::min(Float(1.f), p_acc); // acceptance probability
-
-                /* Compute the combined weights along the two subpaths */
-
-                importanceWeights.resize(emitterSubpath.vertexCount());
-
-                importanceWeights[0] = Spectrum(1.0f);
-
-                for (size_t i = 1; i < emitterSubpath.vertexCount(); ++i)
-                    importanceWeights[i] = importanceWeights[i - 1] *
-                        emitterSubpath.vertex(i - 1)->weight[EImportance] *
-                        emitterSubpath.vertex(i - 1)->rrWeight *
-                        emitterSubpath.edge(i - 1)->weight[EImportance];
-
-                RestoreMeasureHelper rmh0(vs), rmh1(vt);
-
-                /* Will be set to true if direct sampling was used */
-                bool sampleDirect = false;
-
-                /* Stores the pixel position associated with this sample */
-                Point2 samplePos = initialSamplePos;
-
-                /* Allowed remaining number of ENull vertices that can
-                   be bridged via pathConnect (negative=arbitrarily many) */
-                int remaining = m_config.maxDepth - s - t + 1;
-
-                /* Will receive the path weight of the (s, t)-connection */
-                Spectrum value;
-
-                /* Account for the terms of the measurement contribution
-                   function that are coupled to the connection endpoints */
-
-                /* Can't connect degenerate endpoints */
-                if (reconnect && vs->isDegenerate()) continue;
-
-                if (reconnect) {
-                    value = importanceWeights[s] * radianceWeights[t] *
-                            vs->eval(scene, vsPred, vt, EImportance) *
-                            vt->eval(scene, vtPred, vs, ERadiance);
-                    /* Temporarily force vertex measure to EArea. Needed to
-                    handle BSDFs with diffuse + specular components */
-                    vs->measure = vt->measure = EArea;
-                } else {
-                    p_acc = 1.0;
-                    value = importanceWeights[s + 1] * radianceWeights[t] *
-                            vt->eval(scene, vtPred, vs, ERadiance) / (M_PI * radius * radius);
-                    /* Temporarily force vertex measure to EArea. Needed to
-                    handle BSDFs with diffuse + specular components */
-                    vt->measure = EArea;
-                }
-
-                /* Attempt to connect the two endpoints, which could result in
-                   the creation of additional vertices (index-matched boundaries etc.) */
-                int interactions = remaining; // backup
+            Float p_acc = emitterSubpath.vertex(s)->pdf[EImportance] * M_PI * radius * radius;
+            p_acc = std::min(Float(1.f), p_acc); // acceptance probability
 
 
-                if (value.isZero() || !connectionEdge.pathConnectAndCollapse(
-                        scene, vsEdge, vs, vt, vtEdge, interactions, !reconnect))
-                    continue;
 
-                /* Account for the terms of the measurement contribution
-                   function that are coupled to the connection edge */
+            RestoreMeasureHelper rmh0(vs), rmh1(vt);
 
-                if (reconnect)
-                    value *= connectionEdge.evalCached(vs, vt, PathEdge::EGeneralizedGeometricTerm);
+            /* Will be set to true if direct sampling was used */
+            bool sampleDirect = false;
 
-                /* Compute the multiple importance sampling weight */
+            /* Stores the pixel position associated with this sample */
+            Point2 samplePos = initialSamplePos;
 
-                Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
-                        sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
-                        m_process->m_mergeRadius, nEmitterPaths, true, m_config.mergeOnly);
+            /* Allowed remaining number of ENull vertices that can
+               be bridged via pathConnect (negative=arbitrarily many) */
+            int remaining = m_config.maxDepth - s - t + 1;
 
-                if (sampleDirect) {
-                    /* Now undo the previous change */
-                    if (t == 1)
-                        sensorSubpath.swapEndpoints(vtPred, vtEdge, vt);
-                    else
-                        emitterSubpath.swapEndpoints(vsPred, vsEdge, vs);
-                }
+            /* Will receive the path weight of the (s, t)-connection */
+            Spectrum value;
 
-                /* Determine the pixel sample position when necessary */
-                if (vt->isSensorSample() && !vt->getSamplePosition(vs, samplePos))
-                    continue;
+            /* Account for the terms of the measurement contribution
+               function that are coupled to the connection endpoints */
+
+
+            p_acc = 1.0;
+            value = wsp1 * wt *
+                    vt->eval(scene, vtPred, vs, ERadiance) / (M_PI * radius * radius);
+            /* Temporarily force vertex measure to EArea. Needed to
+            handle BSDFs with diffuse + specular components */
+            vt->measure = EArea;
+
+            /* Attempt to connect the two endpoints, which could result in
+               the creation of additional vertices (index-matched boundaries etc.) */
+            int interactions = remaining; // backup
+
+
+            if (value.isZero() || !connectionEdge.pathConnectAndCollapse(
+                    scene, vsEdge, vs, vt, vtEdge, interactions, true))
+                return;
+
+            /* Account for the terms of the measurement contribution
+               function that are coupled to the connection edge */
+
+            /* Compute the multiple importance sampling weight */
+
+            Float miWeight = Path::miWeightVCM(scene, emitterSubpath, &connectionEdge,
+                    sensorSubpath, s, t, false, m_config.lightImage, m_config.phExponent,
+                    m_process->m_mergeRadius, nEmitterPaths, true, m_config.mergeOnly);
+
+            /* Determine the pixel sample position when necessary */
+            if (vt->isSensorSample() && !vt->getSamplePosition(vs, samplePos))
+                return;
 
 #if VCM_DEBUG == 1
-                /* When the debug mode is on, collect samples
-                   separately for each sampling strategy. Note: the
-                   following piece of code artificially increases the
-                   exposure of longer paths */
-                Spectrum splatValue = value * (m_config.showWeighted
-                        ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
-                wr->putDebugSample(s, t, samplePos, splatValue);
+            /* When the debug mode is on, collect samples
+               separately for each sampling strategy. Note: the
+               following piece of code artificially increases the
+               exposure of longer paths */
+            Spectrum splatValue = value * (m_config.showWeighted
+                    ? miWeight : 1.0f); // * std::pow(2.0f, s+t-3.0f));
+            wr->putDebugSample(s, t, samplePos, splatValue);
 #endif
-                Spectrum inc = value * Spectrum(miWeight) / p_acc;
-                Float normal_correction_factor = absDot(vt_photon->getShadingNormal(), d) / 
-                                (D_EPSILON+absDot(vt_photon->getGeometricNormal(), d));
-                inc *= normal_correction_factor;
-                if(inc.hasNan())
-                    continue;
+            Spectrum inc = value * Spectrum(miWeight) / p_acc;
+            Float normal_correction_factor = absDot(vt_photon->getShadingNormal(), d) /
+                    (D_EPSILON + absDot(vt_photon->getGeometricNormal(), d));
+            inc *= normal_correction_factor;
+            if (inc.hasNan())
+                return;
+            if (m_config.metropolis)
+                m_proposed->append(samplePos, inc);
+            else
                 sampleValue += inc;
+        };
+
+        if (!m_config.metropolis) { // query photons
+            Path emitterSubpath; // overwrite argument
+            Spectrum *radianceWeights = (Spectrum *) alloca(sensorSubpath.vertexCount() * sizeof (Spectrum));
+            radianceWeights[0] = Spectrum(1.0f);
+            for (size_t i = 1; i < sensorSubpath.vertexCount(); ++i)
+                radianceWeights[i] = radianceWeights[i - 1] *
+                    sensorSubpath.vertex(i - 1)->weight[ERadiance] *
+                    sensorSubpath.vertex(i - 1)->rrWeight *
+                    sensorSubpath.edge(i - 1)->weight[ERadiance];
+
+            int minT = 2;
+            int maxT = (int) sensorSubpath.vertexCount() - 1;
+            if (m_config.maxDepth != -1)
+                maxT = std::min(maxT, m_config.maxDepth + 1);
+            for (int t = minT; t <= maxT; ++t) {
+                PathVertex *vt = sensorSubpath.vertex(t); // the vertex we are looking at
+
+                if (radius == 0.0) break;
+
+                if (vt->isDegenerate()) continue;
+
+                // look up photons
+                std::vector<VCMPhoton> photons = m_process->lookupPhotons(vt, radius);
+
+                for (const VCMPhoton& photon : photons) { // inspect every photon in range
+                    int s = photon.vertexID - 1; // pretend that a connection can be formed from the previous vertex.
+                    if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
+                    m_process->extractPhotonPath(photon, emitterSubpath); // extract the path that this photon bounded to.
+
+                    /* Compute the combined weights along the two subpaths */
+
+                    Spectrum wsp1 = Spectrum(1.f);
+
+                    for (size_t i = 1; i <= s + 1; ++i)
+                        wsp1 *= emitterSubpath.vertex(i - 1)->weight[EImportance] *
+                            emitterSubpath.vertex(i - 1)->rrWeight *
+                            emitterSubpath.edge(i - 1)->weight[EImportance];
+
+                    merge(emitterSubpath, sensorSubpath, s, t, wsp1, radianceWeights[t]);
+                }
+            }
+        } else { // query importons
+            Path sensorSubpath;
+            Spectrum *importanceWeights = (Spectrum *) alloca(emitterSubpath.vertexCount() * sizeof (Spectrum));
+            importanceWeights[0] = Spectrum(1.0f);
+            for (size_t i = 1; i < emitterSubpath.vertexCount(); ++i)
+                importanceWeights[i] = importanceWeights[i - 1] *
+                    emitterSubpath.vertex(i - 1)->weight[EImportance] *
+                    emitterSubpath.vertex(i - 1)->rrWeight *
+                    emitterSubpath.edge(i - 1)->weight[EImportance];
+
+            int minS = 1;
+            int maxS = (int) emitterSubpath.vertexCount() - 2;
+            if (m_config.maxDepth != -1)
+                maxS = std::min(maxS, m_config.maxDepth);
+
+            for (int s = minS; s <= maxS; ++s) {
+                PathVertex *vsp1 = emitterSubpath.vertex(s + 1); // the vertex we are looking at
+                if (vsp1->isDegenerate()) continue;
+
+                // look up photons
+                std::vector<VCMPhoton> photons = m_process->lookupPhotons(vsp1, radius);
+
+                for (const VCMPhoton& photon : photons) { // inspect every photon in range
+                    Float dist = (photon.pos - vsp1->getPosition()).length();
+                    if (dist > photon.radius) continue;
+
+                    int t = photon.vertexID; // pretend that a connection can be formed from the previous vertex.
+                    if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
+
+                    m_process->extractPhotonPath(photon, sensorSubpath, NULL, true); // extract the path that this photon bounded to.
+
+                    weight = 1.f; // visible path
+                    /* Compute the combined weights along the two subpaths */
+
+                    Spectrum wt = Spectrum(1.f);
+
+                    for (size_t i = 1; i <= t; ++i)
+                        wt *= sensorSubpath.vertex(i - 1)->weight[ERadiance] *
+                            sensorSubpath.vertex(i - 1)->rrWeight *
+                            sensorSubpath.edge(i - 1)->weight[ERadiance];
+
+                    merge(emitterSubpath, sensorSubpath, s, t, importanceWeights[s + 1], wt);
+                }
             }
         }
-        
+
+
+
         return sampleValue;
     }
 
@@ -524,6 +596,10 @@ private:
     VCMConfiguration m_config;
 
     VCMProcess* m_process;
+    
+    std::shared_ptr<SplatList> m_current, m_proposed;
+    
+    
 };
 
 
@@ -536,6 +612,8 @@ VCMProcess::VCMProcess(const RenderJob *parent, RenderQueue *queue,
         const VCMConfiguration &config) :
 VCMProcessBase(parent, queue, config.blockSize), m_config(config) {
     m_refreshTimer = new Timer();
+    m_weight = 1.f;
+    m_nLargeSteps = 0;
 }
 
 ref<WorkProcessor> VCMProcess::createWorkProcessor() const {
@@ -549,7 +627,7 @@ void VCMProcess::develop() {
     LockGuard lock(m_resultMutex);
     const ImageBlock *lightImage = m_result->getLightImage();
     m_film->setBitmap(m_result->getImageBlock()->getBitmap());
-    m_film->addBitmap(lightImage->getBitmap(), 1.0f / m_config.sampleCount);
+    m_film->addBitmap(lightImage->getBitmap(), 1.0f / m_config.sampleCount * m_weight);
     m_refreshTimer->reset();
     m_queue->signalRefresh(m_parent);
 }
@@ -560,6 +638,11 @@ void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
     const VCMWorkResult *result = static_cast<const VCMWorkResult *> (wr);
     ImageBlock *block = const_cast<ImageBlock *> (result->getImageBlock());
     LockGuard lock(m_resultMutex);
+
+    m_result->mergeStats((VCMWorkResultBase*)result);
+    
+    m_weight = m_result->stats[0].value;
+
     if (phase == SAMPLE) {
         processResultSample(result);
         m_queue->signalWorkEnd(m_parent, result->getImageBlock(), false);
@@ -589,7 +672,7 @@ void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
                         + (borderSize + (y + borderSize) * destBitmap->getWidth()) * (SPECTRUM_SAMPLES + 2);
 
                 for (int x = 0; x < size.x; ++x) {
-                    Float weight = dest[SPECTRUM_SAMPLES + 1] * invSampleCount;
+                    Float weight = dest[SPECTRUM_SAMPLES + 1] * invSampleCount * m_weight;
                     for (int k = 0; k < SPECTRUM_SAMPLES; ++k)
                         *dest++ += *source++ * weight;
                     dest += 2;

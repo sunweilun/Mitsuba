@@ -43,13 +43,13 @@ add_bidir(bdpt          bdpt/bdpt.h      bdpt/bdpt.cpp
                         bdpt/bdpt_proc.h bdpt/bdpt_proc.cpp
                         bdpt/bdpt_wr.h   bdpt/bdpt_wr.cpp)
 
-add_bidir(vcm          vcm/vcm.h      vcm/vcm.cpp
-                        vcm/vcm_proc.h vcm/vcm_proc.cpp
-                        vcm/vcm_wr.h   vcm/vcm_wr.cpp vcm/vcm_basics.h)
-
 add_bidir(pssmlt        pssmlt/pssmlt.h         pssmlt/pssmlt.cpp
                         pssmlt/pssmlt_proc.h    pssmlt/pssmlt_proc.cpp
                         pssmlt/pssmlt_sampler.h pssmlt/pssmlt_sampler.cpp)
+
+add_bidir(vcm           pssmlt/pssmlt_sampler_base.h vcm/vcm.h      vcm/vcm.cpp
+                        vcm/vcm_proc.h vcm/vcm_proc.cpp
+                        vcm/vcm_wr.h   vcm/vcm_wr.cpp vcm/vcm_basics.h)
 
 add_bidir(mlt           mlt/mlt.h      mlt/mlt.cpp
                         mlt/mlt_proc.h mlt/mlt_proc.cpp)

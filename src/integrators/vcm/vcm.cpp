@@ -25,7 +25,6 @@
 #include <omp.h>
 #endif
 
-
 MTS_NAMESPACE_BEGIN
 
 /*!\plugin{bdpt}{Bidirectional path tracer}
@@ -148,9 +147,11 @@ public:
         m_config.sampleDirect = props.getBoolean("sampleDirect", false); // Direct sampling is not supported yet.
         m_config.showWeighted = props.getBoolean("showWeighted", false);
         m_config.initialRadius = props.getFloat("initialRadius", 0.f);
-        m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.9f);
+        m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.95f);
         m_config.mergeOnly = props.getBoolean("mergeOnly", false);
-        if(m_config.mergeOnly) m_config.lightImage = false;
+        m_config.metropolis = props.getBoolean("metropolis", true);
+        if (m_config.mergeOnly) m_config.lightImage = false;
+        if (m_config.metropolis) m_config.lightImage = true;
 
 #if VCM_DEBUG == 1
         if (m_config.maxDepth == -1 || m_config.maxDepth > 6) {
@@ -199,7 +200,7 @@ public:
 
             m_config.initialRadius = std::min(rad / filmSize.x, rad / filmSize.y) * 5;
         }
-        
+
         return true;
     }
 
@@ -236,7 +237,7 @@ public:
         ref<Scene> bidir_scene = new Scene(scene);
         bidir_scene->initializeBidirectional();
         int bidirSceneResID = scheduler->registerResource(bidir_scene);
-        
+
         ref<VCMProcess> process = new VCMProcess(job, queue, m_config);
         process->bindResource("scene", bidirSceneResID);
         process->bindResource("sampler", samplerResID);
@@ -245,10 +246,22 @@ public:
 #if defined(MTS_OPENMP)
         Thread::initializeOpenMP(nCores);
 #endif
+        /* Create a sampler instance for each worker */
+        ref<PSSMLTSamplerBase> mltSampler = new PSSMLTSamplerBase(1.0);
+        std::vector<SerializableObject *> mltSamplers(scheduler->getCoreCount());
+        for (size_t i = 0; i < mltSamplers.size(); ++i) {
+            ref<Sampler> clonedSampler = mltSampler->clone();
+            clonedSampler->incRef();
+            mltSamplers[i] = clonedSampler.get();
+        }
+        int mltSamplerResID = scheduler->registerMultiResource(mltSamplers);
+        process->bindResource("mltSampler", mltSamplerResID);
+
         for (size_t i = 0; i < sampleCount; i++) {
-            if(iterateVCM(process, sensorResID, i) == false) break;
+            if (iterateVCM(process, sensorResID, i) == false) break;
         }
         scheduler->unregisterResource(bidirSceneResID);
+        scheduler->unregisterResource(mltSamplerResID);
         m_process = NULL;
         process->develop();
 

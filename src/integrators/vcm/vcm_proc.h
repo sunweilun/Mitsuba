@@ -64,14 +64,13 @@ public:
     MTS_DECLARE_CLASS()
 protected:
     /// Virtual destructor
-    virtual ~VCMProcess()
-    {
-    }
+    virtual ~VCMProcess() {}
 private:
     ref<VCMWorkResult> m_result;
     ref<Timer> m_refreshTimer;
     VCMConfiguration m_config;
-    Float m_mergeRadius;
+    Float m_weight;
+    unsigned m_nLargeSteps;
 };
 
 MTS_NAMESPACE_END

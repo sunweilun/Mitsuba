@@ -49,9 +49,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 	bool m_reconstructL2;
 	float m_reconstructAlpha;
         int m_nJacobiIters;
-        Float initialRadius;
         Float radiusReductionAlpha;
-        bool m_mergeOnly;
 
 	inline GDVCMConfiguration() { }
 
@@ -72,7 +70,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 		m_reconstructL1 = stream->readBool();
 		m_reconstructL2 = stream->readBool();
 		m_reconstructAlpha = stream->readFloat();
-                m_mergeOnly = stream->readBool();
+                mergeOnly = stream->readBool();
                 phExponent = stream->readFloat();
 	}
 
@@ -94,7 +92,7 @@ struct GDVCMConfiguration : VCMConfigBase {
 		stream->writeBool(m_reconstructL1);
 		stream->writeBool(m_reconstructL2);
 		stream->writeFloat(m_reconstructAlpha);
-                stream->writeBool(m_mergeOnly);
+                stream->writeBool(mergeOnly);
 		stream->writeFloat(phExponent);
 	}
 

@@ -23,6 +23,7 @@
 #include <mitsuba/render/sampler.h>
 #include <mitsuba/core/random.h>
 #include "pssmlt.h"
+#include "pssmlt_sampler_base.h"
 
 MTS_NAMESPACE_BEGIN
 
