@@ -28,6 +28,7 @@ MTS_NAMESPACE_BEGIN
 
 GDVCMWorkResult::GDVCMWorkResult(const GDVCMConfiguration &conf,
         const ReconstructionFilter *rfilter, Vector2i blockSize, int nbuff, int extraBorder) {
+    stats.resize(2);
     /* Stores the 'camera image' -- this can be blocked when
        spreading out work to multiple workers */
     if (blockSize == Vector2i(-1, -1))

@@ -70,7 +70,6 @@ private:
     ref<Timer> m_refreshTimer;
     VCMConfiguration m_config;
     Float m_weight;
-    unsigned m_nLargeSteps;
 };
 
 MTS_NAMESPACE_END

@@ -573,6 +573,9 @@
                 <param name="mergeOnly" readableName="Only use merging?" type="boolean" default="false">
 			Only use merging?
 		</param>
+                <param name="metropolis" readableName="Use MCMC?" type="boolean" default="false">
+			Use MCMC
+		</param>
 	</plugin>
 
 	<plugin type="integrator" name="gbdpt" readableName="Gradient-Domain Bidirectional Path Tracer" show="true"
@@ -652,6 +655,9 @@
 		</param>
                 <param name="mergeOnly" readableName="Only use GPM?" type="boolean" default="false">
 			Only use GPM?
+		</param>
+                <param name="metropolis" readableName="Use MCMC?" type="boolean" default="false">
+			Use MCMC
 		</param>
 	</plugin>
   

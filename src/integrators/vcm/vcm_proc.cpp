@@ -71,9 +71,10 @@ public:
         m_pssmltSampler = static_cast<PSSMLTSamplerBase *> (getResource("mltSampler"));
         m_pssmltSampler->reset();
         m_pssmltSampler->accept();
-        
+
         m_current.reset(new SplatList());
         m_proposed.reset(new SplatList());
+        m_currentWeight = 0.f;
         /*
         m_scene = new Scene(scene);
         m_scene->removeSensor(scene->getSensor());
@@ -139,42 +140,55 @@ public:
                 emitterSubpath.initialize(m_scene, time, EImportance, m_pool);
                 emitterSubpath.randomWalk(m_scene, m_pssmltSampler, emitterDepth, m_config.rrDepth, EImportance, m_pool);
                 m_proposed->clear();
+                m_proposedWeight = 0.f;
             }
 
             Point2 initialSamplePos = sensorSubpath.vertex(1)->getSamplePosition();
             Spectrum color(Float(0.f));
             if (!m_config.mergeOnly) color += evaluateConnection(result, emitterSubpath, sensorSubpath);
 
-            Float weight = 0.f;
-            color += evaluateMerging(result, emitterSubpath, sensorSubpath, weight);
+            color += evaluateMerging(result, emitterSubpath, sensorSubpath);
             result->putSample(initialSamplePos, color, 1.f);
 
             if (m_config.metropolis) {
+                auto target_func_vis = [&]() {
+                    m_proposedWeight = m_proposed->size() > 0 ? 1.f : 0.f;
+                };
+
+                target_func_vis();
+
                 if (m_pssmltSampler->isLargeStep()) {
-                    result->stats[0].accumulate(weight, 1); // total normalization
+                    result->stats[0].accumulate(m_proposedWeight, 1); // total normalization
                 }
-                
-                if(result->stats[1].count >= 100) {
+
+                if (result->stats[1].count >= 10) {
                     Float acc_rate = result->stats[1].value;
                     Float strength = m_pssmltSampler->getStrength();
                     strength = strength + (acc_rate - 0.234f) / result->stats[1].count;
                     strength = std::min(Float(5.f), std::max(Float(1e-4f), strength));
                     m_pssmltSampler->updateStrength(strength);
                 }
-                
-                if (weight > 0.5f) {
+
+                bool acc = m_proposedWeight > 0.f;
+                if (m_proposedWeight < m_currentWeight)
+                    acc = m_pssmltSampler->getRandom()->nextFloat() < m_proposedWeight / m_currentWeight;
+
+                if (acc) {
                     m_pssmltSampler->accept();
                     m_current.swap(m_proposed);
-                    result->stats[1].accumulate(weight, 1); // acceptance rate
+                    m_currentWeight = m_proposedWeight;
+                    result->stats[1].accumulate(1.0, 1); // acceptance rate
                 } else {
                     m_pssmltSampler->reject();
                     result->stats[1].accumulate(0.0, 1);
                 }
                 emitterSubpath.release(m_pool);
-                
+
                 // render current splats
-                for(int i=0; i<m_current->size(); i++)
-                    result->putLightSample(m_current->getPosition(i), m_current->getValue(i));
+                if (m_currentWeight > 0.f) {
+                    for (int i = 0; i < m_current->size(); i++)
+                        result->putLightSample(m_current->getPosition(i), m_current->getValue(i) / m_currentWeight);
+                }
             }
 
         }
@@ -383,8 +397,7 @@ public:
         return sampleValue;
     }
 
-    Spectrum evaluateMerging(VCMWorkResult *wr, Path& emitterSubpath, Path &sensorSubpath, Float& weight) {
-        weight = 0.f;
+    Spectrum evaluateMerging(VCMWorkResult *wr, Path& emitterSubpath, Path &sensorSubpath) {
 
         const Scene *scene = m_scene;
         PathEdge connectionEdge;
@@ -563,8 +576,6 @@ public:
                     if (m_config.maxDepth > -1 && s + t > m_config.maxDepth + 1) continue;
 
                     m_process->extractPhotonPath(photon, sensorSubpath, NULL, true); // extract the path that this photon bounded to.
-
-                    weight = 1.f; // visible path
                     /* Compute the combined weights along the two subpaths */
 
                     Spectrum wt = Spectrum(1.f);
@@ -578,8 +589,6 @@ public:
                 }
             }
         }
-
-
 
         return sampleValue;
     }
@@ -596,10 +605,12 @@ private:
     VCMConfiguration m_config;
 
     VCMProcess* m_process;
-    
+
+    Float m_currentWeight, m_proposedWeight;
+
     std::shared_ptr<SplatList> m_current, m_proposed;
-    
-    
+
+
 };
 
 
@@ -613,7 +624,6 @@ VCMProcess::VCMProcess(const RenderJob *parent, RenderQueue *queue,
 VCMProcessBase(parent, queue, config.blockSize), m_config(config) {
     m_refreshTimer = new Timer();
     m_weight = 1.f;
-    m_nLargeSteps = 0;
 }
 
 ref<WorkProcessor> VCMProcess::createWorkProcessor() const {
@@ -639,9 +649,10 @@ void VCMProcess::processResult(const WorkResult *wr, bool cancelled) {
     ImageBlock *block = const_cast<ImageBlock *> (result->getImageBlock());
     LockGuard lock(m_resultMutex);
 
-    m_result->mergeStats((VCMWorkResultBase*)result);
-    
-    m_weight = m_result->stats[0].value;
+    if (m_config.metropolis) {
+        m_result->mergeStats((VCMWorkResultBase*) result);
+        m_weight = m_result->stats[0].value;
+    }
 
     if (phase == SAMPLE) {
         processResultSample(result);

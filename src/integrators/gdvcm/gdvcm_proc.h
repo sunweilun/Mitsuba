@@ -69,6 +69,7 @@ private:
     ref<GDVCMWorkResult> m_result;
     ref<Timer> m_refreshTimer;
     GDVCMConfiguration m_config;
+    Float m_weight;
     //ref<ImageBlockContainer> m_imbc;
 };
 

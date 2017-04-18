@@ -94,7 +94,9 @@ public:
         m_config.m_reconstructAlpha = (Float) props.getFloat("reconstructAlpha", Float(0.2));
         m_config.m_nJacobiIters = (Float) props.getInteger("nJacobiIters", 200);
         m_config.mergeOnly = props.getBoolean("mergeOnly", false);
-        if(m_config.mergeOnly) m_config.lightImage = false;
+        m_config.metropolis = props.getBoolean("metropolis", false);
+        if (m_config.mergeOnly) m_config.lightImage = false;
+        if (m_config.metropolis) m_config.lightImage = true;
 
         if (m_config.m_reconstructL1 && m_config.m_reconstructL2)
             Log(EError, "Disable 'reconstructL1' or 'reconstructL2': Cannot display two reconstructions at a time!");
@@ -215,13 +217,23 @@ public:
 #if defined(MTS_OPENMP)
         Thread::initializeOpenMP(nCores);
 #endif
-        //scheduler->schedule(process);
-        //scheduler->wait(process);
+        /* Create a sampler instance for each worker */
+        ref<PSSMLTSamplerBase> mltSampler = new PSSMLTSamplerBase(1.0);
+        std::vector<SerializableObject *> mltSamplers(scheduler->getCoreCount());
+        for (size_t i = 0; i < mltSamplers.size(); ++i) {
+            ref<Sampler> clonedSampler = mltSampler->clone();
+            clonedSampler->incRef();
+            mltSamplers[i] = clonedSampler.get();
+        }
+        int mltSamplerResID = scheduler->registerMultiResource(mltSamplers);
+        process->bindResource("mltSampler", mltSamplerResID);
+        
         m_cancelled = false;
         for (size_t i = 0; i < sampleCount; i++) {
             if (iterateVCM(process, sensorResID, i) == false) break;
         }
 
+        scheduler->unregisterResource(mltSamplerResID);
         scheduler->unregisterResource(bidirSceneResID);
         m_process = NULL;
         process->develop();

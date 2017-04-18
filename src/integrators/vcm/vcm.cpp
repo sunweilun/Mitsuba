@@ -149,7 +149,7 @@ public:
         m_config.initialRadius = props.getFloat("initialRadius", 0.f);
         m_config.radiusReductionAlpha = props.getFloat("radiusReductionAlpha", 0.95f);
         m_config.mergeOnly = props.getBoolean("mergeOnly", false);
-        m_config.metropolis = props.getBoolean("metropolis", true);
+        m_config.metropolis = props.getBoolean("metropolis", false);
         if (m_config.mergeOnly) m_config.lightImage = false;
         if (m_config.metropolis) m_config.lightImage = true;
 
